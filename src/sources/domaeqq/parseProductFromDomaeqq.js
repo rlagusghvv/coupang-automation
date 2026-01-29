@@ -22,6 +22,29 @@ function normalizeUrl(u) {
   return s;
 }
 
+function sanitizeHtml(html, baseUrl) {
+  const raw = String(html || "")
+    .replace(/<script[\s\S]*?<\/script>/gi, "")
+    .replace(/<style[\s\S]*?<\/style>/gi, "")
+    .trim();
+
+  if (!baseUrl) return raw;
+
+  return raw.replace(/(src|href)=["']?([^"' >]+)["']?/gi, (m, attr, val) => {
+    const v = String(val || "").trim();
+    if (!v) return m;
+    if (v.startsWith("data:") || v.startsWith("mailto:") || v.startsWith("tel:")) return m;
+    if (v.startsWith("http://") || v.startsWith("https://")) return `${attr}="${v}"`;
+    if (v.startsWith("//")) return `${attr}="https:${v}"`;
+    try {
+      const abs = new URL(v, baseUrl).toString();
+      return `${attr}="${abs}"`;
+    } catch {
+      return m;
+    }
+  });
+}
+
 async function pickMainImageSrc(page) {
   const candidates = [
     "img.mainThumb",
@@ -133,6 +156,40 @@ export async function parseProductFromDomaeqq(url) {
       return normHtml(wrapper.innerHTML);
     });
 
+    // ✅ 외부 상세 HTML(예: ai.esmplus.com) 우선 사용
+    const detailHtmlUrl = await page.evaluate(() => {
+      const pick = (sel) => {
+        const el = document.querySelector(sel);
+        return el ? (el.getAttribute("src") || el.getAttribute("href") || "") : "";
+      };
+
+      const iframe = pick('iframe[src*="ai.esmplus.com"]');
+      if (iframe) return iframe;
+
+      const link = pick('a[href*="ai.esmplus.com"]');
+      if (link) return link;
+
+      return "";
+    });
+
+    let finalContentHtml = contentHtml;
+    if (detailHtmlUrl) {
+      try {
+        const res = await fetch(detailHtmlUrl, {
+          headers: {
+            Referer: url,
+            "User-Agent": "Mozilla/5.0",
+          },
+        });
+        if (res.ok) {
+          const html = await res.text();
+          finalContentHtml = sanitizeHtml(html, detailHtmlUrl) || contentHtml;
+        }
+      } catch {
+        // fallback to contentHtml
+      }
+    }
+
     const categoryText = await page.evaluate(() => {
       const pick = (sel) =>
         Array.from(document.querySelectorAll(sel))
@@ -155,7 +212,7 @@ export async function parseProductFromDomaeqq(url) {
       title: titleText || (await page.title().catch(() => "도매꾹 상품")),
       price,
       imageUrl: imageUrl || "https://via.placeholder.com/1000",
-      contentText: contentHtml || titleText || "",
+      contentText: finalContentHtml || titleText || "",
       categoryText,
     });
   } finally {
