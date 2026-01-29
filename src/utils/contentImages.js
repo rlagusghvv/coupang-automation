@@ -31,3 +31,11 @@ export function filterDomeggookUrls(urls) {
   if (!urls || urls.length === 0) return [];
   return urls.filter((u) => /https?:\/\/([^/]*\.)?domeggook\.com\//i.test(String(u)));
 }
+
+export function replaceImageSrcs(html, urlMap) {
+  if (!html) return html;
+  return String(html).replace(/<img([^>]+)src=["']?([^"' >]+)["']?([^>]*)>/gi, (m, pre, src, post) => {
+    const replaced = urlMap[src] || src;
+    return `<img${pre}src="${replaced}"${post}>`;
+  });
+}

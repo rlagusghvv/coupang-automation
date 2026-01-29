@@ -133,12 +133,30 @@ export async function parseProductFromDomaeqq(url) {
       return normHtml(wrapper.innerHTML);
     });
 
+    const categoryText = await page.evaluate(() => {
+      const pick = (sel) =>
+        Array.from(document.querySelectorAll(sel))
+          .map((el) => el.textContent || "")
+          .join(" > ")
+          .replace(/\s+/g, " ")
+          .trim();
+
+      return (
+        pick(".loc_history a") ||
+        pick(".breadcrumb a") ||
+        pick(".location a") ||
+        pick(".category a") ||
+        ""
+      );
+    });
+
     return makeDraft({
       sourceUrl: url,
       title: titleText || (await page.title().catch(() => "도매꾹 상품")),
       price,
       imageUrl: imageUrl || "https://via.placeholder.com/1000",
       contentText: contentHtml || titleText || "",
+      categoryText,
     });
   } finally {
     await page.close().catch(() => {});

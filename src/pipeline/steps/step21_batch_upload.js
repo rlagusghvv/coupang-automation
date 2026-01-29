@@ -7,7 +7,8 @@ import { parseProductFromDomaeqq } from "../../sources/domaeqq/parseProductFromD
 import { buildSellerProductBody } from "../../coupang/builders/buildSellerProductBody.js";
 import { createSellerProduct } from "../../coupang/api/createSellerProduct.js";
 import { prepareProxyUrl } from "../../utils/imageProxy.js";
-import { extractImageUrls, buildImageOnlyHtmlFromUrls, filterDomeggookUrls } from "../../utils/contentImages.js";
+import { extractImageUrls, filterDomeggookUrls, replaceImageSrcs } from "../../utils/contentImages.js";
+import { resolveDisplayCategoryCode } from "../../utils/categoryMap.js";
 
 const OUTBOUND_SHIPPING_PLACE_CODE = "24093380";
 const DISPLAY_CATEGORY_CODE = 77723;
@@ -64,16 +65,23 @@ async function uploadOne(line) {
     const settled = await Promise.allSettled(
       contentImages.map((u) => prepareProxyUrl(u, IMAGE_PROXY_BASE, draft.sourceUrl)),
     );
-    const proxiedContentUrls = settled
-      .filter((r) => r.status === "fulfilled")
-      .map((r) => r.value);
-    const contentHtml = buildImageOnlyHtmlFromUrls(proxiedContentUrls) || draft.contentText;
+    const map = {};
+    for (let i = 0; i < contentImages.length; i++) {
+      if (settled[i]?.status === "fulfilled") map[contentImages[i]] = settled[i].value;
+    }
+    const contentHtml = replaceImageSrcs(draft.contentText, map) || draft.contentText;
+
+    const displayCategoryCode = resolveDisplayCategoryCode({
+      title: draft.title,
+      categoryText: draft.categoryText,
+      fallback: (maybeCode ? Number(maybeCode) : DISPLAY_CATEGORY_CODE),
+    });
 
     const body = buildSellerProductBody({
       vendorId: COUPANG_VENDOR_ID,
       vendorUserId: COUPANG_VENDOR_USER_ID,
       outboundShippingPlaceCode: OUTBOUND_SHIPPING_PLACE_CODE,
-      displayCategoryCode: (maybeCode ? Number(maybeCode) : DISPLAY_CATEGORY_CODE),
+      displayCategoryCode,
       sellerProductName: draft.title,
       imageUrl: imageForCoupang,
       price: draft.price,
