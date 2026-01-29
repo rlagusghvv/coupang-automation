@@ -6,17 +6,21 @@ import path from "node:path";
 import { runUploadFromUrl } from "./src/pipeline/runUploadFromUrl.js";
 import { classifyUrl } from "./src/utils/urlFilter.js";
 import {
+  initDb,
   createUser,
   verifyUser,
   createSession,
   destroySession,
   getUserBySession,
   updateSettings,
-} from "./src/server/storage.js";
+} from "./src/server/storage_sqlite.js";
 
 const app = express();
 app.set("trust proxy", true);
 app.use(express.json({ limit: "2mb" }));
+
+// ✅ DB 초기화
+await initDb();
 
 // ✅ out 폴더(이미지 파일) 정적 서빙
 app.use(
