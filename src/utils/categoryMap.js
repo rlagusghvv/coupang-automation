@@ -1,3 +1,5 @@
+import { CATEGORY_RULES } from "../config/categoryRules.js";
+
 function parseMap() {
   const raw = (process.env.DOMEGGOOK_CATEGORY_MAP_JSON || "").trim();
   if (!raw) return [];
@@ -10,7 +12,7 @@ function parseMap() {
 }
 
 export function resolveDisplayCategoryCode({ title, categoryText, fallback }) {
-  const map = parseMap();
+  const map = [...CATEGORY_RULES, ...parseMap()];
   const hay = `${title || ""} ${categoryText || ""}`.toLowerCase();
 
   for (const row of map) {
