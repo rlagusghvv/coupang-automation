@@ -1,0 +1,150 @@
+@import url("https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;600;700&display=swap");
+
+:root {
+  --bg: #0f0f12;
+  --panel: #17181d;
+  --panel-2: #1f2128;
+  --text: #f2f2f3;
+  --muted: #b5b8c2;
+  --accent: #6ee7b7;
+  --accent-2: #22d3ee;
+  --danger: #f87171;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: "Space Grotesk", sans-serif;
+  color: var(--text);
+  background:
+    radial-gradient(1200px 600px at 10% 10%, #1a1f2b 0%, rgba(0, 0, 0, 0) 60%),
+    radial-gradient(900px 500px at 90% 20%, #10202a 0%, rgba(0, 0, 0, 0) 55%),
+    var(--bg);
+  min-height: 100vh;
+}
+
+.wrap {
+  max-width: 880px;
+  margin: 0 auto;
+  padding: 48px 20px 80px;
+  display: grid;
+  gap: 20px;
+}
+
+.hero {
+  padding: 18px 4px 10px;
+}
+
+.eyebrow {
+  color: var(--accent-2);
+  text-transform: uppercase;
+  font-size: 12px;
+  letter-spacing: 0.16em;
+  margin: 0 0 10px;
+}
+
+h1 {
+  font-size: clamp(28px, 5vw, 44px);
+  margin: 0 0 10px;
+}
+
+.sub {
+  color: var(--muted);
+  margin: 0;
+  font-size: 15px;
+}
+
+.card {
+  background: linear-gradient(160deg, var(--panel), var(--panel-2));
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 16px;
+  padding: 18px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
+}
+
+label {
+  display: block;
+  margin-bottom: 10px;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 10px;
+}
+
+input {
+  width: 100%;
+  padding: 14px 14px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: #0f1116;
+  color: var(--text);
+  font-size: 15px;
+}
+
+button {
+  padding: 14px 18px;
+  border-radius: 12px;
+  border: none;
+  color: #06221a;
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  font-weight: 700;
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.hint {
+  color: var(--muted);
+  font-size: 12px;
+  margin: 10px 0 0;
+}
+
+.status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 14px;
+  color: var(--muted);
+}
+
+.dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+
+.dot.ok {
+  background: var(--accent);
+}
+
+.dot.bad {
+  background: var(--danger);
+}
+
+.log {
+  margin-top: 12px;
+  background: #0b0c10;
+  color: #d5d7de;
+  border-radius: 12px;
+  padding: 14px;
+  min-height: 160px;
+  white-space: pre-wrap;
+  font-size: 12px;
+}
+
+@media (max-width: 640px) {
+  .row {
+    grid-template-columns: 1fr;
+  }
+}

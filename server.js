@@ -3,9 +3,12 @@ import "dotenv/config";
 import express from "express";
 import fs from "node:fs";
 import path from "node:path";
+import { runUploadFromUrl } from "./src/pipeline/runUploadFromUrl.js";
+import { classifyUrl } from "./src/utils/urlFilter.js";
 
 const app = express();
 app.set("trust proxy", true);
+app.use(express.json({ limit: "2mb" }));
 
 // ✅ out 폴더(이미지 파일) 정적 서빙
 app.use(
@@ -15,6 +18,7 @@ app.use(
   ),
 );
 app.use("/tmp", express.static(path.join(process.cwd(), "out"))); // /tmp/tmp_main.jpg 같은 형태로도 접근 가능
+app.use(express.static(path.join(process.cwd(), "public")));
 
 const PORT = Number(process.env.PORT || 3000);
 
@@ -62,8 +66,33 @@ function mustEnv(name) {
   return v;
 }
 
+let uploadInProgress = false;
+
 // ✅ 외부에서 연결 확인용
 app.get("/health", (req, res) => res.type("text").send("OK"));
+
+// ✅ 업로드 API
+app.post("/api/upload", async (req, res) => {
+  try {
+    const url = String(req.body?.url || "").trim();
+    if (!url) return res.status(400).json({ ok: false, error: "missing url" });
+
+    const c = classifyUrl(url);
+    if (!c.ok) return res.status(400).json({ ok: false, error: c.reason, url: c.url });
+
+    if (uploadInProgress) {
+      return res.status(409).json({ ok: false, error: "upload in progress" });
+    }
+    uploadInProgress = true;
+
+    const result = await runUploadFromUrl(c.url);
+    uploadInProgress = false;
+    return res.json({ ok: true, result });
+  } catch (e) {
+    uploadInProgress = false;
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
 
 // ✅ /go?u=<encoded_url> -> 302 redirect
 app.get("/go", (req, res) => {
