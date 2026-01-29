@@ -3,6 +3,7 @@ import { classifyUrl } from "../../utils/urlFilter.js";
 import { parseProductFromDomaeqq } from "../../sources/domaeqq/parseProductFromDomaeqq.js";
 import { buildSellerProductBody } from "../../coupang/builders/buildSellerProductBody.js";
 import { createSellerProduct } from "../../coupang/api/createSellerProduct.js";
+import { requestProductApproval } from "../../coupang/api/requestProductApproval.js";
 import { prepareProxyUrl } from "../../utils/imageProxy.js";
 import { probeImageUrl } from "../../utils/imageProbe.js";
 import { extractImageUrls, buildImageOnlyHtmlFromUrls, filterDomeggookUrls } from "../../utils/contentImages.js";
@@ -68,6 +69,18 @@ const DISPLAY_CATEGORY_CODE = 77723;
     });
     console.log("STATUS:", res.status);
     console.log("BODY:", res.body);
+
+    let createdId = null;
+    try {
+      const bodyObj = typeof res.body === "string" ? JSON.parse(res.body) : res.body;
+      createdId = bodyObj?.data ?? null;
+    } catch {}
+
+    if (createdId) {
+      const ar = await requestProductApproval({ sellerProductId: createdId });
+      console.log("APPROVAL STATUS:", ar.status);
+      console.log("APPROVAL BODY:", ar.body);
+    }
   } catch (e) {
     console.log("STEP20 ERROR:", String(e?.message || e));
     process.exit(1);
