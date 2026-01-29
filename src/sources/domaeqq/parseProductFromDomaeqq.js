@@ -1,4 +1,6 @@
 import { chromium } from "playwright";
+import fs from "node:fs";
+import path from "node:path";
 import { makeDraft } from "../../domain/productDraft.js";
 
 function floorTo10Won(n) {
@@ -42,7 +44,15 @@ async function pickMainImageSrc(page) {
 
 export async function parseProductFromDomaeqq(url) {
   const browser = await chromium.launch({ headless: true });
-  const page = await browser.newPage();
+  const storageStatePath =
+    process.env.DOMEGGOOK_STORAGE_STATE ||
+    path.join(process.cwd(), "storageState.json");
+
+  const context = fs.existsSync(storageStatePath)
+    ? await browser.newContext({ storageState: storageStatePath })
+    : await browser.newContext();
+
+  const page = await context.newPage();
 
   try {
     await page.goto(url, { waitUntil: "domcontentloaded", timeout: 90000 });
@@ -132,6 +142,7 @@ export async function parseProductFromDomaeqq(url) {
     });
   } finally {
     await page.close().catch(() => {});
+    await context.close().catch(() => {});
     await browser.close().catch(() => {});
   }
 }
