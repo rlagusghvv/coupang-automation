@@ -86,9 +86,9 @@ function getSessionToken(req) {
   return m ? m[1] : null;
 }
 
-function authRequired(req, res, next) {
+async function authRequired(req, res, next) {
   const token = getSessionToken(req);
-  const user = token ? getUserBySession(token) : null;
+  const user = token ? await getUserBySession(token) : null;
   if (!user) return res.status(401).json({ ok: false, error: "unauthorized" });
   req.user = user;
   next();
@@ -143,10 +143,10 @@ app.get("/api/settings", authRequired, (req, res) => {
   return res.json({ ok: true, settings: req.user.settings || {} });
 });
 
-app.post("/api/settings", authRequired, (req, res) => {
+app.post("/api/settings", authRequired, async (req, res) => {
   try {
     const next = req.body || {};
-    const saved = updateSettings(req.user.id, next);
+    const saved = await updateSettings(req.user.id, next);
     return res.json({ ok: true, settings: saved });
   } catch (e) {
     return res.status(400).json({ ok: false, error: String(e?.message || e) });
