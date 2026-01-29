@@ -45,16 +45,24 @@ if (!candidates.length) {
 
 console.log("Candidates:", candidates.length);
 
+const valid = [];
+const maxValid = Number(process.env.MAX_VALID || 50);
+
 for (const c of candidates) {
   const res = await coupangRequest({
     method: "GET",
     path: `/v2/providers/seller_api/apis/api/v1/marketplace/meta/category-related-metas/display-category-codes/${c.code}`,
   });
-  if (res.status === 200) {
-    console.log("FOUND VALID:");
-    console.log(`${c.code} | ${c.path}`);
-    process.exit(0);
-  }
+  if (res.status === 200) valid.push(c);
+  if (valid.length >= maxValid) break;
 }
 
-console.log("No valid category found for keyword.");
+if (!valid.length) {
+  console.log("No valid category found for keyword.");
+  process.exit(0);
+}
+
+console.log("Valid matches:");
+for (const v of valid) {
+  console.log(`${v.code} | ${v.path}`);
+}

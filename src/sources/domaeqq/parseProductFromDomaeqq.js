@@ -45,6 +45,21 @@ function sanitizeHtml(html, baseUrl) {
   });
 }
 
+function extractBodyHtml(html) {
+  const m = String(html || "").match(/<body[^>]*>([\s\S]*?)<\/body>/i);
+  if (m && m[1]) return m[1].trim();
+  return String(html || "");
+}
+
+function extractMainBlock(html) {
+  const s = String(html || "");
+  const idWrap = s.match(/<div[^>]+id=["']?wrap["']?[^>]*>([\s\S]*?)<\/div>/i);
+  if (idWrap && idWrap[1]) return idWrap[1].trim();
+  const clsWrap = s.match(/<div[^>]+class=["'][^"']*wrap[^"']*["'][^>]*>([\s\S]*?)<\/div>/i);
+  if (clsWrap && clsWrap[1]) return clsWrap[1].trim();
+  return s;
+}
+
 async function pickMainImageSrc(page) {
   const candidates = [
     "img.mainThumb",
@@ -183,7 +198,9 @@ export async function parseProductFromDomaeqq(url) {
         });
         if (res.ok) {
           const html = await res.text();
-          finalContentHtml = sanitizeHtml(html, detailHtmlUrl) || contentHtml;
+          const bodyOnly = extractBodyHtml(html);
+          const mainOnly = extractMainBlock(bodyOnly);
+          finalContentHtml = sanitizeHtml(mainOnly, detailHtmlUrl) || contentHtml;
         }
       } catch {
         // fallback to contentHtml
