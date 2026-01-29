@@ -4,6 +4,7 @@ import { parseProductFromDomaeqq } from "../../sources/domaeqq/parseProductFromD
 import { buildSellerProductBody } from "../../coupang/builders/buildSellerProductBody.js";
 import { createSellerProduct } from "../../coupang/api/createSellerProduct.js";
 import { requestProductApproval } from "../../coupang/api/requestProductApproval.js";
+import { getCategoryMetas } from "../../coupang/api/getCategoryMetas.js";
 import { prepareProxyUrl } from "../../utils/imageProxy.js";
 import { probeImageUrl } from "../../utils/imageProbe.js";
 import {
@@ -66,11 +67,23 @@ const DISPLAY_CATEGORY_CODE = 77723;
       fallback: DISPLAY_CATEGORY_CODE,
     });
 
+    let finalCategoryCode = displayCategoryCode;
+    try {
+      const meta = await getCategoryMetas({ displayCategoryCode });
+      if (meta.status !== 200) {
+        finalCategoryCode = DISPLAY_CATEGORY_CODE;
+        console.log("CATEGORY FALLBACK:", displayCategoryCode, "->", finalCategoryCode);
+      }
+    } catch {
+      finalCategoryCode = DISPLAY_CATEGORY_CODE;
+      console.log("CATEGORY FALLBACK:", displayCategoryCode, "->", finalCategoryCode);
+    }
+
     const body = buildSellerProductBody({
       vendorId: COUPANG_VENDOR_ID,
       vendorUserId: COUPANG_VENDOR_USER_ID,
       outboundShippingPlaceCode: OUTBOUND_SHIPPING_PLACE_CODE,
-      displayCategoryCode,
+      displayCategoryCode: finalCategoryCode,
       sellerProductName: draft.title,
       imageUrl,
       price: draft.price,

@@ -9,6 +9,7 @@ import { createSellerProduct } from "../../coupang/api/createSellerProduct.js";
 import { prepareProxyUrl } from "../../utils/imageProxy.js";
 import { extractImageUrls, filterDomeggookUrls, replaceImageSrcs } from "../../utils/contentImages.js";
 import { resolveDisplayCategoryCode } from "../../utils/categoryMap.js";
+import { getCategoryMetas } from "../../coupang/api/getCategoryMetas.js";
 
 const OUTBOUND_SHIPPING_PLACE_CODE = "24093380";
 const DISPLAY_CATEGORY_CODE = 77723;
@@ -77,11 +78,23 @@ async function uploadOne(line) {
       fallback: (maybeCode ? Number(maybeCode) : DISPLAY_CATEGORY_CODE),
     });
 
+    let finalCategoryCode = displayCategoryCode;
+    try {
+      const meta = await getCategoryMetas({ displayCategoryCode });
+      if (meta.status !== 200) {
+        finalCategoryCode = DISPLAY_CATEGORY_CODE;
+        console.log("CATEGORY FALLBACK:", displayCategoryCode, "->", finalCategoryCode);
+      }
+    } catch {
+      finalCategoryCode = DISPLAY_CATEGORY_CODE;
+      console.log("CATEGORY FALLBACK:", displayCategoryCode, "->", finalCategoryCode);
+    }
+
     const body = buildSellerProductBody({
       vendorId: COUPANG_VENDOR_ID,
       vendorUserId: COUPANG_VENDOR_USER_ID,
       outboundShippingPlaceCode: OUTBOUND_SHIPPING_PLACE_CODE,
-      displayCategoryCode,
+      displayCategoryCode: finalCategoryCode,
       sellerProductName: draft.title,
       imageUrl: imageForCoupang,
       price: draft.price,
