@@ -1,0 +1,23 @@
+import { buildProxyUrl } from "./imageProxy.js";
+
+export function extractImageUrls(html) {
+  const out = [];
+  if (!html) return out;
+
+  const re = /<img[^>]+src=["']?([^"' >]+)["']?/gi;
+  let m;
+  while ((m = re.exec(html))) {
+    const src = String(m[1] || "").trim();
+    if (!src) continue;
+    if (!/^https?:\/\//i.test(src)) continue;
+    if (!out.includes(src)) out.push(src);
+  }
+  return out;
+}
+
+export function buildImageOnlyHtml(imageUrls, proxyBase) {
+  if (!imageUrls || imageUrls.length === 0) return "";
+  return imageUrls
+    .map((u) => `<p><img src="${buildProxyUrl(u, proxyBase)}" /></p>`)
+    .join("");
+}

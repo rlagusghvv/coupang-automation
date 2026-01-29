@@ -2,7 +2,6 @@ import { buildAttributes } from "./buildAttributes.js";
 import { buildItemImages } from "./buildItemImages.js";
 import { buildNoticesEtcGoods } from "./buildNoticesEtcGoods.js";
 import { buildContentsText } from "./buildContentsText.js";
-import { toCoupangImageUrl } from "../../utils/coupangImageUrl.js";
 
 export function buildSingleItem({
   itemName = "단품",
@@ -12,8 +11,6 @@ export function buildSingleItem({
   imageUrl,
   contentText = "테스트 상품입니다.",
 } = {}) {
-  const finalUrl = toCoupangImageUrl(imageUrl);
-
   if (!imageUrl) throw new Error("imageUrl required (item)");
 
   return {
@@ -40,22 +37,10 @@ export function buildSingleItem({
       {
         imageOrder: 0,
         imageType: "REPRESENTATION",
-        vendorPath: finalUrl,
+        vendorPath: imageUrl,
       },
     ],
     notices: buildNoticesEtcGoods(),
-    contents: [
-      {
-        contentsType: "TEXT",
-        contentDetails: [
-          {
-            detailType: "TEXT",
-            content: detailImageUrls
-              .map((u) => `<p><img src="${toCoupangImageUrl(u)}" /></p>`)
-              .join(""),
-          },
-        ],
-      },
-    ],
+    contents: buildContentsText({ text: contentText }),
   };
 }

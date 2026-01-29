@@ -1,11 +1,13 @@
 import fs from "fs";
 import path from "path";
 
-import { COUPANG_VENDOR_ID, COUPANG_VENDOR_USER_ID } from "../../config/env.js";
+import { COUPANG_VENDOR_ID, COUPANG_VENDOR_USER_ID, IMAGE_PROXY_BASE } from "../../config/env.js";
 import { classifyUrl } from "../../utils/urlFilter.js";
 import { parseProductFromDomaeqq } from "../../sources/domaeqq/parseProductFromDomaeqq.js";
 import { buildSellerProductBody } from "../../coupang/builders/buildSellerProductBody.js";
 import { createSellerProduct } from "../../coupang/api/createSellerProduct.js";
+import { buildProxyUrl } from "../../utils/imageProxy.js";
+import { extractImageUrls, buildImageOnlyHtml } from "../../utils/contentImages.js";
 
 const OUTBOUND_SHIPPING_PLACE_CODE = "24093380";
 const DISPLAY_CATEGORY_CODE = 77723;
@@ -57,15 +59,20 @@ async function uploadOne(line) {
   try {
     const draft = await parseProductFromDomaeqq(c.url);
 
+    const imageForCoupang = buildProxyUrl(draft.imageUrl, IMAGE_PROXY_BASE);
+    const contentImages = extractImageUrls(draft.contentText);
+    const contentHtml = buildImageOnlyHtml(contentImages, IMAGE_PROXY_BASE) || draft.contentText;
+
     const body = buildSellerProductBody({
       vendorId: COUPANG_VENDOR_ID,
       vendorUserId: COUPANG_VENDOR_USER_ID,
       outboundShippingPlaceCode: OUTBOUND_SHIPPING_PLACE_CODE,
       displayCategoryCode: (maybeCode ? Number(maybeCode) : DISPLAY_CATEGORY_CODE),
       sellerProductName: draft.title,
-      imageUrl: draft.imageUrl,
+      imageUrl: imageForCoupang,
       price: draft.price,
       stock: 10,
+      contentText: contentHtml,
     });
 
     const res = await createSellerProduct({ vendorId: COUPANG_VENDOR_ID, body });

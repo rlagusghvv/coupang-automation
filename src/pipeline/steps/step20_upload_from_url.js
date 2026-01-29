@@ -1,10 +1,11 @@
-import { COUPANG_VENDOR_ID, COUPANG_VENDOR_USER_ID } from "../../config/env.js";
+import { COUPANG_VENDOR_ID, COUPANG_VENDOR_USER_ID, IMAGE_PROXY_BASE } from "../../config/env.js";
 import { classifyUrl } from "../../utils/urlFilter.js";
 import { parseProductFromDomaeqq } from "../../sources/domaeqq/parseProductFromDomaeqq.js";
 import { buildSellerProductBody } from "../../coupang/builders/buildSellerProductBody.js";
 import { createSellerProduct } from "../../coupang/api/createSellerProduct.js";
-import { toCoupangImageUrl } from "../../coupang/utils/coupangImageUrl.js";
+import { buildProxyUrl } from "../../utils/imageProxy.js";
 import { probeImageUrl } from "../../utils/imageProbe.js";
+import { extractImageUrls, buildImageOnlyHtml } from "../../utils/contentImages.js";
 
 const OUTBOUND_SHIPPING_PLACE_CODE = "24093380";
 const DISPLAY_CATEGORY_CODE = 77723;
@@ -31,14 +32,17 @@ const DISPLAY_CATEGORY_CODE = 77723;
       price: draft.price,
       imageUrl: draft.imageUrl,
     });
-    const imageForCoupang = toCoupangImageUrl(draft.imageUrl);
+    const imageForCoupang = buildProxyUrl(draft.imageUrl, IMAGE_PROXY_BASE);
     const p = await probeImageUrl(imageForCoupang);
     if (!p.ok) {
       console.log("IMAGE PROBE FAIL:", p.reason, p.debug);
       throw new Error("Coupang image URL not accessible as image");
     }
 
-    const imageUrl = probe.finalUrl; // ✅ 검증 통과 + 최종 URL
+    const imageUrl = p.finalUrl; // ✅ 검증 통과 + 최종 URL
+
+    const contentImages = extractImageUrls(draft.contentText);
+    const contentHtml = buildImageOnlyHtml(contentImages, IMAGE_PROXY_BASE) || draft.contentText;
 
     const body = buildSellerProductBody({
       vendorId: COUPANG_VENDOR_ID,
@@ -46,10 +50,10 @@ const DISPLAY_CATEGORY_CODE = 77723;
       outboundShippingPlaceCode: OUTBOUND_SHIPPING_PLACE_CODE,
       displayCategoryCode: DISPLAY_CATEGORY_CODE,
       sellerProductName: draft.title,
-      imageUrl: imageForCoupang,
+      imageUrl,
       price: draft.price,
       stock: 10,
-      contentText: draft.contentText,
+      contentText: contentHtml,
     });
 
     const res = await createSellerProduct({
