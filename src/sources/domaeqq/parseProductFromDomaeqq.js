@@ -13,20 +13,31 @@ function pickPriceFromText(allText) {
   return Number(m[1].replace(/,/g, ""));
 }
 
-// ✅ 도매꾹 CDN의 _img_330 같은 리사이즈 파라미터를 큰 값으로 치환
-function upgradeDomeggookImage(url) {
-  if (!url) return url;
-  let u = String(url).trim();
-  if (u.startsWith("//")) u = "https:" + u;
+function normalizeUrl(u) {
+  if (!u) return null;
+  const s = String(u).trim();
+  if (s.startsWith("//")) return "https:" + s;
+  return s;
+}
 
-  // ..._img_330 -> ..._img_1000 (330/400/450 같은 것 방지)
-  u = u.replace(/_img_(\d+)(\?|$)/, (m, n, tail) => {
-    const size = Number(n);
-    if (!Number.isNaN(size) && size < 600) return `_img_1000${tail}`;
-    return m;
-  });
+async function pickMainImageSrc(page) {
+  const candidates = [
+    "img.mainThumb",
+    "#lThumbImg",
+    "img#lThumbImg",
+    "#lThumbWrap img",
+    "img",
+  ];
 
-  return u;
+  for (const sel of candidates) {
+    const loc = page.locator(sel).first();
+    try {
+      await loc.waitFor({ state: "attached", timeout: 8000 });
+      const src = normalizeUrl(await loc.getAttribute("src"));
+      if (src && src.startsWith("http")) return src;
+    } catch {}
+  }
+  return null;
 }
 
 export async function parseProductFromDomaeqq(url) {
@@ -51,8 +62,15 @@ export async function parseProductFromDomaeqq(url) {
 
     const price = Math.max(1000, floorTo10Won(priceRaw) || 1000);
 
-    // 대표 이미지: og:image 우선
-    let imageUrl = await page.locator('meta[property="og:image"]').getAttribute("content").catch(() => null);
+    // 대표 이미지: 메인 썸네일 우선
+    let imageUrl = await pickMainImageSrc(page);
+
+    // 없으면 og:image
+    if (!imageUrl) {
+      imageUrl = normalizeUrl(
+        await page.locator('meta[property="og:image"]').getAttribute("content").catch(() => null),
+      );
+    }
 
     // 없으면 첫 이미지 후보
     if (!imageUrl) {
@@ -64,8 +82,6 @@ export async function parseProductFromDomaeqq(url) {
         return imgs[0] || null;
       });
     }
-
-    imageUrl = upgradeDomeggookImage(imageUrl || "");
 
     // ✅ 상세 HTML 추출(스크립트/스타일 제거 + img src 정리 + 업그레이드)
     const contentHtml = await page.evaluate(() => {
@@ -107,19 +123,12 @@ export async function parseProductFromDomaeqq(url) {
       return normHtml(wrapper.innerHTML);
     });
 
-    // 상세 HTML 내부의 _img_330도 서버단에서 치환
-    const upgradedContentHtml = String(contentHtml || "").replace(/_img_(\d+)(\?|")/g, (m, n, tail) => {
-      const size = Number(n);
-      if (!Number.isNaN(size) && size < 600) return `_img_1000${tail}`;
-      return m;
-    });
-
     return makeDraft({
       sourceUrl: url,
       title: titleText || (await page.title().catch(() => "도매꾹 상품")),
       price,
       imageUrl: imageUrl || "https://via.placeholder.com/1000",
-      contentText: upgradedContentHtml || titleText || "",
+      contentText: contentHtml || titleText || "",
     });
   } finally {
     await page.close().catch(() => {});
