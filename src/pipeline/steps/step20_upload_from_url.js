@@ -1,0 +1,65 @@
+import { COUPANG_VENDOR_ID, COUPANG_VENDOR_USER_ID } from "../../config/env.js";
+import { classifyUrl } from "../../utils/urlFilter.js";
+import { parseProductFromDomaeqq } from "../../sources/domaeqq/parseProductFromDomaeqq.js";
+import { buildSellerProductBody } from "../../coupang/builders/buildSellerProductBody.js";
+import { createSellerProduct } from "../../coupang/api/createSellerProduct.js";
+import { toCoupangImageUrl } from "../../coupang/utils/coupangImageUrl.js";
+import { probeImageUrl } from "../../utils/imageProbe.js";
+
+const OUTBOUND_SHIPPING_PLACE_CODE = "24093380";
+const DISPLAY_CATEGORY_CODE = 77723;
+
+(async () => {
+  try {
+    const input = process.argv[2];
+    if (!input) {
+      console.log(
+        'Usage: node src/pipeline/steps/step20_upload_from_url.js "https://상품URL"',
+      );
+      process.exit(1);
+    }
+
+    const c = classifyUrl(input);
+    if (!c.ok) {
+      console.log("SKIP:", c.reason, c.url);
+      process.exit(0);
+    }
+
+    const draft = await parseProductFromDomaeqq(c.url);
+    console.log("DRAFT:", {
+      title: draft.title,
+      price: draft.price,
+      imageUrl: draft.imageUrl,
+    });
+    const imageForCoupang = toCoupangImageUrl(draft.imageUrl);
+    const p = await probeImageUrl(imageForCoupang);
+    if (!p.ok) {
+      console.log("IMAGE PROBE FAIL:", p.reason, p.debug);
+      throw new Error("Coupang image URL not accessible as image");
+    }
+
+    const imageUrl = probe.finalUrl; // ✅ 검증 통과 + 최종 URL
+
+    const body = buildSellerProductBody({
+      vendorId: COUPANG_VENDOR_ID,
+      vendorUserId: COUPANG_VENDOR_USER_ID,
+      outboundShippingPlaceCode: OUTBOUND_SHIPPING_PLACE_CODE,
+      displayCategoryCode: DISPLAY_CATEGORY_CODE,
+      sellerProductName: draft.title,
+      imageUrl: imageForCoupang,
+      price: draft.price,
+      stock: 10,
+      contentText: draft.contentText,
+    });
+
+    const res = await createSellerProduct({
+      vendorId: COUPANG_VENDOR_ID,
+      body,
+    });
+    console.log("STATUS:", res.status);
+    console.log("BODY:", res.body);
+  } catch (e) {
+    console.log("STEP20 ERROR:", String(e?.message || e));
+    process.exit(1);
+  }
+})();

@@ -1,0 +1,15 @@
+{
+  "pricing": {
+    "marginRate": 1.35,
+    "fixedFee": 3000,
+    "roundTo": 10
+  },
+  "inventory": {
+    "defaultStock": 9999
+  },
+  "coupang": {
+    "status": "TEMPORARY",
+    "adultOnly": false,
+    "parallelImported": "NOT_PARALLEL_IMPORTED"
+  }
+}
