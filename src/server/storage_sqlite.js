@@ -91,6 +91,7 @@ export async function verifyUser({ email, password }) {
 }
 
 export async function createSession(userId) {
+  if (!userId) throw new Error("userId required");
   const db = openDb();
   const token = crypto.randomBytes(24).toString("hex");
   await dbRun(db, "INSERT INTO sessions (token, user_id, created_at) VALUES (?, ?, ?)", [

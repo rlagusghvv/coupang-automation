@@ -98,13 +98,13 @@ function authRequired(req, res, next) {
 app.get("/health", (req, res) => res.type("text").send("OK"));
 
 // ✅ 계정: 회원가입
-app.post("/api/signup", (req, res) => {
+app.post("/api/signup", async (req, res) => {
   try {
     const email = String(req.body?.email || "").trim().toLowerCase();
     const password = String(req.body?.password || "").trim();
     if (!email || !password) return res.status(400).json({ ok: false, error: "missing fields" });
-    const user = createUser({ email, password });
-    const token = createSession(user.id);
+    const user = await createUser({ email, password });
+    const token = await createSession(user.id);
     res.setHeader("Set-Cookie", `session=${token}; HttpOnly; Path=/`);
     return res.json({ ok: true, user });
   } catch (e) {
@@ -113,21 +113,21 @@ app.post("/api/signup", (req, res) => {
 });
 
 // ✅ 계정: 로그인
-app.post("/api/login", (req, res) => {
+app.post("/api/login", async (req, res) => {
   const email = String(req.body?.email || "").trim().toLowerCase();
   const password = String(req.body?.password || "").trim();
   if (!email || !password) return res.status(400).json({ ok: false, error: "missing fields" });
-  const user = verifyUser({ email, password });
+  const user = await verifyUser({ email, password });
   if (!user) return res.status(401).json({ ok: false, error: "invalid credentials" });
-  const token = createSession(user.id);
+  const token = await createSession(user.id);
   res.setHeader("Set-Cookie", `session=${token}; HttpOnly; Path=/`);
   return res.json({ ok: true, user });
 });
 
 // ✅ 계정: 로그아웃
-app.post("/api/logout", (req, res) => {
+app.post("/api/logout", async (req, res) => {
   const token = getSessionToken(req);
-  if (token) destroySession(token);
+  if (token) await destroySession(token);
   res.setHeader("Set-Cookie", "session=; Max-Age=0; Path=/");
   return res.json({ ok: true });
 });
