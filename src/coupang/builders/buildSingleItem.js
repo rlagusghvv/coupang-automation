@@ -10,10 +10,11 @@ export function buildSingleItem({
   outboundShippingTimeDay = 1,
   imageUrl,
   contentText = "테스트 상품입니다.",
+  notices,
 } = {}) {
   if (!imageUrl) throw new Error("imageUrl required (item)");
 
-  return {
+  const item = {
     itemName,
     originalPrice: price,
     salePrice: price,
@@ -40,7 +41,11 @@ export function buildSingleItem({
         vendorPath: imageUrl,
       },
     ],
-    notices: buildNoticesEtcGoods(),
+    notices: notices ?? buildNoticesEtcGoods(),
     contents: buildContentsText({ text: contentText }),
   };
+
+  if (notices === null) delete item.notices;
+
+  return item;
 }

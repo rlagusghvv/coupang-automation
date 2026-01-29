@@ -26,6 +26,7 @@ export function makeDraft({
   price,
   imageUrl,
   contentText = "",
+  categoryText = "",
 }) {
   return validateDraft({
     sourceUrl: String(sourceUrl).trim(),
@@ -33,5 +34,6 @@ export function makeDraft({
     price: floorTo10Won(price), // ✅ 여기
     imageUrl: String(imageUrl).trim(),
     contentText: String(contentText || "").trim(),
+    categoryText: String(categoryText || "").trim(),
   });
 }

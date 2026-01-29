@@ -15,20 +15,24 @@ export function buildSellerProductBody({
   price = 9900,
   stock = 10,
   contentText = "", // ✅ 추가
+  notices,
+  allowAutoCategory = false,
 } = {}) {
   if (!vendorId) throw new Error("vendorId required");
   if (!vendorUserId) throw new Error("vendorUserId required");
   if (!outboundShippingPlaceCode) throw new Error("outboundShippingPlaceCode required");
-  if (!displayCategoryCode) throw new Error("displayCategoryCode required");
+  if (displayCategoryCode == null && !allowAutoCategory) {
+    throw new Error("displayCategoryCode required");
+  }
   if (!sellerProductName) throw new Error("sellerProductName required");
   if (!imageUrl) throw new Error("imageUrl required (top)");
 
-  return {
+  const body = {
     vendorId,
     vendorUserId,
     requested: false,
 
-    displayCategoryCode,
+    ...(displayCategoryCode != null ? { displayCategoryCode } : {}),
     sellerProductName,
     brand,
     manufacturer,
@@ -50,7 +54,10 @@ export function buildSellerProductBody({
         outboundShippingTimeDay: 1,
         imageUrl,
         contentText, // ✅ draft에서 내려온 상세 주입
+        notices,
       }),
     ],
   };
+
+  return body;
 }

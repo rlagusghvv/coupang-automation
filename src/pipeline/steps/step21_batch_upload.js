@@ -10,6 +10,10 @@ import { prepareProxyUrl } from "../../utils/imageProxy.js";
 import { extractImageUrls, filterDomeggookUrls, replaceImageSrcs } from "../../utils/contentImages.js";
 import { resolveDisplayCategoryCode } from "../../utils/categoryMap.js";
 import { getCategoryMetas } from "../../coupang/api/getCategoryMetas.js";
+import { checkAutoCategoryAgreed } from "../../coupang/api/checkAutoCategoryAgreed.js";
+import { recommendCategory } from "../../coupang/api/recommendCategory.js";
+import { computePrice } from "../../utils/price.js";
+import { getCategoryMetas } from "../../coupang/api/getCategoryMetas.js";
 
 const OUTBOUND_SHIPPING_PLACE_CODE = "24093380";
 const DISPLAY_CATEGORY_CODE = 77723;
@@ -78,16 +82,50 @@ async function uploadOne(line) {
       fallback: (maybeCode ? Number(maybeCode) : DISPLAY_CATEGORY_CODE),
     });
 
+    const finalPrice = computePrice(draft.price);
+
+    const useAutoCategory = String(process.env.AUTO_CATEGORY_MATCH || "").trim() === "1";
+    let allowAutoCategory = false;
+    if (useAutoCategory) {
+      try {
+        const agreed = await checkAutoCategoryAgreed({ vendorId: COUPANG_VENDOR_ID });
+        allowAutoCategory = agreed.status === 200;
+      } catch {
+        allowAutoCategory = false;
+      }
+    }
+
     let finalCategoryCode = displayCategoryCode;
-    try {
-      const meta = await getCategoryMetas({ displayCategoryCode });
-      if (meta.status !== 200) {
+    let notices = undefined;
+
+    if (allowAutoCategory) {
+      finalCategoryCode = null;
+      notices = null;
+    } else {
+      const useRecommend = String(process.env.AUTO_CATEGORY_RECOMMEND || "").trim() === "1";
+      if (useRecommend) {
+        try {
+          const rec = await recommendCategory({
+            productName: draft.title,
+            productDescription: draft.contentText?.slice(0, 2000) || "",
+            productImageUrl: imageForCoupang,
+          });
+          const bodyObj = typeof rec.body === "string" ? JSON.parse(rec.body) : rec.body;
+          const recCode = bodyObj?.data?.predictedCategoryId;
+          if (recCode) finalCategoryCode = Number(recCode);
+        } catch {}
+      }
+
+      try {
+        const meta = await getCategoryMetas({ displayCategoryCode: finalCategoryCode });
+        if (meta.status !== 200) {
+          finalCategoryCode = DISPLAY_CATEGORY_CODE;
+          console.log("CATEGORY FALLBACK:", displayCategoryCode, "->", finalCategoryCode);
+        }
+      } catch {
         finalCategoryCode = DISPLAY_CATEGORY_CODE;
         console.log("CATEGORY FALLBACK:", displayCategoryCode, "->", finalCategoryCode);
       }
-    } catch {
-      finalCategoryCode = DISPLAY_CATEGORY_CODE;
-      console.log("CATEGORY FALLBACK:", displayCategoryCode, "->", finalCategoryCode);
     }
 
     const body = buildSellerProductBody({
@@ -95,11 +133,13 @@ async function uploadOne(line) {
       vendorUserId: COUPANG_VENDOR_USER_ID,
       outboundShippingPlaceCode: OUTBOUND_SHIPPING_PLACE_CODE,
       displayCategoryCode: finalCategoryCode,
+      allowAutoCategory,
       sellerProductName: draft.title,
       imageUrl: imageForCoupang,
-      price: draft.price,
+      price: finalPrice,
       stock: 10,
       contentText: contentHtml,
+      notices,
     });
 
     const res = await createSellerProduct({ vendorId: COUPANG_VENDOR_ID, body });
