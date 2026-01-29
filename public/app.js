@@ -81,8 +81,13 @@ function switchTab(name) {
 
 async function loadSettings() {
   const res = await fetch("/api/settings");
-  const json = await res.json();
-  if (!json.ok) return;
+  const json = await res.json().catch(() => ({}));
+  if (!json.ok) {
+    Object.values(settingsEls).forEach((el) => {
+      el.value = "";
+    });
+    return;
+  }
   const s = json.settings || {};
   settingsEls.coupangAccessKey.value = s.coupangAccessKey || "";
   settingsEls.coupangSecretKey.value = s.coupangSecretKey || "";
@@ -176,6 +181,9 @@ async function login() {
 async function logout() {
   await fetch("/api/logout", { method: "POST" });
   authEls.status.textContent = "로그인 필요";
+  Object.values(settingsEls).forEach((el) => {
+    el.value = "";
+  });
 }
 
 async function run() {

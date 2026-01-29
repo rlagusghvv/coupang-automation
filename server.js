@@ -105,7 +105,7 @@ app.post("/api/signup", async (req, res) => {
     if (!email || !password) return res.status(400).json({ ok: false, error: "missing fields" });
     const user = await createUser({ email, password });
     const token = await createSession(user.id);
-    res.setHeader("Set-Cookie", `session=${token}; HttpOnly; Path=/`);
+    res.setHeader("Set-Cookie", `session=${token}; HttpOnly; Path=/; SameSite=Lax`);
     return res.json({ ok: true, user });
   } catch (e) {
     return res.status(400).json({ ok: false, error: String(e?.message || e) });
@@ -120,7 +120,7 @@ app.post("/api/login", async (req, res) => {
   const user = await verifyUser({ email, password });
   if (!user) return res.status(401).json({ ok: false, error: "invalid credentials" });
   const token = await createSession(user.id);
-  res.setHeader("Set-Cookie", `session=${token}; HttpOnly; Path=/`);
+  res.setHeader("Set-Cookie", `session=${token}; HttpOnly; Path=/; SameSite=Lax`);
   return res.json({ ok: true, user });
 });
 
@@ -128,7 +128,7 @@ app.post("/api/login", async (req, res) => {
 app.post("/api/logout", async (req, res) => {
   const token = getSessionToken(req);
   if (token) await destroySession(token);
-  res.setHeader("Set-Cookie", "session=; Max-Age=0; Path=/");
+  res.setHeader("Set-Cookie", "session=; Max-Age=0; Path=/; SameSite=Lax");
   return res.json({ ok: true });
 });
 
