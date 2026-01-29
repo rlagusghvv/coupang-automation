@@ -59,9 +59,10 @@ async function uploadOne(line) {
   try {
     const draft = await parseProductFromDomaeqq(c.url);
 
-    const imageForCoupang = buildProxyUrl(draft.imageUrl, IMAGE_PROXY_BASE);
+    const imageForCoupang = buildProxyUrl(draft.imageUrl, IMAGE_PROXY_BASE, draft.sourceUrl);
     const contentImages = extractImageUrls(draft.contentText);
-    const contentHtml = buildImageOnlyHtml(contentImages, IMAGE_PROXY_BASE) || draft.contentText;
+    const contentHtml =
+      buildImageOnlyHtml(contentImages, IMAGE_PROXY_BASE, draft.sourceUrl) || draft.contentText;
 
     const body = buildSellerProductBody({
       vendorId: COUPANG_VENDOR_ID,

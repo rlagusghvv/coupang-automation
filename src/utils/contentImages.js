@@ -15,9 +15,9 @@ export function extractImageUrls(html) {
   return out;
 }
 
-export function buildImageOnlyHtml(imageUrls, proxyBase) {
+export function buildImageOnlyHtml(imageUrls, proxyBase, referer) {
   if (!imageUrls || imageUrls.length === 0) return "";
   return imageUrls
-    .map((u) => `<p><img src="${buildProxyUrl(u, proxyBase)}" /></p>`)
+    .map((u) => `<p><img src="${buildProxyUrl(u, proxyBase, referer)}" /></p>`)
     .join("");
 }

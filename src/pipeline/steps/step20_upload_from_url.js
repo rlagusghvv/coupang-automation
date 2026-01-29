@@ -32,7 +32,7 @@ const DISPLAY_CATEGORY_CODE = 77723;
       price: draft.price,
       imageUrl: draft.imageUrl,
     });
-    const imageForCoupang = buildProxyUrl(draft.imageUrl, IMAGE_PROXY_BASE);
+    const imageForCoupang = buildProxyUrl(draft.imageUrl, IMAGE_PROXY_BASE, draft.sourceUrl);
     const p = await probeImageUrl(imageForCoupang);
     if (!p.ok) {
       console.log("IMAGE PROBE FAIL:", p.reason, p.debug);
@@ -42,7 +42,8 @@ const DISPLAY_CATEGORY_CODE = 77723;
     const imageUrl = p.finalUrl; // ✅ 검증 통과 + 최종 URL
 
     const contentImages = extractImageUrls(draft.contentText);
-    const contentHtml = buildImageOnlyHtml(contentImages, IMAGE_PROXY_BASE) || draft.contentText;
+    const contentHtml =
+      buildImageOnlyHtml(contentImages, IMAGE_PROXY_BASE, draft.sourceUrl) || draft.contentText;
 
     const body = buildSellerProductBody({
       vendorId: COUPANG_VENDOR_ID,

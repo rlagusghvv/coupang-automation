@@ -23,6 +23,7 @@ export async function onRequest({ request }) {
   try {
     const url = new URL(request.url);
     const u = String(url.searchParams.get("u") || "").trim();
+    const r = String(url.searchParams.get("r") || "").trim();
     if (!u) {
       return new Response("missing u", { status: 400, headers: { "content-type": "text/plain" } });
     }
@@ -42,13 +43,29 @@ export async function onRequest({ request }) {
       return new Response("forbidden host", { status: 403, headers: { "content-type": "text/plain" } });
     }
 
-    const res = await fetch(target.toString(), {
-      headers: {
-        "Referer": "https://domeggook.com/",
-        "User-Agent": "Mozilla/5.0",
-        "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
-      },
-    });
+    const referer = r && /^https?:\/\//i.test(r) ? r : "https://domeggook.com/";
+
+    const attempts = [
+      { url: target.toString(), referer },
+      { url: target.toString(), referer: "" },
+    ];
+    if (target.protocol === "https:") {
+      const httpUrl = "http://" + target.host + target.pathname + target.search;
+      attempts.push({ url: httpUrl, referer });
+      attempts.push({ url: httpUrl, referer: "" });
+    }
+
+    let res = null;
+    for (const a of attempts) {
+      res = await fetch(a.url, {
+        headers: {
+          "User-Agent": "Mozilla/5.0",
+          "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+          ...(a.referer ? { "Referer": a.referer } : {}),
+        },
+      });
+      if (res.ok) break;
+    }
 
     if (!res.ok) {
       return new Response(`upstream ${res.status}`, {
