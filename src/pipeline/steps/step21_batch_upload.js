@@ -6,8 +6,8 @@ import { classifyUrl } from "../../utils/urlFilter.js";
 import { parseProductFromDomaeqq } from "../../sources/domaeqq/parseProductFromDomaeqq.js";
 import { buildSellerProductBody } from "../../coupang/builders/buildSellerProductBody.js";
 import { createSellerProduct } from "../../coupang/api/createSellerProduct.js";
-import { buildProxyUrl } from "../../utils/imageProxy.js";
-import { extractImageUrls, buildImageOnlyHtml } from "../../utils/contentImages.js";
+import { prepareProxyUrl } from "../../utils/imageProxy.js";
+import { extractImageUrls, buildImageOnlyHtmlFromUrls } from "../../utils/contentImages.js";
 
 const OUTBOUND_SHIPPING_PLACE_CODE = "24093380";
 const DISPLAY_CATEGORY_CODE = 77723;
@@ -59,10 +59,12 @@ async function uploadOne(line) {
   try {
     const draft = await parseProductFromDomaeqq(c.url);
 
-    const imageForCoupang = buildProxyUrl(draft.imageUrl, IMAGE_PROXY_BASE, draft.sourceUrl);
+    const imageForCoupang = await prepareProxyUrl(draft.imageUrl, IMAGE_PROXY_BASE, draft.sourceUrl);
     const contentImages = extractImageUrls(draft.contentText);
-    const contentHtml =
-      buildImageOnlyHtml(contentImages, IMAGE_PROXY_BASE, draft.sourceUrl) || draft.contentText;
+    const proxiedContentUrls = await Promise.all(
+      contentImages.map((u) => prepareProxyUrl(u, IMAGE_PROXY_BASE, draft.sourceUrl)),
+    );
+    const contentHtml = buildImageOnlyHtmlFromUrls(proxiedContentUrls) || draft.contentText;
 
     const body = buildSellerProductBody({
       vendorId: COUPANG_VENDOR_ID,

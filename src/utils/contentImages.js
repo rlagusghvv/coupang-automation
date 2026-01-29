@@ -21,3 +21,8 @@ export function buildImageOnlyHtml(imageUrls, proxyBase, referer) {
     .map((u) => `<p><img src="${buildProxyUrl(u, proxyBase, referer)}" /></p>`)
     .join("");
 }
+
+export function buildImageOnlyHtmlFromUrls(imageUrls) {
+  if (!imageUrls || imageUrls.length === 0) return "";
+  return imageUrls.map((u) => `<p><img src="${u}" /></p>`).join("");
+}

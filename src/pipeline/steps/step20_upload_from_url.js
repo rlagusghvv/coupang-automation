@@ -3,9 +3,9 @@ import { classifyUrl } from "../../utils/urlFilter.js";
 import { parseProductFromDomaeqq } from "../../sources/domaeqq/parseProductFromDomaeqq.js";
 import { buildSellerProductBody } from "../../coupang/builders/buildSellerProductBody.js";
 import { createSellerProduct } from "../../coupang/api/createSellerProduct.js";
-import { buildProxyUrl } from "../../utils/imageProxy.js";
+import { prepareProxyUrl } from "../../utils/imageProxy.js";
 import { probeImageUrl } from "../../utils/imageProbe.js";
-import { extractImageUrls, buildImageOnlyHtml } from "../../utils/contentImages.js";
+import { extractImageUrls, buildImageOnlyHtmlFromUrls } from "../../utils/contentImages.js";
 
 const OUTBOUND_SHIPPING_PLACE_CODE = "24093380";
 const DISPLAY_CATEGORY_CODE = 77723;
@@ -32,7 +32,7 @@ const DISPLAY_CATEGORY_CODE = 77723;
       price: draft.price,
       imageUrl: draft.imageUrl,
     });
-    const imageForCoupang = buildProxyUrl(draft.imageUrl, IMAGE_PROXY_BASE, draft.sourceUrl);
+    const imageForCoupang = await prepareProxyUrl(draft.imageUrl, IMAGE_PROXY_BASE, draft.sourceUrl);
     const p = await probeImageUrl(imageForCoupang);
     if (!p.ok) {
       console.log("IMAGE PROBE FAIL:", p.reason, p.debug);
@@ -42,8 +42,10 @@ const DISPLAY_CATEGORY_CODE = 77723;
     const imageUrl = p.finalUrl; // ✅ 검증 통과 + 최종 URL
 
     const contentImages = extractImageUrls(draft.contentText);
-    const contentHtml =
-      buildImageOnlyHtml(contentImages, IMAGE_PROXY_BASE, draft.sourceUrl) || draft.contentText;
+    const proxiedContentUrls = await Promise.all(
+      contentImages.map((u) => prepareProxyUrl(u, IMAGE_PROXY_BASE, draft.sourceUrl)),
+    );
+    const contentHtml = buildImageOnlyHtmlFromUrls(proxiedContentUrls) || draft.contentText;
 
     const body = buildSellerProductBody({
       vendorId: COUPANG_VENDOR_ID,

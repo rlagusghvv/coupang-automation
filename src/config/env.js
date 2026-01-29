@@ -15,4 +15,4 @@ export const COUPANG_VENDOR_USER_ID = required("COUPANG_VENDOR_USER_ID");
 export const COUPANG_DELIVERY_COMPANY_CODE = required("COUPANG_DELIVERY_COMPANY_CODE");
 
 export const IMAGE_PROXY_BASE =
-  (process.env.IMAGE_PROXY_BASE || "https://coupang-automation.pages.dev/img?u=").trim();
+  (process.env.IMAGE_PROXY_BASE || "https://coupang-automation.pages.dev").trim();
