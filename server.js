@@ -134,7 +134,8 @@ app.post("/api/logout", (req, res) => {
 
 // ✅ 계정: 내 정보
 app.get("/api/me", authRequired, (req, res) => {
-  return res.json({ ok: true, user: { id: req.user.id, email: req.user.email } });
+  const email = req.user.email || "";
+  return res.json({ ok: true, user: { id: req.user.id, email } });
 });
 
 // ✅ 설정: 조회/저장

@@ -129,7 +129,8 @@ async function updateAuthStatus() {
     return;
   }
   const json = await res.json();
-  authEls.status.textContent = `로그인됨: ${json.user.email}`;
+  const label = json?.user?.email || json?.user?.id || "알 수 없음";
+  authEls.status.textContent = `로그인됨: ${label}`;
 }
 
 async function signup() {
