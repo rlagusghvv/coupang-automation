@@ -7,7 +7,7 @@ import { parseProductFromDomaeqq } from "../../sources/domaeqq/parseProductFromD
 import { buildSellerProductBody } from "../../coupang/builders/buildSellerProductBody.js";
 import { createSellerProduct } from "../../coupang/api/createSellerProduct.js";
 import { prepareProxyUrl } from "../../utils/imageProxy.js";
-import { extractImageUrls, buildImageOnlyHtmlFromUrls } from "../../utils/contentImages.js";
+import { extractImageUrls, buildImageOnlyHtmlFromUrls, filterDomeggookUrls } from "../../utils/contentImages.js";
 
 const OUTBOUND_SHIPPING_PLACE_CODE = "24093380";
 const DISPLAY_CATEGORY_CODE = 77723;
@@ -60,10 +60,13 @@ async function uploadOne(line) {
     const draft = await parseProductFromDomaeqq(c.url);
 
     const imageForCoupang = await prepareProxyUrl(draft.imageUrl, IMAGE_PROXY_BASE, draft.sourceUrl);
-    const contentImages = extractImageUrls(draft.contentText);
-    const proxiedContentUrls = await Promise.all(
+    const contentImages = filterDomeggookUrls(extractImageUrls(draft.contentText));
+    const settled = await Promise.allSettled(
       contentImages.map((u) => prepareProxyUrl(u, IMAGE_PROXY_BASE, draft.sourceUrl)),
     );
+    const proxiedContentUrls = settled
+      .filter((r) => r.status === "fulfilled")
+      .map((r) => r.value);
     const contentHtml = buildImageOnlyHtmlFromUrls(proxiedContentUrls) || draft.contentText;
 
     const body = buildSellerProductBody({

@@ -45,7 +45,7 @@ export async function prepareProxyUrl(rawUrl, proxyBase, referer) {
   const json = await res.json().catch(() => ({}));
   if (!res.ok || !json?.url) {
     const msg = json?.error || `status ${res.status}`;
-    throw new Error("image proxy prepare failed: " + msg);
+    throw new Error("image proxy prepare failed: " + msg + " url=" + u);
   }
   return String(json.url);
 }

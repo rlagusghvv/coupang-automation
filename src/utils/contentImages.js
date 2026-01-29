@@ -26,3 +26,8 @@ export function buildImageOnlyHtmlFromUrls(imageUrls) {
   if (!imageUrls || imageUrls.length === 0) return "";
   return imageUrls.map((u) => `<p><img src="${u}" /></p>`).join("");
 }
+
+export function filterDomeggookUrls(urls) {
+  if (!urls || urls.length === 0) return [];
+  return urls.filter((u) => /https?:\/\/([^/]*\.)?domeggook\.com\//i.test(String(u)));
+}
