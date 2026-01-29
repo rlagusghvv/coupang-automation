@@ -1,4 +1,11 @@
-import { COUPANG_VENDOR_ID, COUPANG_VENDOR_USER_ID, IMAGE_PROXY_BASE } from "../config/env.js";
+import {
+  COUPANG_VENDOR_ID,
+  COUPANG_VENDOR_USER_ID,
+  IMAGE_PROXY_BASE,
+  COUPANG_ACCESS_KEY,
+  COUPANG_SECRET_KEY,
+  COUPANG_DELIVERY_COMPANY_CODE,
+} from "../config/env.js";
 import { classifyUrl } from "../utils/urlFilter.js";
 import { parseProductFromDomaeqq } from "../sources/domaeqq/parseProductFromDomaeqq.js";
 import { buildSellerProductBody } from "../coupang/builders/buildSellerProductBody.js";
@@ -16,15 +23,24 @@ import { computePrice } from "../utils/price.js";
 const OUTBOUND_SHIPPING_PLACE_CODE = "24093380";
 const DISPLAY_CATEGORY_CODE = 77723;
 
-export async function runUploadFromUrl(inputUrl) {
+export async function runUploadFromUrl(inputUrl, settings = {}) {
   const c = classifyUrl(inputUrl);
   if (!c.ok) {
     return { ok: false, skipped: true, reason: c.reason, url: c.url };
   }
 
+  // 사용자별 설정 우선
+  const accessKey = settings.coupangAccessKey || COUPANG_ACCESS_KEY;
+  const secretKey = settings.coupangSecretKey || COUPANG_SECRET_KEY;
+  const vendorId = settings.coupangVendorId || COUPANG_VENDOR_ID;
+  const vendorUserId = settings.coupangVendorUserId || COUPANG_VENDOR_USER_ID;
+  const deliveryCompanyCode =
+    settings.coupangDeliveryCompanyCode || COUPANG_DELIVERY_COMPANY_CODE;
+  const imageProxyBase = settings.imageProxyBase || IMAGE_PROXY_BASE;
+
   const draft = await parseProductFromDomaeqq(c.url);
 
-  const imageForCoupang = await prepareProxyUrl(draft.imageUrl, IMAGE_PROXY_BASE, draft.sourceUrl);
+  const imageForCoupang = await prepareProxyUrl(draft.imageUrl, imageProxyBase, draft.sourceUrl);
   const p = await probeImageUrl(imageForCoupang);
   if (!p.ok) {
     return { ok: false, skipped: false, error: "image probe failed", detail: p };
@@ -34,7 +50,7 @@ export async function runUploadFromUrl(inputUrl) {
 
   const contentImages = filterDomeggookUrls(extractImageUrls(draft.contentText));
   const settled = await Promise.allSettled(
-    contentImages.map((u) => prepareProxyUrl(u, IMAGE_PROXY_BASE, draft.sourceUrl)),
+    contentImages.map((u) => prepareProxyUrl(u, imageProxyBase, draft.sourceUrl)),
   );
   const map = {};
   for (let i = 0; i < contentImages.length; i++) {
@@ -48,13 +64,18 @@ export async function runUploadFromUrl(inputUrl) {
     fallback: DISPLAY_CATEGORY_CODE,
   });
 
-  const finalPrice = computePrice(draft.price);
+  const finalPrice = computePrice(draft.price, {
+    rate: settings.marginRate,
+    add: settings.marginAdd,
+    min: settings.priceMin,
+    roundUnit: settings.roundUnit,
+  });
 
-  const useAutoCategory = String(process.env.AUTO_CATEGORY_MATCH || "").trim() === "1";
+  const useAutoCategory = String(settings.autoCategoryMatch || process.env.AUTO_CATEGORY_MATCH || "").trim() === "1";
   let allowAutoCategory = false;
   if (useAutoCategory) {
     try {
-      const agreed = await checkAutoCategoryAgreed({ vendorId: COUPANG_VENDOR_ID });
+      const agreed = await checkAutoCategoryAgreed({ vendorId, accessKey, secretKey });
       allowAutoCategory = agreed.status === 200;
     } catch {
       allowAutoCategory = false;
@@ -68,13 +89,15 @@ export async function runUploadFromUrl(inputUrl) {
     finalCategoryCode = null;
     notices = null;
   } else {
-    const useRecommend = String(process.env.AUTO_CATEGORY_RECOMMEND || "").trim() === "1";
+    const useRecommend = String(settings.autoCategoryRecommend || process.env.AUTO_CATEGORY_RECOMMEND || "").trim() === "1";
     if (useRecommend) {
       try {
         const rec = await recommendCategory({
           productName: draft.title,
           productDescription: draft.contentText?.slice(0, 2000) || "",
           productImageUrl: imageUrl,
+          accessKey,
+          secretKey,
         });
         const bodyObj = typeof rec.body === "string" ? JSON.parse(rec.body) : rec.body;
         const recCode = bodyObj?.data?.predictedCategoryId;
@@ -83,7 +106,7 @@ export async function runUploadFromUrl(inputUrl) {
     }
 
     try {
-      const meta = await getCategoryMetas({ displayCategoryCode: finalCategoryCode });
+      const meta = await getCategoryMetas({ displayCategoryCode: finalCategoryCode, accessKey, secretKey });
       if (meta.status !== 200) {
         finalCategoryCode = DISPLAY_CATEGORY_CODE;
       }
@@ -93,8 +116,8 @@ export async function runUploadFromUrl(inputUrl) {
   }
 
   const body = buildSellerProductBody({
-    vendorId: COUPANG_VENDOR_ID,
-    vendorUserId: COUPANG_VENDOR_USER_ID,
+    vendorId,
+    vendorUserId,
     outboundShippingPlaceCode: OUTBOUND_SHIPPING_PLACE_CODE,
     displayCategoryCode: finalCategoryCode,
     allowAutoCategory,
@@ -107,8 +130,10 @@ export async function runUploadFromUrl(inputUrl) {
   });
 
   const res = await createSellerProduct({
-    vendorId: COUPANG_VENDOR_ID,
+    vendorId,
     body,
+    accessKey,
+    secretKey,
   });
 
   let createdId = null;
@@ -120,7 +145,7 @@ export async function runUploadFromUrl(inputUrl) {
 
   let approval = null;
   if (createdId) {
-    const ar = await requestProductApproval({ sellerProductId: createdId });
+    const ar = await requestProductApproval({ sellerProductId: createdId, accessKey, secretKey });
     approval = { status: ar.status, body: ar.body };
   }
 

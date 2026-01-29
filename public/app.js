@@ -6,6 +6,31 @@ const statusEl = $("status");
 const logEl = $("log");
 const dot = $("dot");
 const summaryEl = $("summary");
+const tabs = document.querySelectorAll(".tab");
+const panels = {
+  upload: $("panel-upload"),
+  settings: $("panel-settings"),
+  account: $("panel-account"),
+};
+
+const settingsEls = {
+  coupangAccessKey: $("ckey"),
+  coupangSecretKey: $("skey"),
+  coupangVendorId: $("vendorId"),
+  coupangVendorUserId: $("vendorUserId"),
+  coupangDeliveryCompanyCode: $("deliveryCode"),
+  imageProxyBase: $("proxyBase"),
+  marginRate: $("marginRate"),
+  marginAdd: $("marginAdd"),
+  priceMin: $("priceMin"),
+  roundUnit: $("roundUnit"),
+};
+
+const authEls = {
+  email: $("email"),
+  password: $("password"),
+  status: $("authStatus"),
+};
 
 function setStatus(text, state) {
   statusEl.textContent = text;
@@ -46,6 +71,110 @@ function renderSummary(result) {
       <div class="label">승인 요청</div><div>${approvalMsg}</div>
     </div>
   `;
+}
+
+function switchTab(name) {
+  tabs.forEach((t) => t.classList.toggle("active", t.dataset.tab === name));
+  Object.values(panels).forEach((p) => p.classList.add("hidden"));
+  panels[name].classList.remove("hidden");
+}
+
+async function loadSettings() {
+  const res = await fetch("/api/settings");
+  const json = await res.json();
+  if (!json.ok) return;
+  const s = json.settings || {};
+  settingsEls.coupangAccessKey.value = s.coupangAccessKey || "";
+  settingsEls.coupangSecretKey.value = s.coupangSecretKey || "";
+  settingsEls.coupangVendorId.value = s.coupangVendorId || "";
+  settingsEls.coupangVendorUserId.value = s.coupangVendorUserId || "";
+  settingsEls.coupangDeliveryCompanyCode.value = s.coupangDeliveryCompanyCode || "";
+  settingsEls.imageProxyBase.value = s.imageProxyBase || "";
+  settingsEls.marginRate.value = s.marginRate ?? "";
+  settingsEls.marginAdd.value = s.marginAdd ?? "";
+  settingsEls.priceMin.value = s.priceMin ?? "";
+  settingsEls.roundUnit.value = s.roundUnit ?? "";
+}
+
+async function saveSettings() {
+  const payload = {
+    coupangAccessKey: settingsEls.coupangAccessKey.value.trim(),
+    coupangSecretKey: settingsEls.coupangSecretKey.value.trim(),
+    coupangVendorId: settingsEls.coupangVendorId.value.trim(),
+    coupangVendorUserId: settingsEls.coupangVendorUserId.value.trim(),
+    coupangDeliveryCompanyCode: settingsEls.coupangDeliveryCompanyCode.value.trim(),
+    imageProxyBase: settingsEls.imageProxyBase.value.trim(),
+    marginRate: Number(settingsEls.marginRate.value || 0),
+    marginAdd: Number(settingsEls.marginAdd.value || 0),
+    priceMin: Number(settingsEls.priceMin.value || 0),
+    roundUnit: Number(settingsEls.roundUnit.value || 0),
+  };
+  const res = await fetch("/api/settings", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const json = await res.json();
+  if (json.ok) {
+    setStatus("설정 저장 완료", "ok");
+  } else {
+    setStatus("설정 저장 실패", "bad");
+  }
+}
+
+async function updateAuthStatus() {
+  const res = await fetch("/api/me");
+  if (!res.ok) {
+    authEls.status.textContent = "로그인 필요";
+    return;
+  }
+  const json = await res.json();
+  authEls.status.textContent = `로그인됨: ${json.user.email}`;
+}
+
+async function signup() {
+  const res = await fetch("/api/signup", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      email: authEls.email.value.trim(),
+      password: authEls.password.value,
+    }),
+  });
+  const json = await res.json();
+  if (json.ok) {
+    setStatus("회원가입 완료", "ok");
+    await updateAuthStatus();
+    await loadSettings();
+  } else {
+    setStatus("회원가입 실패", "bad");
+    log(json);
+  }
+}
+
+async function login() {
+  const res = await fetch("/api/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      email: authEls.email.value.trim(),
+      password: authEls.password.value,
+    }),
+  });
+  const json = await res.json();
+  if (json.ok) {
+    setStatus("로그인 완료", "ok");
+    await updateAuthStatus();
+    await loadSettings();
+  } else {
+    setStatus("로그인 실패", "bad");
+    log(json);
+  }
+}
+
+async function logout() {
+  await fetch("/api/logout", { method: "POST" });
+  authEls.status.textContent = "로그인 필요";
 }
 
 async function run() {
@@ -89,3 +218,12 @@ submitBtn.addEventListener("click", run);
 urlInput.addEventListener("keydown", (e) => {
   if (e.key === "Enter") run();
 });
+
+tabs.forEach((t) => t.addEventListener("click", () => switchTab(t.dataset.tab)));
+$("saveSettings").addEventListener("click", saveSettings);
+$("signup").addEventListener("click", signup);
+$("login").addEventListener("click", login);
+$("logout").addEventListener("click", logout);
+
+updateAuthStatus();
+loadSettings();

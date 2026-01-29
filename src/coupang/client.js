@@ -1,11 +1,22 @@
-import { buildAuthorization } from "./sign.js";
+import { buildAuthorization, buildAuthorizationWithKeys } from "./sign.js";
 
 const BASE_URL = "https://api-gateway.coupang.com";
 
-export async function coupangRequest({ method, path, query = "", body, baseUrl, headers }) {
+export async function coupangRequest({
+  method,
+  path,
+  query = "",
+  body,
+  baseUrl,
+  headers,
+  accessKey,
+  secretKey,
+}) {
   const base = baseUrl || BASE_URL;
   const url = `${base}${path}${query ? "?" + query : ""}`;
-  const { authorization } = buildAuthorization({ method, path, query });
+  const { authorization } = accessKey && secretKey
+    ? buildAuthorizationWithKeys({ method, path, query, accessKey, secretKey })
+    : buildAuthorization({ method, path, query });
 
   const res = await fetch(url, {
     method,

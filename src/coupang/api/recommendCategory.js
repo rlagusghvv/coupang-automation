@@ -6,6 +6,8 @@ export async function recommendCategory({
   productImageUrl = "",
   productBrand = "",
   productManufacturer = "",
+  accessKey,
+  secretKey,
 } = {}) {
   if (!productName) throw new Error("productName required");
 
@@ -19,5 +21,7 @@ export async function recommendCategory({
       productBrand,
       productManufacturer,
     },
+    accessKey,
+    secretKey,
   });
 }

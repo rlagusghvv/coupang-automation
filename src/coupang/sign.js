@@ -16,3 +16,19 @@ export function buildAuthorization({ method, path, query = "" }) {
     signedDate,
   };
 }
+
+// 사용자별 키를 사용할 수 있도록 별도 함수 제공
+export function buildAuthorizationWithKeys({ method, path, query = "", accessKey, secretKey }) {
+  const signedDate = signedDateUTC();
+  const message = `${signedDate}${method}${path}${query}`;
+
+  const signature = crypto
+    .createHmac("sha256", secretKey)
+    .update(message)
+    .digest("hex");
+
+  return {
+    authorization: `CEA algorithm=HmacSHA256, access-key=${accessKey}, signed-date=${signedDate}, signature=${signature}`,
+    signedDate,
+  };
+}

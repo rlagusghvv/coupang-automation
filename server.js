@@ -5,6 +5,14 @@ import fs from "node:fs";
 import path from "node:path";
 import { runUploadFromUrl } from "./src/pipeline/runUploadFromUrl.js";
 import { classifyUrl } from "./src/utils/urlFilter.js";
+import {
+  createUser,
+  verifyUser,
+  createSession,
+  destroySession,
+  getUserBySession,
+  updateSettings,
+} from "./src/server/storage.js";
 
 const app = express();
 app.set("trust proxy", true);
@@ -68,11 +76,80 @@ function mustEnv(name) {
 
 let uploadInProgress = false;
 
+function getSessionToken(req) {
+  const raw = req.headers.cookie || "";
+  const m = raw.match(/session=([^;]+)/);
+  return m ? m[1] : null;
+}
+
+function authRequired(req, res, next) {
+  const token = getSessionToken(req);
+  const user = token ? getUserBySession(token) : null;
+  if (!user) return res.status(401).json({ ok: false, error: "unauthorized" });
+  req.user = user;
+  next();
+}
+
 // ✅ 외부에서 연결 확인용
 app.get("/health", (req, res) => res.type("text").send("OK"));
 
+// ✅ 계정: 회원가입
+app.post("/api/signup", (req, res) => {
+  try {
+    const email = String(req.body?.email || "").trim().toLowerCase();
+    const password = String(req.body?.password || "").trim();
+    if (!email || !password) return res.status(400).json({ ok: false, error: "missing fields" });
+    const user = createUser({ email, password });
+    const token = createSession(user.id);
+    res.setHeader("Set-Cookie", `session=${token}; HttpOnly; Path=/`);
+    return res.json({ ok: true, user });
+  } catch (e) {
+    return res.status(400).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+// ✅ 계정: 로그인
+app.post("/api/login", (req, res) => {
+  const email = String(req.body?.email || "").trim().toLowerCase();
+  const password = String(req.body?.password || "").trim();
+  if (!email || !password) return res.status(400).json({ ok: false, error: "missing fields" });
+  const user = verifyUser({ email, password });
+  if (!user) return res.status(401).json({ ok: false, error: "invalid credentials" });
+  const token = createSession(user.id);
+  res.setHeader("Set-Cookie", `session=${token}; HttpOnly; Path=/`);
+  return res.json({ ok: true, user });
+});
+
+// ✅ 계정: 로그아웃
+app.post("/api/logout", (req, res) => {
+  const token = getSessionToken(req);
+  if (token) destroySession(token);
+  res.setHeader("Set-Cookie", "session=; Max-Age=0; Path=/");
+  return res.json({ ok: true });
+});
+
+// ✅ 계정: 내 정보
+app.get("/api/me", authRequired, (req, res) => {
+  return res.json({ ok: true, user: { id: req.user.id, email: req.user.email } });
+});
+
+// ✅ 설정: 조회/저장
+app.get("/api/settings", authRequired, (req, res) => {
+  return res.json({ ok: true, settings: req.user.settings || {} });
+});
+
+app.post("/api/settings", authRequired, (req, res) => {
+  try {
+    const next = req.body || {};
+    const saved = updateSettings(req.user.id, next);
+    return res.json({ ok: true, settings: saved });
+  } catch (e) {
+    return res.status(400).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
 // ✅ 업로드 API
-app.post("/api/upload", async (req, res) => {
+app.post("/api/upload", authRequired, async (req, res) => {
   try {
     const url = String(req.body?.url || "").trim();
     if (!url) return res.status(400).json({ ok: false, error: "missing url" });
@@ -85,7 +162,7 @@ app.post("/api/upload", async (req, res) => {
     }
     uploadInProgress = true;
 
-    const result = await runUploadFromUrl(c.url);
+    const result = await runUploadFromUrl(c.url, req.user.settings || {});
     uploadInProgress = false;
     return res.json({ ok: true, result });
   } catch (e) {
