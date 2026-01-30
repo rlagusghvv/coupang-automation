@@ -74,6 +74,35 @@ function buildImageHtml(urls) {
   return urls.map((u) => `<p><img src="${u}" /></p>`).join("");
 }
 
+function parseOptionPopupHtml(html) {
+  const text = String(html || "")
+    .replace(/<script[\s\S]*?<\/script>/gi, "")
+    .replace(/<style[\s\S]*?<\/style>/gi, "")
+    .replace(/<[^>]+>/g, "\n")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const lines = text
+    .split("\n")
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  const blacklist = [
+    "옵션",
+    "상품옵션",
+    "선택",
+    "닫기",
+  ];
+
+  const cleaned = lines
+    .map((s) => s.replace(/^\d+\s*[.)-]?\s*/g, "").trim())
+    .filter((s) => s.length >= 2 && s.length < 60)
+    .filter((s) => !blacklist.some((b) => s.includes(b)));
+
+  // 중복 제거
+  return Array.from(new Set(cleaned));
+}
+
 function extractMainBlock(html) {
   const s = String(html || "");
   const idWrap = s.match(/<div[^>]+id=["']?wrap["']?[^>]*>([\s\S]*?)<\/div>/i);
@@ -311,6 +340,24 @@ export async function parseProductFromDomaeqq(url) {
       return cleaned.slice(0, 20);
     });
 
+    // ✅ 옵션 팝업(전체보기) 우선 사용
+    let finalOptions = options;
+    try {
+      const popupUrl = `https://domeggook.com/main/popup/item/popup_itemOptionView.php?no=${encodeURIComponent(
+        String(url).match(/\\d+/)?.[0] || "",
+      )}&market=dome`;
+      const res = await fetch(popupUrl, {
+        headers: { Referer: url, "User-Agent": "Mozilla/5.0" },
+      });
+      if (res.ok) {
+        const html = await res.text();
+        const parsed = parseOptionPopupHtml(html);
+        if (parsed.length > 0) finalOptions = parsed;
+      }
+    } catch {
+      // fallback to on-page options
+    }
+
     return makeDraft({
       sourceUrl: url,
       title: titleText || (await page.title().catch(() => "도매꾹 상품")),
@@ -318,7 +365,7 @@ export async function parseProductFromDomaeqq(url) {
       imageUrl: imageUrl || "https://via.placeholder.com/1000",
       contentText: finalContentHtml || titleText || "",
       categoryText,
-      options,
+      options: finalOptions,
     });
   } finally {
     await page.close().catch(() => {});
