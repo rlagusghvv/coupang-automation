@@ -13,7 +13,8 @@ export async function coupangRequest({
   secretKey,
 }) {
   const base = baseUrl || BASE_URL;
-  const url = `${base}${path}${query ? "?" + query : ""}`;
+  const safeBase = String(base).replace(/^http:\/\//i, "https://");
+  const url = `${safeBase}${path}${query ? "?" + query : ""}`;
   const { authorization } = accessKey && secretKey
     ? buildAuthorizationWithKeys({ method, path, query, accessKey, secretKey })
     : buildAuthorization({ method, path, query });
