@@ -123,6 +123,98 @@ function parseOptionPopupHtml(html) {
   return Array.from(new Set(cleaned));
 }
 
+function extractJsonObjectAfterKey(text, key, startIndex = 0) {
+  const src = String(text || "");
+  let idx = Math.max(0, startIndex);
+  while (idx < src.length) {
+    const keyIdx = src.indexOf(key, idx);
+    if (keyIdx === -1) return null;
+    const before = src[keyIdx - 1] || "";
+    const after = src[keyIdx + key.length] || "";
+    if (/[A-Za-z0-9_$]/.test(before) || /[A-Za-z0-9_$]/.test(after)) {
+      idx = keyIdx + key.length;
+      continue;
+    }
+    const colonIdx = src.indexOf(":", keyIdx + key.length);
+    if (colonIdx === -1) return null;
+    let i = colonIdx + 1;
+    while (i < src.length && /\s/.test(src[i])) i += 1;
+    if (src[i] !== "{") {
+      idx = i + 1;
+      continue;
+    }
+
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+    const start = i;
+
+    for (; i < src.length; i += 1) {
+      const ch = src[i];
+      if (inString) {
+        if (escaped) {
+          escaped = false;
+          continue;
+        }
+        if (ch === "\\\\") {
+          escaped = true;
+          continue;
+        }
+        if (ch === "\"") inString = false;
+        continue;
+      }
+
+      if (ch === "\"") {
+        inString = true;
+        continue;
+      }
+
+      if (ch === "{") depth += 1;
+      if (ch === "}") depth -= 1;
+
+      if (depth === 0) {
+        const jsonText = src.slice(start, i + 1);
+        return jsonText;
+      }
+    }
+
+    idx = start + 1;
+  }
+  return null;
+}
+
+function extractOptionNamesFromItemOptionController(scriptText) {
+  const text = String(scriptText || "");
+  if (!text.includes("ItemOptionController")) return [];
+
+  let idx = 0;
+  while (idx < text.length) {
+    const hit = text.indexOf("ItemOptionController", idx);
+    if (hit === -1) break;
+
+    const dataJson = extractJsonObjectAfterKey(text, "data", hit);
+    if (dataJson) {
+      try {
+        const dataObj = JSON.parse(dataJson);
+        const names = [];
+        const dataMap = dataObj?.data;
+        if (dataMap && typeof dataMap === "object") {
+          for (const key of Object.keys(dataMap)) {
+            const item = dataMap[key];
+            const name = String(item?.name || "").trim();
+            if (name) names.push(name);
+          }
+        }
+        if (names.length > 0) return Array.from(new Set(names));
+      } catch {}
+    }
+
+    idx = hit + 1;
+  }
+
+  return [];
+}
+
 function extractMainBlock(html) {
   const s = String(html || "");
   const idWrap = s.match(/<div[^>]+id=["']?wrap["']?[^>]*>([\s\S]*?)<\/div>/i);
@@ -362,22 +454,36 @@ export async function parseProductFromDomaeqq(url) {
       return cleaned.slice(0, 20);
     });
 
-    // ✅ 옵션 팝업(전체보기) 우선 사용
+    // ✅ 옵션: JS에 박힌 ItemOptionController 데이터 우선 사용
+    // 아이가 보듯이 생각하면, "진짜 옵션 상자"를 먼저 연다고 보면 됨.
     let finalOptions = [];
     try {
-      const productId = String(url).match(/\d+/)?.[0] || "";
-      const popupUrl = `https://domeggook.com/main/popup/item/popup_itemOptionView.php?no=${encodeURIComponent(
-        productId,
-      )}&market=dome`;
-      const res = await page.request.get(popupUrl, {
-        headers: { Referer: url, "User-Agent": "Mozilla/5.0" },
-      });
-      if (res.ok()) {
-        const html = await res.text();
-        const parsed = parseOptionPopupHtml(html);
-        if (parsed.length > 0) finalOptions = parsed;
-      }
+      const scriptText = await page.evaluate(() =>
+        Array.from(document.scripts)
+          .map((s) => s.textContent || "")
+          .join("\n"),
+      );
+      const inlineOptions = extractOptionNamesFromItemOptionController(scriptText);
+      if (inlineOptions.length > 0) finalOptions = inlineOptions;
     } catch {}
+
+    // ✅ 옵션 팝업(전체보기) fallback
+    if (finalOptions.length === 0) {
+      try {
+        const productId = String(url).match(/\d+/)?.[0] || "";
+        const popupUrl = `https://domeggook.com/main/popup/item/popup_itemOptionView.php?no=${encodeURIComponent(
+          productId,
+        )}&market=dome`;
+        const res = await page.request.get(popupUrl, {
+          headers: { Referer: url, "User-Agent": "Mozilla/5.0" },
+        });
+        if (res.ok()) {
+          const html = await res.text();
+          const parsed = parseOptionPopupHtml(html);
+          if (parsed.length > 0) finalOptions = parsed;
+        }
+      } catch {}
+    }
 
     const garbageWords = [
       "마이페이지",
@@ -396,6 +502,11 @@ export async function parseProductFromDomaeqq(url) {
     if (finalOptions.length === 0 || looksGarbage) {
       // 팝업 실패/오염 시 옵션 비활성화
       finalOptions = [];
+    }
+
+    // ✅ 마지막 fallback: 페이지에서 긁은 옵션 텍스트 사용
+    if (finalOptions.length === 0 && Array.isArray(options) && options.length > 0) {
+      finalOptions = options;
     }
 
     return makeDraft({
