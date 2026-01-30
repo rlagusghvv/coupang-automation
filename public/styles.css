@@ -278,6 +278,10 @@ textarea {
   background: var(--border);
 }
 
+.sku-map-section {
+  margin-bottom: 18px;
+}
+
 .mini-row {
   align-items: center;
 }
