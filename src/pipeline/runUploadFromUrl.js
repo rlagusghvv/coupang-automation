@@ -24,6 +24,19 @@ import { computePrice } from "../utils/price.js";
 const OUTBOUND_SHIPPING_PLACE_CODE = "24093380";
 const DISPLAY_CATEGORY_CODE = 77723;
 
+function makeUniqueOptions(list) {
+  const seen = new Map();
+  const out = [];
+  for (const raw of list) {
+    const name = String(raw || "").trim();
+    if (!name) continue;
+    const count = (seen.get(name) || 0) + 1;
+    seen.set(name, count);
+    out.push(count === 1 ? name : `${name} (${count})`);
+  }
+  return out;
+}
+
 export async function runUploadFromUrl(inputUrl, settings = {}) {
   const c = classifyUrl(inputUrl);
   if (!c.ok) {
@@ -132,7 +145,7 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
     notices,
     requested: autoRequest,
     items: Array.isArray(draft.options) && draft.options.length > 0
-      ? draft.options.map((opt) =>
+      ? makeUniqueOptions(draft.options).map((opt) =>
           buildSingleItem({
             itemName: opt,
             price: finalPrice,
