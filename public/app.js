@@ -20,6 +20,7 @@ const tabs = document.querySelectorAll(".tab");
 const panels = {
   upload: $("panel-upload"),
   orders: $("panel-orders"),
+  history: $("panel-history"),
   settings: $("panel-settings"),
   account: $("panel-account"),
 };
@@ -58,6 +59,8 @@ const authEls = {
 const versionEl = $("versionInfo");
 const currentIpEl = $("currentIp");
 const refreshIpBtn = $("refreshIp");
+const historyTableEl = $("historyTable");
+const refreshHistoryBtn = $("refreshHistory");
 let lastPayload = null;
 
 function setStatus(text, state) {
@@ -280,6 +283,9 @@ function switchTab(name) {
   tabs.forEach((t) => t.classList.toggle("active", t.dataset.tab === name));
   Object.values(panels).forEach((p) => p.classList.add("hidden"));
   panels[name].classList.remove("hidden");
+  if (name === "history") {
+    loadUploadHistory();
+  }
 }
 
 function clearSettingsUI() {
@@ -670,6 +676,65 @@ async function saveSkuMap() {
   setStatus("매핑 저장 완료", "ok");
 }
 
+function renderUploadHistory(list) {
+  if (!historyTableEl) return;
+  const items = Array.isArray(list) ? list : [];
+  if (items.length === 0) {
+    historyTableEl.innerHTML = `<div class="empty">히스토리가 없습니다.</div>`;
+    return;
+  }
+  historyTableEl.innerHTML = `
+    <div class="history-header">
+      <div>시간</div>
+      <div>상품명</div>
+      <div>결과</div>
+      <div>옵션</div>
+      <div>가격</div>
+      <div>ID</div>
+    </div>
+    ${items
+      .map((it) => {
+        const time = it.at ? new Date(it.at).toLocaleString() : "-";
+        const title = it.title || "-";
+        const ok = it.ok ? "성공" : "실패";
+        const mode = it.payloadOnly ? " (payload)" : "";
+        const options = Number.isFinite(Number(it.optionsCount)) ? it.optionsCount : "-";
+        const price = it.finalPrice ?? "-";
+        const id = it.sellerProductId ?? "-";
+        const cls = it.ok ? "ok" : "bad";
+        return `
+          <div class="history-row ${cls}">
+            <div class="time">${time}</div>
+            <div class="title" title="${title}">${title}</div>
+            <div class="status">${ok}${mode}</div>
+            <div class="count">${options}</div>
+            <div class="price">${price}</div>
+            <div class="id">${id}</div>
+          </div>
+        `;
+      })
+      .join("")}
+  `;
+}
+
+async function loadUploadHistory() {
+  if (!historyTableEl) return;
+  historyTableEl.innerHTML = `<div class="empty">불러오는 중...</div>`;
+  try {
+    const res = await fetch("/api/upload/history");
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok || !json.ok) {
+      renderUploadHistory([]);
+      setStatus("히스토리 불러오기 실패", "bad");
+      return;
+    }
+    renderUploadHistory(json.history || []);
+  } catch {
+    renderUploadHistory([]);
+    setStatus("히스토리 불러오기 실패", "bad");
+  }
+}
+
 submitBtn.addEventListener("click", run);
 urlInput.addEventListener("keydown", (e) => {
   if (e.key === "Enter") run();
@@ -687,6 +752,7 @@ $("login").addEventListener("click", login);
 $("logout").addEventListener("click", logout);
 refreshIpBtn?.addEventListener("click", loadCurrentIp);
 refreshIpBtn?.addEventListener("click", evaluateUploadGate);
+refreshHistoryBtn?.addEventListener("click", loadUploadHistory);
 settingsEls.allowedIps?.addEventListener("input", evaluateUploadGate);
 domemeSessionBtn?.addEventListener("click", async () => {
   setStatus("도매매 세션 생성 중...", "");

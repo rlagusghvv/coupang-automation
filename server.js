@@ -45,9 +45,37 @@ const SERVER_STARTED_AT = new Date().toISOString();
 const PACKAGE_JSON_PATH = path.join(process.cwd(), "package.json");
 const GIT_DIR = path.join(process.cwd(), ".git");
 const IP_CHECK_URLS = ["https://ifconfig.me/ip", "https://api.ipify.org"];
+const UPLOAD_HISTORY_PATH = path.join(process.cwd(), "data", "upload_history.json");
+const UPLOAD_HISTORY_LIMIT = 200;
 
 function log(...args) {
   console.log("[server]", new Date().toISOString(), ...args);
+}
+
+function loadUploadHistory() {
+  try {
+    if (!fs.existsSync(UPLOAD_HISTORY_PATH)) return [];
+    const raw = fs.readFileSync(UPLOAD_HISTORY_PATH, "utf-8");
+    const json = JSON.parse(raw || "[]");
+    return Array.isArray(json) ? json : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveUploadHistory(list) {
+  try {
+    const dir = path.dirname(UPLOAD_HISTORY_PATH);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(UPLOAD_HISTORY_PATH, JSON.stringify(list, null, 2));
+  } catch {}
+}
+
+function appendUploadHistory(entry) {
+  const list = loadUploadHistory();
+  list.unshift(entry);
+  if (list.length > UPLOAD_HISTORY_LIMIT) list.length = UPLOAD_HISTORY_LIMIT;
+  saveUploadHistory(list);
 }
 
 function readPackageVersion() {
@@ -252,6 +280,18 @@ app.post("/api/upload", authRequired, async (req, res) => {
     uploadInProgress = true;
 
     const result = await runUploadFromUrl(c.url, req.user.settings || {});
+    appendUploadHistory({
+      at: new Date().toISOString(),
+      url: c.url,
+      ok: Boolean(result?.ok),
+      payloadOnly: Boolean(result?.payloadOnly),
+      title: result?.draft?.title || "",
+      finalPrice: result?.finalPrice ?? null,
+      optionsCount: Array.isArray(result?.optionsUsed) ? result.optionsUsed.length : 0,
+      sellerProductId: result?.create?.sellerProductId ?? null,
+      createStatus: result?.create?.status ?? null,
+      error: result?.error || null,
+    });
     uploadInProgress = false;
     return res.json({ ok: true, result });
   } catch (e) {
@@ -326,6 +366,10 @@ app.post("/api/orders/upload", authRequired, async (req, res) => {
   } catch (e) {
     return res.status(500).json({ ok: false, error: String(e?.message || e) });
   }
+});
+
+app.get("/api/upload/history", authRequired, (req, res) => {
+  return res.json({ ok: true, history: loadUploadHistory() });
 });
 
 // ✅ 도매매 세션 생성 시작 (네이버 로그인)
