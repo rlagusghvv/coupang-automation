@@ -15,8 +15,11 @@ export async function uploadDomemeExcel({ filePath, settings = {} }) {
     return { ok: false, error: "missing_domeme_credentials" };
   }
 
+  const storageStatePath = String(settings.domemeStorageStatePath || "").trim();
   const browser = await chromium.launch({ headless: true });
-  const context = await browser.newContext();
+  const context = storageStatePath && fs.existsSync(storageStatePath)
+    ? await browser.newContext({ storageState: storageStatePath })
+    : await browser.newContext();
   const page = await context.newPage();
 
   try {

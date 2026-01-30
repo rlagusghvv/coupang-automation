@@ -34,6 +34,7 @@ const settingsEls = {
   allowedIps: $("allowedIps"),
   domemeId: $("domemeId"),
   domemePw: $("domemePw"),
+  domemeStorageStatePath: $("domemeStorageStatePath"),
   pagesProjectName: $("pagesProjectName"),
   pagesAccountId: $("pagesAccountId"),
   pagesApiToken: $("pagesApiToken"),
@@ -263,6 +264,7 @@ async function loadSettings() {
   settingsEls.allowedIps.value = s.allowedIps || "";
   settingsEls.domemeId.value = s.domemeId || "";
   settingsEls.domemePw.value = s.domemePw || "";
+  settingsEls.domemeStorageStatePath.value = s.domemeStorageStatePath || "";
   settingsEls.pagesProjectName.value = s.pagesProjectName || "";
   settingsEls.pagesAccountId.value = s.pagesAccountId || "";
   settingsEls.pagesApiToken.value = s.pagesApiToken || "";
@@ -290,6 +292,7 @@ async function saveSettings() {
     allowedIps: settingsEls.allowedIps.value.trim(),
     domemeId: settingsEls.domemeId.value.trim(),
     domemePw: settingsEls.domemePw.value,
+    domemeStorageStatePath: settingsEls.domemeStorageStatePath.value.trim(),
     pagesProjectName: settingsEls.pagesProjectName.value.trim(),
     pagesAccountId: settingsEls.pagesAccountId.value.trim(),
     pagesApiToken: settingsEls.pagesApiToken.value.trim(),
