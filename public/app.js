@@ -48,6 +48,20 @@ function setStatus(text, state) {
   if (state === "bad") dot.classList.add("bad");
 }
 
+function parseAllowedIps(raw) {
+  return String(raw || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+function setUploadEnabled(enabled, reason = "") {
+  submitBtn.disabled = !enabled;
+  if (!enabled && reason) {
+    setStatus(reason, "bad");
+  }
+}
+
 function log(obj) {
   logEl.textContent = typeof obj === "string" ? obj : JSON.stringify(obj, null, 2);
 }
@@ -202,6 +216,10 @@ async function loadSettings() {
   settingsEls.priceMin.value = s.priceMin ?? "";
   settingsEls.roundUnit.value = s.roundUnit ?? "";
   settingsEls.autoRequest.checked = String(s.autoRequest || "") === "1";
+
+  // Re-evaluate upload availability after settings load
+  await loadCurrentIp();
+  evaluateUploadGate();
 }
 
 async function saveSettings() {
@@ -275,6 +293,24 @@ async function loadCurrentIp() {
   } catch {
     currentIpEl.textContent = "-";
   }
+}
+
+function evaluateUploadGate() {
+  const allowed = parseAllowedIps(settingsEls.allowedIps?.value);
+  const currentIp = String(currentIpEl?.textContent || "").trim();
+  if (!allowed.length) {
+    setUploadEnabled(true);
+    return;
+  }
+  if (!currentIp || currentIp === "-") {
+    setUploadEnabled(false, "현재 IP 확인 후 업로드 가능");
+    return;
+  }
+  if (!allowed.includes(currentIp)) {
+    setUploadEnabled(false, "허용 IP가 아님");
+    return;
+  }
+  setUploadEnabled(true);
 }
 
 async function signup() {
@@ -381,6 +417,8 @@ $("signup").addEventListener("click", signup);
 $("login").addEventListener("click", login);
 $("logout").addEventListener("click", logout);
 refreshIpBtn?.addEventListener("click", loadCurrentIp);
+refreshIpBtn?.addEventListener("click", evaluateUploadGate);
+settingsEls.allowedIps?.addEventListener("input", evaluateUploadGate);
 
 (async () => {
   const authed = await updateAuthStatus();
@@ -388,4 +426,5 @@ refreshIpBtn?.addEventListener("click", loadCurrentIp);
   else clearSettingsUI();
   await loadVersionInfo();
   await loadCurrentIp();
+  evaluateUploadGate();
 })();
