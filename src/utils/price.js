@@ -11,7 +11,8 @@ export function computePrice(base, overrides = {}) {
   const add = toNumber(overrides.add ?? process.env.PRICE_MARKUP_ADD, 0);
   const min = toNumber(overrides.min ?? process.env.PRICE_MIN, 1000);
   const max = toNumber(overrides.max ?? process.env.PRICE_MAX, Infinity);
-  const roundUnit = toNumber(overrides.roundUnit ?? process.env.PRICE_ROUND_UNIT, 10);
+  let roundUnit = toNumber(overrides.roundUnit ?? process.env.PRICE_ROUND_UNIT, 10);
+  if (!Number.isFinite(roundUnit) || roundUnit < 1) roundUnit = 10;
 
   let price = raw + raw * rate + add;
   if (roundUnit > 1) price = Math.floor(price / roundUnit) * roundUnit;
