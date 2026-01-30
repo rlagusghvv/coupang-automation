@@ -262,24 +262,52 @@ export async function parseProductFromDomaeqq(url) {
           .replace(/[\[\]{}]/g, "")
           .trim();
 
-      const fromSelects = Array.from(document.querySelectorAll("select"))
-        .flatMap((sel) => Array.from(sel.options || []).map((o) => o.textContent))
-        .map(normalize)
-        .filter((t) => t && !/선택|옵션/i.test(t));
+      const blacklist = [
+        "도매매",
+        "나까마",
+        "교육센터",
+        "에그돔",
+        "로그아웃",
+        "마이페이지",
+        "주문전체목록",
+        "관심상품",
+        "고객센터",
+        "공지사항",
+        "장바구니",
+        "더보기",
+      ];
 
-      const fromButtons = Array.from(
+      const scoreContainer = (el) => {
+        const text = (el.textContent || "").length;
+        const hasSelect = el.querySelectorAll("select").length;
+        const hasOptionBtn = el.querySelectorAll("button, li").length;
+        return text + hasSelect * 500 + hasOptionBtn * 50;
+      };
+
+      const containers = Array.from(
         document.querySelectorAll(
-          "[class*='option'], [class*='opt'], [id*='option'], [id*='opt'] button, li",
+          "[id*='option'], [class*='option'], [id*='opt'], [class*='opt']",
         ),
       )
+        .map((el) => ({ el, score: scoreContainer(el) }))
+        .sort((a, b) => b.score - a.score);
+
+      const root = containers[0]?.el || document.body;
+
+      const fromSelects = Array.from(root.querySelectorAll("select"))
+        .flatMap((sel) => Array.from(sel.options || []).map((o) => o.textContent))
+        .map(normalize);
+
+      const fromButtons = Array.from(root.querySelectorAll("button, li"))
         .map((el) => normalize(el.textContent))
-        .filter((t) => t && t.length < 80);
+        .filter((t) => t && t.length < 60);
 
       const merged = Array.from(new Set([...fromSelects, ...fromButtons]));
       const cleaned = merged
-        .filter((t) => t && t.length < 80)
-        .filter((t) => !/선택|옵션|구매|전체옵션보기/i.test(t));
-      // 너무 많은 경우는 상위 20개로 제한
+        .filter((t) => t && t.length < 60)
+        .filter((t) => !/선택|옵션|구매|전체옵션보기/i.test(t))
+        .filter((t) => !blacklist.some((b) => t.includes(b)));
+
       return cleaned.slice(0, 20);
     });
 
