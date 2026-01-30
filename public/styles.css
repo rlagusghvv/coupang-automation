@@ -57,6 +57,12 @@ h1 {
   font-size: 15px;
 }
 
+.version {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .card {
   background: linear-gradient(160deg, var(--panel), var(--panel-2));
   border: 1px solid rgba(255, 255, 255, 0.08);

@@ -32,6 +32,7 @@ const authEls = {
   password: $("password"),
   status: $("authStatus"),
 };
+const versionEl = $("versionInfo");
 
 function setStatus(text, state) {
   statusEl.textContent = text;
@@ -160,6 +161,22 @@ async function updateAuthStatus() {
   authEls.status.textContent = `로그인됨: ${label}`;
 }
 
+async function loadVersionInfo() {
+  if (!versionEl) return;
+  try {
+    const res = await fetch("/api/version");
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok || !json.ok) throw new Error("version fetch failed");
+    const v = json.version ? `v${json.version}` : "v?";
+    const sha = json.gitSha ? `#${json.gitSha}` : "#?";
+    const codeTime = json.codeUpdatedAt ? new Date(json.codeUpdatedAt).toLocaleString() : "-";
+    const started = json.serverStartedAt ? new Date(json.serverStartedAt).toLocaleString() : "-";
+    versionEl.textContent = `버전 ${v} ${sha} · 코드수정 ${codeTime} · 서버시작 ${started}`;
+  } catch {
+    versionEl.textContent = "버전 정보를 불러오지 못했습니다.";
+  }
+}
+
 async function signup() {
   const res = await fetch("/api/signup", {
     method: "POST",
@@ -266,3 +283,4 @@ $("logout").addEventListener("click", logout);
 
 updateAuthStatus();
 loadSettings();
+loadVersionInfo();

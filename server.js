@@ -38,8 +38,59 @@ const TOKENS_PATH =
   process.env.FRIEND_TOKENS_PATH ||
   path.join(process.cwd(), "friend_tokens.json");
 
+const SERVER_STARTED_AT = new Date().toISOString();
+const PACKAGE_JSON_PATH = path.join(process.cwd(), "package.json");
+const GIT_DIR = path.join(process.cwd(), ".git");
+
 function log(...args) {
   console.log("[server]", new Date().toISOString(), ...args);
+}
+
+function readPackageVersion() {
+  try {
+    const raw = fs.readFileSync(PACKAGE_JSON_PATH, "utf-8");
+    const json = JSON.parse(raw);
+    return String(json.version || "").trim();
+  } catch {
+    return "";
+  }
+}
+
+function readGitInfo() {
+  try {
+    const headPath = path.join(GIT_DIR, "HEAD");
+    if (!fs.existsSync(headPath)) return {};
+    const head = fs.readFileSync(headPath, "utf-8").trim();
+    let sha = "";
+    if (head.startsWith("ref:")) {
+      const ref = head.replace("ref:", "").trim();
+      const refPath = path.join(GIT_DIR, ref);
+      if (fs.existsSync(refPath)) {
+        sha = fs.readFileSync(refPath, "utf-8").trim();
+      }
+    } else {
+      sha = head;
+    }
+
+    let codeUpdatedAt = "";
+    const logPath = path.join(GIT_DIR, "logs", "HEAD");
+    if (fs.existsSync(logPath)) {
+      const lines = fs.readFileSync(logPath, "utf-8").trim().split("\n");
+      const last = lines[lines.length - 1] || "";
+      const parts = last.split(" ");
+      const ts = Number(parts[parts.length - 2]);
+      if (Number.isFinite(ts)) {
+        codeUpdatedAt = new Date(ts * 1000).toISOString();
+      }
+    }
+
+    return {
+      gitSha: sha ? sha.slice(0, 8) : "",
+      codeUpdatedAt,
+    };
+  } catch {
+    return {};
+  }
 }
 
 function readTokens() {
@@ -96,6 +147,18 @@ async function authRequired(req, res, next) {
 
 // ✅ 외부에서 연결 확인용
 app.get("/health", (req, res) => res.type("text").send("OK"));
+app.get("/api/version", (req, res) => {
+  const version = readPackageVersion();
+  const git = readGitInfo();
+  return res.json({
+    ok: true,
+    version,
+    gitSha: git.gitSha || "",
+    codeUpdatedAt: git.codeUpdatedAt || "",
+    serverStartedAt: SERVER_STARTED_AT,
+    now: new Date().toISOString(),
+  });
+});
 
 // ✅ 계정: 회원가입
 app.post("/api/signup", async (req, res) => {
