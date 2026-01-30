@@ -129,6 +129,29 @@ label {
   font-size: 13px;
 }
 
+.settings-actions {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px 12px;
+  margin-top: 4px;
+  align-items: stretch;
+}
+
+.settings-actions .toggle {
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: #f8fafc;
+  min-height: 56px;
+  justify-content: flex-start;
+}
+
+.settings-actions button {
+  grid-column: 1 / -1;
+  justify-self: end;
+  padding: 10px 16px;
+}
+
 input {
   width: 100%;
   padding: 14px 14px;
@@ -283,7 +306,10 @@ textarea {
 }
 
 .mini-row {
+  display: flex;
   align-items: center;
+  gap: 10px;
+  margin-top: 8px;
 }
 
 .mini-btn {
@@ -306,5 +332,12 @@ textarea {
 @media (max-width: 640px) {
   .row {
     grid-template-columns: 1fr;
+  }
+  .settings-actions {
+    align-items: stretch;
+  }
+  .settings-actions button {
+    width: 100%;
+    margin-left: 0;
   }
 }

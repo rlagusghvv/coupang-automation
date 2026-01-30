@@ -40,6 +40,7 @@ const settingsEls = {
   pagesApiToken: $("pagesApiToken"),
   pagesAutoDeploy: $("pagesAutoDeploy"),
   payloadOnly: $("payloadOnly"),
+  soundOnComplete: $("soundOnComplete"),
   marginRate: $("marginRate"),
   marginAdd: $("marginAdd"),
   priceMin: $("priceMin"),
@@ -82,6 +83,34 @@ function setUploadEnabled(enabled, reason = "") {
 
 function log(obj) {
   logEl.textContent = typeof obj === "string" ? obj : JSON.stringify(obj, null, 2);
+}
+
+function shouldPlaySound() {
+  return Boolean(settingsEls.soundOnComplete?.checked);
+}
+
+function playSuccessSound() {
+  if (!shouldPlaySound()) return;
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const playBeep = (startDelay = 0) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.value = 880;
+      gain.gain.value = 0.0001;
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      const t0 = ctx.currentTime + startDelay;
+      osc.start(t0);
+      gain.gain.exponentialRampToValueAtTime(0.2, t0 + 0.01);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.18);
+      osc.stop(t0 + 0.19);
+    };
+    playBeep(0);
+    playBeep(0.22);
+    setTimeout(() => ctx.close?.(), 600);
+  } catch {}
 }
 
 function renderSummary(result) {
@@ -135,6 +164,11 @@ function renderSummary(result) {
 
   if (result?.payloadOnly) {
     lastPayload = result.payload || null;
+    const check = result.payloadCheck || null;
+    const checkSummary = check?.summary || {};
+    const checkLabel = check
+      ? `${check.ok ? "통과" : "불일치"} · 옵션 ${checkSummary.total ?? 0}개 · 가격불일치 ${checkSummary.priceMismatch ?? 0} · 재고불일치 ${checkSummary.stockMismatch ?? 0}`
+      : "검산 없음";
     summaryEl.classList.remove("hidden");
     summaryEl.innerHTML = `
       <div class="title">Payload 생성 완료</div>
@@ -143,11 +177,13 @@ function renderSummary(result) {
         <div class="label">가격</div><div>${result?.finalPrice ?? "-"}</div>
         <div class="label">카테고리</div><div>${result?.category?.used ?? "-"}</div>
         <div class="label">상태</div><div>쿠팡 API 호출 없음</div>
+        <div class="label">검산</div><div>${checkLabel}</div>
       </div>
       <div class="row">
         <div class="label">Payload</div>
         <div><button id="downloadPayload" class="mini-btn">JSON 다운로드</button></div>
       </div>
+      ${check ? `<details class="payload-preview"><summary>검산 상세</summary><pre id="payloadCheckPreview" class="payload-pre"></pre></details>` : ""}
       <details class="payload-preview">
         <summary>Payload 미리보기</summary>
         <pre id="payloadPreview" class="payload-pre"></pre>
@@ -167,6 +203,10 @@ function renderSummary(result) {
     const pre = document.getElementById("payloadPreview");
     if (pre && lastPayload) {
       pre.textContent = JSON.stringify(lastPayload, null, 2);
+    }
+    const checkPre = document.getElementById("payloadCheckPreview");
+    if (checkPre && check) {
+      checkPre.textContent = JSON.stringify(check, null, 2);
     }
     return;
   }
@@ -272,6 +312,7 @@ async function loadSettings() {
   settingsEls.pagesApiToken.value = s.pagesApiToken || "";
   settingsEls.pagesAutoDeploy.checked = String(s.pagesAutoDeploy || "") === "1";
   settingsEls.payloadOnly.checked = String(s.payloadOnly || "") === "1";
+  settingsEls.soundOnComplete.checked = String(s.soundOnComplete || "") === "1";
   settingsEls.marginRate.value = s.marginRate ?? "";
   settingsEls.marginAdd.value = s.marginAdd ?? "";
   settingsEls.priceMin.value = s.priceMin ?? "";
@@ -320,6 +361,7 @@ async function saveSettings() {
     pagesApiToken: settingsEls.pagesApiToken.value.trim(),
     pagesAutoDeploy: settingsEls.pagesAutoDeploy.checked ? "1" : "",
     payloadOnly: settingsEls.payloadOnly.checked ? "1" : "",
+    soundOnComplete: settingsEls.soundOnComplete.checked ? "1" : "",
     marginRate: Number(settingsEls.marginRate.value || 0),
     marginAdd: Number(settingsEls.marginAdd.value || 0),
     priceMin: Number(settingsEls.priceMin.value || 0),
@@ -476,17 +518,25 @@ async function run() {
       log(json);
       renderSummary(null);
     } else {
-      const createBody = (() => {
-        try {
-          return JSON.parse(json?.result?.create?.body || "{}");
-        } catch {
-          return {};
-        }
-      })();
-      const ok = createBody?.code === "SUCCESS";
-      setStatus(ok ? "완료" : "실패", ok ? "ok" : "bad");
-      renderSummary(json.result);
-      log(json.result);
+      if (json?.result?.payloadOnly) {
+        setStatus("완료", "ok");
+        renderSummary(json.result);
+        log(json.result);
+        playSuccessSound();
+      } else {
+        const createBody = (() => {
+          try {
+            return JSON.parse(json?.result?.create?.body || "{}");
+          } catch {
+            return {};
+          }
+        })();
+        const ok = createBody?.code === "SUCCESS";
+        setStatus(ok ? "완료" : "실패", ok ? "ok" : "bad");
+        renderSummary(json.result);
+        log(json.result);
+        if (ok) playSuccessSound();
+      }
     }
   } catch (e) {
     setStatus("에러", "bad");
@@ -531,6 +581,7 @@ async function exportOrders() {
     log(result);
     if (lastExportPathEl) lastExportPathEl.textContent = result.filePath || "-";
     if (result.filePath) lastExportPathEl?.setAttribute("data-path", result.filePath);
+    playSuccessSound();
   } catch (e) {
     setStatus("에러", "bad");
     log(String(e?.message || e));
@@ -562,6 +613,7 @@ async function uploadOrders() {
     }
     setStatus("업로드 완료", "ok");
     log(json.result || json);
+    playSuccessSound();
   } catch (e) {
     setStatus("에러", "bad");
     log(String(e?.message || e));

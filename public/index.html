@@ -29,7 +29,6 @@
             <input id="url" type="url" placeholder="https://domeggook.com/..." />
             <button id="submit">업로드</button>
           </div>
-          <p class="hint">1688 도메인은 자동 스킵됩니다.</p>
 
         </div>
 
@@ -164,7 +163,7 @@
           </div>
           <p class="hint">가격 공식: 도매꾹가 × (1+마진률) + 추가금 → 라운딩</p>
 
-          <div class="row">
+          <div class="settings-actions">
             <label class="toggle">
               <input id="autoRequest" type="checkbox" />
               <span>자동 승인요청 (임시저장 없이 요청)</span>
@@ -173,9 +172,13 @@
               <input id="payloadOnly" type="checkbox" />
               <span>쿠팡 API 호출 안함 (payload만 생성)</span>
             </label>
+            <label class="toggle">
+              <input id="soundOnComplete" type="checkbox" />
+              <span>완료 알림 소리</span>
+            </label>
             <button id="saveSettings">설정 저장</button>
           </div>
-          <div class="row mini-row">
+          <div class="mini-row">
             <span class="hint">현재 공인 IP: <span id="currentIp">-</span></span>
             <button id="refreshIp" class="mini-btn">IP 새로고침</button>
           </div>

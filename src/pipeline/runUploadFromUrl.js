@@ -151,6 +151,7 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
         },
       };
     }
+    await new Promise((r) => setTimeout(r, 3000));
   }
 
   const imageUrl = downloaded.urlMap[draft.imageUrl];
@@ -276,11 +277,19 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
         : undefined,
   });
 
+  const payloadCheck = buildPayloadCheck({
+    optionsUsed,
+    finalPrice,
+    priceMin: settings.priceMin,
+    items: body?.items || [],
+  });
+
   if (payloadOnly) {
     return {
       ok: true,
       payloadOnly: true,
       payload: body,
+      payloadCheck,
       draft: { title: draft.title, price: draft.price, imageUrl: draft.imageUrl },
       finalPrice,
       category: { requested: displayCategoryCode, used: finalCategoryCode, auto: allowAutoCategory },
@@ -325,6 +334,7 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
     finalPrice,
     category: { requested: displayCategoryCode, used: finalCategoryCode, auto: allowAutoCategory },
     optionsUsed: optionsUsed.map((opt) => opt.label),
+    payloadCheck,
     create: { status: res.status, body: createBody, sellerProductId: createdId },
     approval,
     followUp,
@@ -345,20 +355,31 @@ async function getPublicIp() {
 
 async function isUrlReachable(url, timeoutMs = 8000) {
   if (!url) return false;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const res = await fetch(url, { method: "HEAD", signal: controller.signal });
-    if (res.ok) return true;
-  } catch {}
-  try {
-    const res = await fetch(url, { method: "GET", signal: controller.signal });
-    return res.ok;
-  } catch {
-    return false;
-  } finally {
+  const shouldRetry = url.includes(".pages.dev") || url.includes("/couplus-out/");
+  const maxAttempts = shouldRetry ? 3 : 1;
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const res = await fetch(url, { method: "HEAD", signal: controller.signal });
+      if (res.ok) {
+        clearTimeout(timer);
+        return true;
+      }
+    } catch {}
+    try {
+      const res = await fetch(url, { method: "GET", signal: controller.signal });
+      if (res.ok) {
+        clearTimeout(timer);
+        return true;
+      }
+    } catch {}
     clearTimeout(timer);
+    if (attempt < maxAttempts - 1) {
+      await new Promise((r) => setTimeout(r, 2000));
+    }
   }
+  return false;
 }
 
 async function pollApprovalStatus({
@@ -405,4 +426,69 @@ async function pollApprovalStatus({
     last.productUrl = `https://www.coupang.com/vp/products/${last.productId}`;
   }
   return last;
+}
+
+function buildPayloadCheck({ optionsUsed = [], finalPrice, priceMin, items = [] } = {}) {
+  const minPrice = Number.isFinite(Number(priceMin)) ? Number(priceMin) : 1000;
+  const itemList = Array.isArray(items) ? items : [];
+  const itemMap = new Map(itemList.map((item) => [item?.itemName, item]));
+
+  if (!Array.isArray(optionsUsed) || optionsUsed.length === 0) {
+    const single = itemList[0] || {};
+    const expectedPrice = Number(finalPrice);
+    const expectedStock = 10;
+    const actualPrice = Number(single?.price);
+    const actualStock = Number(single?.stock);
+    const priceOk = Number.isFinite(actualPrice) && actualPrice === expectedPrice;
+    const stockOk = Number.isFinite(actualStock) && actualStock === expectedStock;
+    const check = {
+      label: single?.itemName || "단품",
+      expectedPrice,
+      actualPrice: Number.isFinite(actualPrice) ? actualPrice : null,
+      expectedStock,
+      actualStock: Number.isFinite(actualStock) ? actualStock : null,
+      usedMinPrice: false,
+      priceOk,
+      stockOk,
+    };
+    const summary = {
+      total: 1,
+      missingItem: priceOk || stockOk ? 0 : 1,
+      priceMismatch: priceOk ? 0 : 1,
+      stockMismatch: stockOk ? 0 : 1,
+    };
+    return { ok: priceOk && stockOk, summary, checks: [check] };
+  }
+
+  const checks = optionsUsed.map((opt) => {
+    const item = itemMap.get(opt.label);
+    const rawExpected = Number(finalPrice) + Number(opt.priceDelta || 0);
+    const expectedPrice = Math.max(minPrice, rawExpected);
+    const expectedStock =
+      Number.isFinite(opt.stock) && Number(opt.stock) > 0 ? Number(opt.stock) : 10;
+    const actualPrice = Number(item?.price);
+    const actualStock = Number(item?.stock);
+    const priceOk = Number.isFinite(actualPrice) && actualPrice === expectedPrice;
+    const stockOk = Number.isFinite(actualStock) && actualStock === expectedStock;
+    return {
+      label: opt.label,
+      priceDelta: Number(opt.priceDelta || 0),
+      expectedPrice,
+      actualPrice: Number.isFinite(actualPrice) ? actualPrice : null,
+      expectedStock,
+      actualStock: Number.isFinite(actualStock) ? actualStock : null,
+      usedMinPrice: rawExpected < minPrice,
+      priceOk,
+      stockOk,
+    };
+  });
+
+  const summary = {
+    total: checks.length,
+    missingItem: checks.filter((c) => c.actualPrice == null && c.actualStock == null).length,
+    priceMismatch: checks.filter((c) => !c.priceOk).length,
+    stockMismatch: checks.filter((c) => !c.stockOk).length,
+  };
+  const ok = summary.priceMismatch === 0 && summary.stockMismatch === 0;
+  return { ok, summary, checks };
 }

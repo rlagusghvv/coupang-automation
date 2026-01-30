@@ -22,6 +22,137 @@ function normalizeUrl(u) {
   return s;
 }
 
+function parseOptionValuesFromLabel(label) {
+  const text = String(label || "").trim();
+  if (!text) return [];
+
+  const partsByPair = text.split(/[,|]/).map((s) => s.trim()).filter(Boolean);
+  const pairValues = [];
+  for (const part of partsByPair) {
+    const pair = part.split(/[:：]/).map((s) => s.trim());
+    if (pair.length === 2 && pair[0] && pair[1]) {
+      pairValues.push({ optionName: pair[0], optionValue: pair[1] });
+    }
+  }
+  if (pairValues.length > 0) return pairValues;
+
+  const bracketMatch = text.match(/^(.+?)\s*[\[\(](.+?)[\]\)]\s*$/);
+  if (bracketMatch) {
+    const left = bracketMatch[1].trim();
+    const right = bracketMatch[2].trim();
+    const sizePattern = /(\d+(\.\d+)?\s*(cm|mm|m|인치|inch))/i;
+    const colorWords = [
+      "블랙",
+      "화이트",
+      "레드",
+      "블루",
+      "그린",
+      "핑크",
+      "베이지",
+      "브라운",
+      "그레이",
+      "옐로",
+      "퍼플",
+      "네이비",
+      "실버",
+      "골드",
+      "투명",
+      "클리어",
+    ];
+    const leftName = sizePattern.test(left) ? "크기" : "옵션1";
+    const rightName = colorWords.some((c) => right.includes(c)) ? "색상" : "옵션2";
+    return [
+      { optionName: leftName, optionValue: left },
+      { optionName: rightName, optionValue: right },
+    ];
+  }
+
+  const parts = text.split(/[\/]/).map((s) => s.trim()).filter(Boolean);
+  if (parts.length >= 2) {
+    return parts.map((p, idx) => ({ optionName: `옵션${idx + 1}`, optionValue: p }));
+  }
+
+  return [{ optionName: "옵션", optionValue: text }];
+}
+
+function decodeHtmlEntities(text) {
+  return String(text || "")
+    .replace(/&#10;/g, "\n")
+    .replace(/&quot;/g, "\"")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&#x27;/g, "'")
+    .replace(/&#39;/g, "'");
+}
+
+function parseTitlePairsFromText(titleText) {
+  if (!titleText) return [];
+  const lines = String(titleText)
+    .replace(/\r/g, "")
+    .split("\n")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const withColon = lines.filter((s) => s.includes(":"));
+  const koOnly = withColon.filter((s) => /[가-힣]/.test(s));
+  const use = koOnly.length > 0 ? koOnly : withColon;
+  const pairs = [];
+  for (const line of use) {
+    const idx = line.indexOf(":");
+    if (idx === -1) continue;
+    const name = line.slice(0, idx).trim();
+    const value = line.slice(idx + 1).trim();
+    if (!name || !value) continue;
+    if (pairs.find((p) => p.optionName === name)) continue;
+    pairs.push({ optionName: name, optionValue: value });
+  }
+  return pairs;
+}
+
+function parse1688VariantsFromHtml(html) {
+  const raw = String(html || "");
+  const out = [];
+  const optRe = /<div[^>]*class="[^"]*optlist[^"]*"[^>]*>/gi;
+  let m;
+  while ((m = optRe.exec(raw))) {
+    const tag = m[0];
+    const krwMatch = tag.match(/krwstr="([^"]+)"/i);
+    const priceText = krwMatch ? decodeHtmlEntities(krwMatch[1]) : "";
+    const priceNum = Number(String(priceText).replace(/[^\d]/g, "")) || 0;
+    const start = m.index;
+    const slice = raw.slice(start, start + 2500);
+    const titleMatch = slice.match(/title="([^"]+)"/i);
+    const titleRaw = titleMatch ? decodeHtmlEntities(titleMatch[1]) : "";
+    const values = parseTitlePairsFromText(titleRaw);
+    const sizeMatch = slice.match(/class="wid150"[^>]*>([^<]+)</i);
+    const sizeText = sizeMatch ? decodeHtmlEntities(sizeMatch[1]) : "";
+    const stockMatch =
+      slice.match(/(\d[\d,]*)\s*부\s*판매\s*가능/i) ||
+      slice.match(/(\d[\d,]*)\s*개\s*판매\s*가능/i) ||
+      slice.match(/(\d[\d,]*)\s*개/i);
+    const stock = stockMatch ? Number(stockMatch[1].replace(/,/g, "")) : 0;
+    let label = values.length > 0 ? values.map((v) => v.optionValue).join(" / ") : "";
+    if (!label) label = sizeText || "";
+    if (!label) label = titleRaw.replace(/\s+/g, " ").trim();
+    if (!label) label = `옵션${out.length + 1}`;
+    out.push({
+      label,
+      price: priceNum || 0,
+      stock: Number.isFinite(stock) ? stock : 0,
+      values,
+    });
+  }
+  const seen = new Set();
+  const uniq = [];
+  for (const item of out) {
+    const key = `${item.label}::${item.price}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    uniq.push(item);
+  }
+  return uniq;
+}
+
 function sanitizeHtml(html, baseUrl) {
   const raw = String(html || "")
     .replace(/<script[\s\S]*?<\/script>/gi, "")
@@ -303,6 +434,7 @@ export async function parseProductFromDomaeqq(url) {
     : await browser.newContext();
 
   const page = await context.newPage();
+  const is1688 = String(url || "").includes("1688.domeggook.com");
 
   try {
     await page.goto(url, { waitUntil: "domcontentloaded", timeout: 90000 });
@@ -311,13 +443,103 @@ export async function parseProductFromDomaeqq(url) {
     const titleCandidate = page.locator("h1, h2").first();
     const titleText = (await titleCandidate.textContent().catch(() => null))?.trim();
 
+    let variantTable = is1688
+      ? await page.evaluate(() => {
+          const clean = (s) =>
+            String(s || "")
+              .replace(/\s+/g, " ")
+              .replace(/\(필수\)|\[필수\]/g, "")
+              .trim();
+          const parsePrice = (t) => {
+            const m = String(t || "").match(/(\d[\d,]*)\s*원/);
+            return m ? Number(m[1].replace(/,/g, "")) : null;
+          };
+          const parseStock = (t) => {
+            const m = String(t || "").match(/(\d[\d,]*)\s*(부|개)\s*판매 가능/);
+            if (m) return Number(m[1].replace(/,/g, ""));
+            const m2 = String(t || "").match(/(\d[\d,]*)\s*개/);
+            return m2 ? Number(m2[1].replace(/,/g, "")) : null;
+          };
+          const parseTitle = (title) => {
+            if (!title) return [];
+            const lines = String(title)
+              .replace(/&#10;/g, "\n")
+              .split(/\r?\n/)
+              .map((s) => s.trim())
+              .filter(Boolean);
+            const withColon = lines.filter((s) => s.includes(":"));
+            const koOnly = withColon.filter((s) => /[가-힣]/.test(s));
+            const use = koOnly.length > 0 ? koOnly : withColon;
+            const pairs = [];
+            for (const line of use) {
+              const idx = line.indexOf(":");
+              if (idx === -1) continue;
+              const name = line.slice(0, idx).trim();
+              const value = line.slice(idx + 1).trim();
+              if (!name || !value) continue;
+              if (pairs.find((p) => p.optionName === name)) continue;
+              pairs.push({ optionName: name, optionValue: value });
+            }
+            return pairs;
+          };
+          const items = [];
+          const optList = Array.from(document.querySelectorAll(".optlist"));
+          for (const el of optList) {
+            const krwstr = el.getAttribute("krwstr") || "";
+            const price = parsePrice(krwstr) || parsePrice(el.textContent || "");
+            if (!price) continue;
+            const stock = parseStock(el.textContent || "");
+            const titleEl = el.querySelector("[title]");
+            const title = titleEl ? titleEl.getAttribute("title") : "";
+            const values = parseTitle(title);
+            const sizeText = clean(el.querySelector(".wid150")?.textContent || "");
+            let label = values.length > 0 ? values.map((v) => v.optionValue).join(" / ") : "";
+            if (!label) label = sizeText || clean(el.textContent || "");
+            items.push({
+              label: label || `옵션${items.length + 1}`,
+              price,
+              stock: Number.isFinite(stock) ? stock : 0,
+              values,
+            });
+          }
+          const seen = new Set();
+          const uniq = [];
+          for (const item of items) {
+            const key = `${item.label}::${item.price}`;
+            if (seen.has(key)) continue;
+            seen.add(key);
+            uniq.push(item);
+          }
+          return { variants: uniq };
+        })
+      : { variants: [] };
+
+    if (is1688 && (!variantTable?.variants || variantTable.variants.length === 0)) {
+      try {
+        const res = await page.request.get(url, {
+          headers: { Referer: url, "User-Agent": "Mozilla/5.0" },
+        });
+        if (res.ok()) {
+          const html = await res.text();
+          const variants = parse1688VariantsFromHtml(html);
+          variantTable = { variants };
+        }
+      } catch {}
+    }
+
     // ✅ 도매꾹 단가: .lItemPrice 우선
     const priceText =
       (await page.locator(".lItemPrice").first().textContent().catch(() => null))?.trim() ||
       (await page.locator("text=/\\d[\\d,]*\\s*원/").first().textContent().catch(() => null))?.trim();
     const bodyText = await page.locator("body").innerText().catch(() => "");
 
+    const variantPrices = Array.isArray(variantTable?.variants)
+      ? variantTable.variants.map((v) => Number(v.price)).filter((n) => Number.isFinite(n))
+      : [];
+    const minVariantPrice = variantPrices.length > 0 ? Math.min(...variantPrices) : null;
+
     const priceRaw =
+      (is1688 && Number.isFinite(minVariantPrice) ? minVariantPrice : null) ||
       Number(String(priceText || "").replace(/[^\d]/g, "")) ||
       pickPriceFromText(bodyText) ||
       9900;
@@ -326,6 +548,33 @@ export async function parseProductFromDomaeqq(url) {
 
     // 대표 이미지: 메인 썸네일 우선
     let imageUrl = await pickMainImageSrc(page);
+
+    if (is1688 && (!imageUrl || /1688logo\.png/i.test(imageUrl))) {
+      imageUrl = await page.evaluate(() => {
+        const imgs = Array.from(document.images)
+          .map((img) => ({
+            src: img.currentSrc || img.src,
+            w: img.naturalWidth || img.width || 0,
+            h: img.naturalHeight || img.height || 0,
+          }))
+          .filter((x) => x.src && x.src.includes("alicdn.com"));
+        imgs.sort((a, b) => b.w * b.h - a.w * a.h);
+        return imgs[0]?.src || "";
+      });
+    }
+
+    if (is1688 && (!imageUrl || /1688logo\.png/i.test(imageUrl))) {
+      try {
+        const res = await page.request.get(url, {
+          headers: { Referer: url, "User-Agent": "Mozilla/5.0" },
+        });
+        if (res.ok()) {
+          const html = await res.text();
+          const matches = html.match(/https?:\/\/[^\"'\\s>]+alicdn\\.com[^\"'\\s>]+/gi) || [];
+          imageUrl = matches.find((u) => /cbu01|ibank/i.test(u)) || matches[0] || imageUrl;
+        }
+      } catch {}
+    }
 
     // 없으면 og:image
     if (!imageUrl) {
@@ -502,21 +751,33 @@ export async function parseProductFromDomaeqq(url) {
       return cleaned.slice(0, 20);
     });
 
-    // ✅ 옵션: JS에 박힌 ItemOptionController 데이터 우선 사용
-    // 아이가 보듯이 생각하면, "진짜 옵션 상자"를 먼저 연다고 보면 됨.
     let finalOptions = [];
-    try {
-      const scriptText = await page.evaluate(() =>
-        Array.from(document.scripts)
-          .map((s) => s.textContent || "")
-          .join("\n"),
-      );
-      const inlineOptions = extractOptionVariantsFromItemOptionController(scriptText);
-      if (inlineOptions.length > 0) finalOptions = inlineOptions;
-    } catch {}
+    if (is1688 && Array.isArray(variantTable?.variants) && variantTable.variants.length > 0) {
+      finalOptions = variantTable.variants.map((v) => ({
+        name: v.label,
+        priceDelta: Number(v.price) - price,
+        stock: Number.isFinite(Number(v.stock)) ? Number(v.stock) : 0,
+        values:
+          Array.isArray(v.values) && v.values.length > 0
+            ? v.values
+            : parseOptionValuesFromLabel(v.label),
+      }));
+    } else {
+      // ✅ 옵션: JS에 박힌 ItemOptionController 데이터 우선 사용
+      // 아이가 보듯이 생각하면, "진짜 옵션 상자"를 먼저 연다고 보면 됨.
+      try {
+        const scriptText = await page.evaluate(() =>
+          Array.from(document.scripts)
+            .map((s) => s.textContent || "")
+            .join("\n"),
+        );
+        const inlineOptions = extractOptionVariantsFromItemOptionController(scriptText);
+        if (inlineOptions.length > 0) finalOptions = inlineOptions;
+      } catch {}
+    }
 
     // ✅ 옵션 팝업(전체보기) fallback
-    if (finalOptions.length === 0) {
+    if (!is1688 && finalOptions.length === 0) {
       try {
         const productId = String(url).match(/\d+/)?.[0] || "";
         const popupUrl = `https://domeggook.com/main/popup/item/popup_itemOptionView.php?no=${encodeURIComponent(
