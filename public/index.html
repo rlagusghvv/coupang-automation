@@ -18,6 +18,7 @@
       <section class="card">
         <div class="tabs">
           <button class="tab active" data-tab="upload">업로드</button>
+          <button class="tab" data-tab="orders">주문 수집</button>
           <button class="tab" data-tab="settings">설정</button>
           <button class="tab" data-tab="account">계정</button>
         </div>
@@ -30,7 +31,9 @@
           </div>
           <p class="hint">1688 도메인은 자동 스킵됩니다.</p>
 
-          <div class="divider"></div>
+        </div>
+
+        <div class="panel hidden" id="panel-orders">
           <label>쿠팡 주문 → 도매매 엑셀 생성</label>
           <div class="grid">
             <div>

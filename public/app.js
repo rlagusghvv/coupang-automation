@@ -19,6 +19,7 @@ const summaryEl = $("summary");
 const tabs = document.querySelectorAll(".tab");
 const panels = {
   upload: $("panel-upload"),
+  orders: $("panel-orders"),
   settings: $("panel-settings"),
   account: $("panel-account"),
 };
