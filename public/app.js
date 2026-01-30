@@ -21,6 +21,10 @@ const settingsEls = {
   coupangDeliveryCompanyCode: $("deliveryCode"),
   imageProxyBase: $("proxyBase"),
   allowedIps: $("allowedIps"),
+  pagesProjectName: $("pagesProjectName"),
+  pagesAccountId: $("pagesAccountId"),
+  pagesApiToken: $("pagesApiToken"),
+  pagesAutoDeploy: $("pagesAutoDeploy"),
   marginRate: $("marginRate"),
   marginAdd: $("marginAdd"),
   priceMin: $("priceMin"),
@@ -74,6 +78,18 @@ function renderSummary(result) {
       <div class="row">
         <div class="label">이유</div><div>이미지 호스트 접근 실패</div>
         <div class="label">이미지 URL</div><div>${result.imageUrl || "-"}</div>
+      </div>
+    `;
+    return;
+  }
+
+  if (result?.error === "pages_deploy_failed") {
+    summaryEl.classList.remove("hidden");
+    summaryEl.innerHTML = `
+      <div class="title">업로드 차단됨</div>
+      <div class="row">
+        <div class="label">이유</div><div>Pages 배포 실패</div>
+        <div class="label">상세</div><div>${result.detail || "-"}</div>
       </div>
     `;
     return;
@@ -164,6 +180,10 @@ async function loadSettings() {
   settingsEls.coupangDeliveryCompanyCode.value = s.coupangDeliveryCompanyCode || "";
   settingsEls.imageProxyBase.value = s.imageProxyBase || "";
   settingsEls.allowedIps.value = s.allowedIps || "";
+  settingsEls.pagesProjectName.value = s.pagesProjectName || "";
+  settingsEls.pagesAccountId.value = s.pagesAccountId || "";
+  settingsEls.pagesApiToken.value = s.pagesApiToken || "";
+  settingsEls.pagesAutoDeploy.checked = String(s.pagesAutoDeploy || "") === "1";
   settingsEls.marginRate.value = s.marginRate ?? "";
   settingsEls.marginAdd.value = s.marginAdd ?? "";
   settingsEls.priceMin.value = s.priceMin ?? "";
@@ -180,6 +200,10 @@ async function saveSettings() {
     coupangDeliveryCompanyCode: settingsEls.coupangDeliveryCompanyCode.value.trim(),
     imageProxyBase: settingsEls.imageProxyBase.value.trim(),
     allowedIps: settingsEls.allowedIps.value.trim(),
+    pagesProjectName: settingsEls.pagesProjectName.value.trim(),
+    pagesAccountId: settingsEls.pagesAccountId.value.trim(),
+    pagesApiToken: settingsEls.pagesApiToken.value.trim(),
+    pagesAutoDeploy: settingsEls.pagesAutoDeploy.checked ? "1" : "",
     marginRate: Number(settingsEls.marginRate.value || 0),
     marginAdd: Number(settingsEls.marginAdd.value || 0),
     priceMin: Number(settingsEls.priceMin.value || 0),

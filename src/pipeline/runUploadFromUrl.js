@@ -22,6 +22,7 @@ import { resolveDisplayCategoryCode } from "../utils/categoryMap.js";
 import { computePrice } from "../utils/price.js";
 import { resolveLocalImageBase } from "../utils/localImageHost.js";
 import { downloadImagesWithPlaywright } from "../utils/playwrightImageDownload.js";
+import { deployPagesAssets } from "../utils/pagesDeploy.js";
 
 const OUTBOUND_SHIPPING_PLACE_CODE = "24093380";
 const DISPLAY_CATEGORY_CODE = 77723;
@@ -127,6 +128,23 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
     baseUrl: localImageBase,
     storageStatePath,
   });
+
+  if (String(settings.pagesAutoDeploy || "").trim() === "1") {
+    const deployRes = await deployPagesAssets({
+      directory: outDir,
+      projectName: String(settings.pagesProjectName || "").trim(),
+      apiToken: String(settings.pagesApiToken || "").trim(),
+      accountId: String(settings.pagesAccountId || "").trim(),
+    });
+    if (!deployRes.ok) {
+      return {
+        ok: false,
+        skipped: false,
+        error: "pages_deploy_failed",
+        detail: deployRes.error,
+      };
+    }
+  }
 
   const imageUrl = downloaded.urlMap[draft.imageUrl];
   if (!imageUrl) {

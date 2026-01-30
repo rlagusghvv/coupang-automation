@@ -5,6 +5,8 @@ export function resolveLocalImageBase(settings = {}) {
   if (fromSettings) return normalizeBase(fromSettings);
   const fromProxyBase = (settings.imageProxyBase || "").trim();
   if (fromProxyBase) return normalizeBase(fromProxyBase);
+  const fromPagesProject = (settings.pagesProjectName || "").trim();
+  if (fromPagesProject) return normalizeBase(`https://${fromPagesProject}.pages.dev`);
   const fromEnv = (process.env.LOCAL_IMAGE_BASE || "").trim();
   if (fromEnv) return normalizeBase(fromEnv);
   return "http://localhost:3000/couplus-out";
