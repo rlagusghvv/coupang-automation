@@ -132,6 +132,7 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
   if (String(settings.pagesAutoDeploy || "").trim() === "1") {
     const deployRes = await deployPagesAssets({
       directory: outDir,
+      subDirName: "couplus-out",
       projectName: String(settings.pagesProjectName || "").trim(),
       apiToken: String(settings.pagesApiToken || "").trim(),
       accountId: String(settings.pagesAccountId || "").trim(),
