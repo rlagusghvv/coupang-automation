@@ -46,6 +46,8 @@ const settingsEls = {
   roundUnit: $("roundUnit"),
   autoRequest: $("autoRequest"),
 };
+const domemeSessionBtn = $("createDomemeSession");
+const domemeSessionStatusEl = $("domemeSessionStatus");
 
 const authEls = {
   email: $("email"),
@@ -279,6 +281,26 @@ async function loadSettings() {
   // Re-evaluate upload availability after settings load
   await loadCurrentIp();
   evaluateUploadGate();
+}
+
+async function refreshDomemeSessionStatus() {
+  if (!domemeSessionStatusEl) return;
+  domemeSessionStatusEl.textContent = "조회중...";
+  try {
+    const res = await fetch("/api/domeme/session/status");
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok || !json.ok) throw new Error("status failed");
+    if (json.exists) {
+      domemeSessionStatusEl.textContent = `저장됨 (${json.updatedAt})`;
+      if (settingsEls.domemeStorageStatePath && json.filePath) {
+        settingsEls.domemeStorageStatePath.value = json.filePath;
+      }
+    } else {
+      domemeSessionStatusEl.textContent = "없음";
+    }
+  } catch {
+    domemeSessionStatusEl.textContent = "-";
+  }
 }
 
 async function saveSettings() {
@@ -614,6 +636,24 @@ $("logout").addEventListener("click", logout);
 refreshIpBtn?.addEventListener("click", loadCurrentIp);
 refreshIpBtn?.addEventListener("click", evaluateUploadGate);
 settingsEls.allowedIps?.addEventListener("input", evaluateUploadGate);
+domemeSessionBtn?.addEventListener("click", async () => {
+  setStatus("도매매 세션 생성 중...", "");
+  try {
+    const res = await fetch("/api/domeme/session/start", { method: "POST" });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok || !json.ok) {
+      setStatus("실패", "bad");
+      log(json);
+      return;
+    }
+    setStatus("브라우저에서 네이버 로그인 후 저장됨", "ok");
+  } catch (e) {
+    setStatus("에러", "bad");
+    log(String(e?.message || e));
+  } finally {
+    setTimeout(refreshDomemeSessionStatus, 1500);
+  }
+});
 
 (async () => {
   const authed = await updateAuthStatus();
@@ -621,5 +661,6 @@ settingsEls.allowedIps?.addEventListener("input", evaluateUploadGate);
   else clearSettingsUI();
   await loadVersionInfo();
   await loadCurrentIp();
+  await refreshDomemeSessionStatus();
   evaluateUploadGate();
 })();

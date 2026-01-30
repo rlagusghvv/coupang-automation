@@ -16,6 +16,7 @@ import {
 } from "./src/server/storage_sqlite.js";
 import { exportOrdersToDomeme } from "./src/pipeline/exportOrdersToDomeme.js";
 import { uploadDomemeExcel } from "./src/pipeline/uploadDomemeExcel.js";
+import { spawn } from "node:child_process";
 
 const app = express();
 app.set("trust proxy", true);
@@ -322,6 +323,39 @@ app.post("/api/orders/upload", authRequired, async (req, res) => {
     if (!filePath) return res.status(400).json({ ok: false, error: "missing filePath" });
     const result = await uploadDomemeExcel({ filePath, settings: req.user.settings || {} });
     return res.json({ ok: true, result });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+// ✅ 도매매 세션 생성 시작 (네이버 로그인)
+app.post("/api/domeme/session/start", authRequired, (req, res) => {
+  try {
+    const scriptPath = path.join(process.cwd(), "scripts", "save_domeme_session.js");
+    const child = spawn("node", [scriptPath], {
+      cwd: process.cwd(),
+      detached: true,
+      stdio: "ignore",
+    });
+    child.unref();
+    return res.json({ ok: true });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+// ✅ 도매매 세션 상태 확인
+app.get("/api/domeme/session/status", authRequired, (req, res) => {
+  try {
+    const filePath = path.join(process.cwd(), "storageState.domeme.json");
+    if (!fs.existsSync(filePath)) return res.json({ ok: true, exists: false, filePath });
+    const stat = fs.statSync(filePath);
+    return res.json({
+      ok: true,
+      exists: true,
+      filePath,
+      updatedAt: new Date(stat.mtimeMs).toISOString(),
+    });
   } catch (e) {
     return res.status(500).json({ ok: false, error: String(e?.message || e) });
   }
