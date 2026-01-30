@@ -14,6 +14,7 @@ import { requestProductApproval } from "../coupang/api/requestProductApproval.js
 import { getCategoryMetas } from "../coupang/api/getCategoryMetas.js";
 import { checkAutoCategoryAgreed } from "../coupang/api/checkAutoCategoryAgreed.js";
 import { recommendCategory } from "../coupang/api/recommendCategory.js";
+import { buildSingleItem } from "../coupang/builders/buildSingleItem.js";
 import { prepareProxyUrl } from "../utils/imageProxy.js";
 import { probeImageUrl } from "../utils/imageProbe.js";
 import { extractImageUrls, filterDomeggookUrls, replaceImageSrcs } from "../utils/contentImages.js";
@@ -130,6 +131,19 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
     contentText: contentHtml,
     notices,
     requested: autoRequest,
+    items: Array.isArray(draft.options) && draft.options.length > 0
+      ? draft.options.map((opt) =>
+          buildSingleItem({
+            itemName: opt,
+            price: finalPrice,
+            stock: 10,
+            outboundShippingTimeDay: 1,
+            imageUrl,
+            contentText: contentHtml,
+            notices,
+          }),
+        )
+      : undefined,
   });
 
   const res = await createSellerProduct({

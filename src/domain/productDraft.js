@@ -27,6 +27,7 @@ export function makeDraft({
   imageUrl,
   contentText = "",
   categoryText = "",
+  options = [],
 }) {
   return validateDraft({
     sourceUrl: String(sourceUrl).trim(),
@@ -35,5 +36,6 @@ export function makeDraft({
     imageUrl: String(imageUrl).trim(),
     contentText: String(contentText || "").trim(),
     categoryText: String(categoryText || "").trim(),
+    options: Array.isArray(options) ? options : [],
   });
 }

@@ -254,6 +254,31 @@ export async function parseProductFromDomaeqq(url) {
       );
     });
 
+    const options = await page.evaluate(() => {
+      const normalize = (s) =>
+        String(s || "")
+          .replace(/\s+/g, " ")
+          .replace(/\(.*?\)/g, "")
+          .trim();
+
+      const fromSelects = Array.from(document.querySelectorAll("select"))
+        .flatMap((sel) => Array.from(sel.options || []).map((o) => o.textContent))
+        .map(normalize)
+        .filter((t) => t && !/선택|옵션/i.test(t));
+
+      const fromButtons = Array.from(
+        document.querySelectorAll(
+          "[class*='option'], [class*='opt'], [id*='option'], [id*='opt'] button, li",
+        ),
+      )
+        .map((el) => normalize(el.textContent))
+        .filter((t) => t && t.length < 80);
+
+      const merged = Array.from(new Set([...fromSelects, ...fromButtons]));
+      // 너무 많은 경우는 상위 20개로 제한
+      return merged.slice(0, 20);
+    });
+
     return makeDraft({
       sourceUrl: url,
       title: titleText || (await page.title().catch(() => "도매꾹 상품")),
@@ -261,6 +286,7 @@ export async function parseProductFromDomaeqq(url) {
       imageUrl: imageUrl || "https://via.placeholder.com/1000",
       contentText: finalContentHtml || titleText || "",
       categoryText,
+      options,
     });
   } finally {
     await page.close().catch(() => {});

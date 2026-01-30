@@ -18,6 +18,7 @@ export function buildSellerProductBody({
   notices,
   allowAutoCategory = false,
   requested = false,
+  items,
 } = {}) {
   if (!vendorId) throw new Error("vendorId required");
   if (!vendorUserId) throw new Error("vendorUserId required");
@@ -47,17 +48,19 @@ export function buildSellerProductBody({
     ...returnNoCenter(),
 
     images: buildTopImages({ url: imageUrl }),
-    items: [
-      buildSingleItem({
-        itemName: "단품",
-        price,
-        stock,
-        outboundShippingTimeDay: 1,
-        imageUrl,
-        contentText, // ✅ draft에서 내려온 상세 주입
-        notices,
-      }),
-    ],
+    items: Array.isArray(items) && items.length > 0
+      ? items
+      : [
+          buildSingleItem({
+            itemName: "단품",
+            price,
+            stock,
+            outboundShippingTimeDay: 1,
+            imageUrl,
+            contentText, // ✅ draft에서 내려온 상세 주입
+            notices,
+          }),
+        ],
   };
 
   return body;
