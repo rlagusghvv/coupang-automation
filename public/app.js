@@ -20,6 +20,7 @@ const settingsEls = {
   coupangVendorUserId: $("vendorUserId"),
   coupangDeliveryCompanyCode: $("deliveryCode"),
   imageProxyBase: $("proxyBase"),
+  allowedIps: $("allowedIps"),
   marginRate: $("marginRate"),
   marginAdd: $("marginAdd"),
   priceMin: $("priceMin"),
@@ -49,6 +50,20 @@ function renderSummary(result) {
   if (!result) {
     summaryEl.classList.add("hidden");
     summaryEl.innerHTML = "";
+    return;
+  }
+
+  if (result?.reason === "ip_not_allowed") {
+    const allowed = Array.isArray(result.allowedIps) ? result.allowedIps.join(", ") : "-";
+    summaryEl.classList.remove("hidden");
+    summaryEl.innerHTML = `
+      <div class="title">업로드 차단됨</div>
+      <div class="row">
+        <div class="label">현재 IP</div><div>${result.ip || "-"}</div>
+        <div class="label">허용 IP</div><div>${allowed}</div>
+        <div class="label">이유</div><div>허용되지 않은 IP</div>
+      </div>
+    `;
     return;
   }
 
@@ -121,6 +136,7 @@ async function loadSettings() {
   settingsEls.coupangVendorUserId.value = s.coupangVendorUserId || "";
   settingsEls.coupangDeliveryCompanyCode.value = s.coupangDeliveryCompanyCode || "";
   settingsEls.imageProxyBase.value = s.imageProxyBase || "";
+  settingsEls.allowedIps.value = s.allowedIps || "";
   settingsEls.marginRate.value = s.marginRate ?? "";
   settingsEls.marginAdd.value = s.marginAdd ?? "";
   settingsEls.priceMin.value = s.priceMin ?? "";
@@ -136,6 +152,7 @@ async function saveSettings() {
     coupangVendorUserId: settingsEls.coupangVendorUserId.value.trim(),
     coupangDeliveryCompanyCode: settingsEls.coupangDeliveryCompanyCode.value.trim(),
     imageProxyBase: settingsEls.imageProxyBase.value.trim(),
+    allowedIps: settingsEls.allowedIps.value.trim(),
     marginRate: Number(settingsEls.marginRate.value || 0),
     marginAdd: Number(settingsEls.marginAdd.value || 0),
     priceMin: Number(settingsEls.priceMin.value || 0),

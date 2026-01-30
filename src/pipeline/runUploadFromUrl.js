@@ -23,6 +23,7 @@ import { downloadImagesWithPlaywright } from "../utils/playwrightImageDownload.j
 
 const OUTBOUND_SHIPPING_PLACE_CODE = "24093380";
 const DISPLAY_CATEGORY_CODE = 77723;
+const IP_CHECK_URLS = ["https://ifconfig.me/ip", "https://api.ipify.org"];
 
 function makeUniqueOptions(list) {
   const seen = new Map();
@@ -78,6 +79,24 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
   const c = classifyUrl(inputUrl);
   if (!c.ok) {
     return { ok: false, skipped: true, reason: c.reason, url: c.url };
+  }
+
+  const allowedIpsRaw =
+    String(settings.allowedIps || process.env.COUPANG_ALLOWED_IPS || "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+  if (allowedIpsRaw.length > 0) {
+    const currentIp = await getPublicIp().catch(() => "");
+    if (!currentIp || !allowedIpsRaw.includes(currentIp)) {
+      return {
+        ok: false,
+        skipped: true,
+        reason: "ip_not_allowed",
+        ip: currentIp || "",
+        allowedIps: allowedIpsRaw,
+      };
+    }
   }
 
   // 사용자별 설정 우선
@@ -248,4 +267,16 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
     create: { status: res.status, body: createBody, sellerProductId: createdId },
     approval,
   };
+}
+
+async function getPublicIp() {
+  for (const url of IP_CHECK_URLS) {
+    try {
+      const res = await fetch(url, { method: "GET" });
+      if (!res.ok) continue;
+      const text = (await res.text()).trim();
+      if (text && text.length < 80) return text;
+    } catch {}
+  }
+  return "";
 }
