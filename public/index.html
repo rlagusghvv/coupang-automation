@@ -33,7 +33,7 @@
 
         </div>
 
-        <div class="panel hidden" id="panel-orders">
+        <div class="panel hidden order-actions" id="panel-orders">
           <label>쿠팡 주문 → 도매매 엑셀 생성</label>
           <div class="grid">
             <div>
@@ -45,18 +45,18 @@
               <input id="orderTo" type="date" />
             </div>
           </div>
-          <div class="row">
+          <div class="row compact-row">
             <button id="exportOrders">엑셀 생성</button>
           </div>
-          <div class="row">
+          <div class="row compact-row">
             <button id="uploadOrders">도매매 업로드</button>
           </div>
-          <div class="row">
+          <div class="row compact-row">
             <span class="hint">마지막 생성 엑셀: <span id="lastExportPath">-</span></span>
           </div>
           <div class="divider"></div>
           <label>SKU 매핑</label>
-          <div class="row">
+          <div class="row compact-row">
             <button id="loadMissing">누락 목록 불러오기</button>
             <button id="loadSkuMap">매핑 불러오기</button>
             <button id="saveSkuMap">매핑 저장</button>

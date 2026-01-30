@@ -122,6 +122,22 @@ label {
   gap: 10px;
 }
 
+.compact-row {
+  gap: 14px;
+  margin-top: 6px;
+}
+
+.order-actions button {
+  padding: 10px 14px;
+  font-size: 13px;
+  background: linear-gradient(135deg, #7dd3fc, #34d399);
+  color: #06221a;
+}
+
+.order-actions .row button {
+  min-width: 140px;
+}
+
 .mini-row {
   align-items: center;
 }
