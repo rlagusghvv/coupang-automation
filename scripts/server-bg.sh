@@ -6,6 +6,8 @@ PID_FILE="$ROOT_DIR/.server.pid"
 LOG_DIR="$ROOT_DIR/logs"
 LOG_FILE="$LOG_DIR/server.log"
 
+PORT="3000"
+
 mkdir -p "$LOG_DIR"
 
 is_running() {
@@ -24,9 +26,9 @@ start() {
     return 0
   fi
   cd "$ROOT_DIR"
-  nohup npm start > "$LOG_FILE" 2>&1 &
+  nohup env PORT="$PORT" npm start > "$LOG_FILE" 2>&1 &
   echo $! > "$PID_FILE"
-  echo "started (pid=$(cat "$PID_FILE"))"
+  echo "started (pid=$(cat "$PID_FILE"), port=$PORT)"
 }
 
 stop() {
@@ -35,7 +37,6 @@ stop() {
     return 0
   fi
   PID="$(cat "$PID_FILE")"
-  # stop child processes first
   pkill -P "$PID" 2>/dev/null || true
   kill "$PID" 2>/dev/null || true
   rm -f "$PID_FILE"
@@ -44,7 +45,7 @@ stop() {
 
 status() {
   if is_running; then
-    echo "running (pid=$(cat "$PID_FILE"))"
+    echo "running (pid=$(cat "$PID_FILE"), port=$PORT)"
   else
     echo "not running"
   fi
