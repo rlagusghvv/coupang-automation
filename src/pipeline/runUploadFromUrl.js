@@ -55,9 +55,10 @@ function makeUniqueOptions(list) {
     const count = (seen.get(key) || 0) + 1;
     seen.set(key, count);
     const uniqName = count === 1 ? base : `${base} (${count})`;
+    const hasValues = Array.isArray(values) && values.length > 0;
     idx += 1;
     out.push({
-      label: `${idx}. ${uniqName}`,
+      label: hasValues ? `${uniqName}` : `${idx}. ${uniqName}`,
       priceDelta,
       stock,
       values,
@@ -70,7 +71,10 @@ function buildItemAttributesFromOptionValues(values) {
   if (!Array.isArray(values) || values.length === 0) return null;
   const attrs = values
     .map((v) => {
-      const attributeTypeName = String(v?.optionName || "").trim();
+      const rawName = String(v?.optionName || "").trim();
+      const attributeTypeName = rawName
+        .replace(/색깔/g, "색상")
+        .replace(/크기|사이즈/g, "사이즈");
       const attributeValueName = String(v?.optionValue || "").trim();
       if (!attributeTypeName || !attributeValueName) return null;
       return { attributeTypeName, attributeValueName };
@@ -437,8 +441,8 @@ function buildPayloadCheck({ optionsUsed = [], finalPrice, priceMin, items = [] 
     const single = itemList[0] || {};
     const expectedPrice = Number(finalPrice);
     const expectedStock = 10;
-    const actualPrice = Number(single?.price);
-    const actualStock = Number(single?.stock);
+    const actualPrice = Number(single?.salePrice ?? single?.originalPrice ?? single?.price);
+    const actualStock = Number(single?.maximumBuyCount ?? single?.stock);
     const priceOk = Number.isFinite(actualPrice) && actualPrice === expectedPrice;
     const stockOk = Number.isFinite(actualStock) && actualStock === expectedStock;
     const check = {
@@ -466,8 +470,8 @@ function buildPayloadCheck({ optionsUsed = [], finalPrice, priceMin, items = [] 
     const expectedPrice = Math.max(minPrice, rawExpected);
     const expectedStock =
       Number.isFinite(opt.stock) && Number(opt.stock) > 0 ? Number(opt.stock) : 10;
-    const actualPrice = Number(item?.price);
-    const actualStock = Number(item?.stock);
+    const actualPrice = Number(item?.salePrice ?? item?.originalPrice ?? item?.price);
+    const actualStock = Number(item?.maximumBuyCount ?? item?.stock);
     const priceOk = Number.isFinite(actualPrice) && actualPrice === expectedPrice;
     const stockOk = Number.isFinite(actualStock) && actualStock === expectedStock;
     return {
