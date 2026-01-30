@@ -341,6 +341,11 @@ async function loadCurrentIp() {
 function evaluateUploadGate() {
   const allowed = parseAllowedIps(settingsEls.allowedIps?.value);
   const currentIp = String(currentIpEl?.textContent || "").trim();
+  const payloadOnly = settingsEls.payloadOnly?.checked;
+  if (payloadOnly) {
+    setUploadEnabled(true);
+    return;
+  }
   if (!allowed.length) {
     setUploadEnabled(true);
     return;
