@@ -151,8 +151,10 @@ export async function parseProductFromDomaeqq(url) {
     const titleCandidate = page.locator("h1, h2").first();
     const titleText = (await titleCandidate.textContent().catch(() => null))?.trim();
 
-    const priceCandidate = page.locator("text=/\\d[\\d,]*\\s*원/").first();
-    const priceText = (await priceCandidate.textContent().catch(() => null))?.trim();
+    // ✅ 도매꾹 단가: .lItemPrice 우선
+    const priceText =
+      (await page.locator(".lItemPrice").first().textContent().catch(() => null))?.trim() ||
+      (await page.locator("text=/\\d[\\d,]*\\s*원/").first().textContent().catch(() => null))?.trim();
     const bodyText = await page.locator("body").innerText().catch(() => "");
 
     const priceRaw =
