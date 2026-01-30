@@ -183,7 +183,7 @@ function extractJsonObjectAfterKey(text, key, startIndex = 0) {
   return null;
 }
 
-function extractOptionNamesFromItemOptionController(scriptText) {
+function extractOptionVariantsFromItemOptionController(scriptText) {
   const text = String(scriptText || "");
   if (!text.includes("ItemOptionController")) return [];
 
@@ -196,16 +196,32 @@ function extractOptionNamesFromItemOptionController(scriptText) {
     if (dataJson) {
       try {
         const dataObj = JSON.parse(dataJson);
-        const names = [];
+        const variants = [];
         const dataMap = dataObj?.data;
         if (dataMap && typeof dataMap === "object") {
           for (const key of Object.keys(dataMap)) {
             const item = dataMap[key];
             const name = String(item?.name || "").trim();
-            if (name) names.push(name);
+            if (!name) continue;
+            // domPrice is the per-option price delta (can be negative)
+            const priceDelta = Number(item?.domPrice ?? 0);
+            const stock = Number(item?.qty ?? 0);
+            const hidden = Number(item?.hid ?? 0);
+            if (hidden === 1) continue;
+            variants.push({ name, priceDelta, stock: Number.isNaN(stock) ? 0 : stock });
           }
         }
-        if (names.length > 0) return Array.from(new Set(names));
+        if (variants.length > 0) {
+          const seen = new Set();
+          const uniq = [];
+          for (const v of variants) {
+            const k = `${v.name}::${v.priceDelta}`;
+            if (seen.has(k)) continue;
+            seen.add(k);
+            uniq.push(v);
+          }
+          return uniq;
+        }
       } catch {}
     }
 
@@ -463,7 +479,7 @@ export async function parseProductFromDomaeqq(url) {
           .map((s) => s.textContent || "")
           .join("\n"),
       );
-      const inlineOptions = extractOptionNamesFromItemOptionController(scriptText);
+      const inlineOptions = extractOptionVariantsFromItemOptionController(scriptText);
       if (inlineOptions.length > 0) finalOptions = inlineOptions;
     } catch {}
 
@@ -479,10 +495,16 @@ export async function parseProductFromDomaeqq(url) {
         });
         if (res.ok()) {
           const html = await res.text();
-          const parsed = parseOptionPopupHtml(html);
-          if (parsed.length > 0) finalOptions = parsed;
+        const parsed = parseOptionPopupHtml(html);
+        if (parsed.length > 0) {
+          finalOptions = parsed.map((name) => ({
+            name,
+            priceDelta: 0,
+            stock: 0,
+          }));
         }
-      } catch {}
+      }
+    } catch {}
     }
 
     const garbageWords = [
@@ -498,7 +520,9 @@ export async function parseProductFromDomaeqq(url) {
       "포인트",
     ];
 
-    const looksGarbage = finalOptions.some((t) => garbageWords.some((g) => t.includes(g)));
+    const looksGarbage = finalOptions.some((t) =>
+      garbageWords.some((g) => String(t?.name || t || "").includes(g)),
+    );
     if (finalOptions.length === 0 || looksGarbage) {
       // 팝업 실패/오염 시 옵션 비활성화
       finalOptions = [];
@@ -506,7 +530,7 @@ export async function parseProductFromDomaeqq(url) {
 
     // ✅ 마지막 fallback: 페이지에서 긁은 옵션 텍스트 사용
     if (finalOptions.length === 0 && Array.isArray(options) && options.length > 0) {
-      finalOptions = options;
+      finalOptions = options.map((name) => ({ name, priceDelta: 0, stock: 0 }));
     }
 
     return makeDraft({

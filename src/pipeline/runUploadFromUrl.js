@@ -1,7 +1,6 @@
 import {
   COUPANG_VENDOR_ID,
   COUPANG_VENDOR_USER_ID,
-  IMAGE_PROXY_BASE,
   COUPANG_ACCESS_KEY,
   COUPANG_SECRET_KEY,
   COUPANG_DELIVERY_COMPANY_CODE,
@@ -15,11 +14,12 @@ import { getCategoryMetas } from "../coupang/api/getCategoryMetas.js";
 import { checkAutoCategoryAgreed } from "../coupang/api/checkAutoCategoryAgreed.js";
 import { recommendCategory } from "../coupang/api/recommendCategory.js";
 import { buildSingleItem } from "../coupang/builders/buildSingleItem.js";
-import { prepareProxyUrl } from "../utils/imageProxy.js";
-import { probeImageUrl } from "../utils/imageProbe.js";
-import { extractImageUrls, filterDomeggookUrls, replaceImageSrcs } from "../utils/contentImages.js";
+import path from "node:path";
+import { extractImageUrls, buildImageOnlyHtmlFromUrls } from "../utils/contentImages.js";
 import { resolveDisplayCategoryCode } from "../utils/categoryMap.js";
 import { computePrice } from "../utils/price.js";
+import { resolveLocalImageBase } from "../utils/localImageHost.js";
+import { downloadImagesWithPlaywright } from "../utils/playwrightImageDownload.js";
 
 const OUTBOUND_SHIPPING_PLACE_CODE = "24093380";
 const DISPLAY_CATEGORY_CODE = 77723;
@@ -29,14 +29,28 @@ function makeUniqueOptions(list) {
   const out = [];
   let idx = 0;
   for (const raw of list) {
-    const base = String(raw || "").replace(/\s+/g, " ").trim();
+    const rawName = typeof raw === "object" && raw ? raw.name : raw;
+    const priceDelta =
+      typeof raw === "object" && raw && Number.isFinite(Number(raw.priceDelta))
+        ? Number(raw.priceDelta)
+        : 0;
+    const stock =
+      typeof raw === "object" && raw && Number.isFinite(Number(raw.stock))
+        ? Number(raw.stock)
+        : null;
+
+    const base = String(rawName || "").replace(/\s+/g, " ").trim();
     if (!base) continue;
-    const key = base.toLowerCase();
+    const key = `${base.toLowerCase()}::${priceDelta}`;
     const count = (seen.get(key) || 0) + 1;
     seen.set(key, count);
-    const name = count === 1 ? base : `${base} (${count})`;
+    const uniqName = count === 1 ? base : `${base} (${count})`;
     idx += 1;
-    out.push(`${idx}. ${name}`);
+    out.push({
+      label: `${idx}. ${uniqName}`,
+      priceDelta,
+      stock,
+    });
   }
   return out;
 }
@@ -54,27 +68,37 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
   const vendorUserId = settings.coupangVendorUserId || COUPANG_VENDOR_USER_ID;
   const deliveryCompanyCode =
     settings.coupangDeliveryCompanyCode || COUPANG_DELIVERY_COMPANY_CODE;
-  const imageProxyBase = settings.imageProxyBase || IMAGE_PROXY_BASE;
-
   const draft = await parseProductFromDomaeqq(c.url);
+  const localImageBase = resolveLocalImageBase(settings);
 
-  const imageForCoupang = await prepareProxyUrl(draft.imageUrl, imageProxyBase, draft.sourceUrl);
-  const p = await probeImageUrl(imageForCoupang);
-  if (!p.ok) {
-    return { ok: false, skipped: false, error: "image probe failed", detail: p };
+  const outDir = path.join(process.cwd(), "out");
+  const rawMax = Number(settings.maxContentImages);
+  const maxContentImages = Number.isFinite(rawMax) ? rawMax : 30;
+  const contentImages = extractImageUrls(draft.contentText).slice(0, Math.max(0, maxContentImages));
+  const downloadList = Array.from(new Set([draft.imageUrl, ...contentImages])).filter(Boolean);
+
+  const storageStatePath =
+    process.env.DOMEGGOOK_STORAGE_STATE || path.join(process.cwd(), "storageState.json");
+  const downloaded = await downloadImagesWithPlaywright({
+    pageUrl: draft.sourceUrl,
+    imageUrls: downloadList,
+    outDir,
+    baseUrl: localImageBase,
+    storageStatePath,
+  });
+
+  const imageUrl = downloaded.urlMap[draft.imageUrl];
+  if (!imageUrl) {
+    return { ok: false, skipped: false, error: "main image download failed" };
   }
 
-  const imageUrl = p.finalUrl;
-
-  const contentImages = filterDomeggookUrls(extractImageUrls(draft.contentText));
-  const settled = await Promise.allSettled(
-    contentImages.map((u) => prepareProxyUrl(u, imageProxyBase, draft.sourceUrl)),
-  );
-  const map = {};
-  for (let i = 0; i < contentImages.length; i++) {
-    if (settled[i]?.status === "fulfilled") map[contentImages[i]] = settled[i].value;
-  }
-  const contentHtml = replaceImageSrcs(draft.contentText, map) || draft.contentText;
+  const contentLocalUrls = contentImages
+    .map((u) => downloaded.urlMap[u])
+    .filter(Boolean);
+  const contentHtml =
+    contentLocalUrls.length > 0
+      ? buildImageOnlyHtmlFromUrls(contentLocalUrls)
+      : draft.contentText || "";
 
   const displayCategoryCode = resolveDisplayCategoryCode({
     title: draft.title,
@@ -110,12 +134,12 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
     const useRecommend = String(settings.autoCategoryRecommend || process.env.AUTO_CATEGORY_RECOMMEND || "").trim() === "1";
     if (useRecommend) {
       try {
-        const rec = await recommendCategory({
-          productName: draft.title,
-          productDescription: draft.contentText?.slice(0, 2000) || "",
-          productImageUrl: imageUrl,
-          accessKey,
-          secretKey,
+    const rec = await recommendCategory({
+      productName: draft.title,
+      productDescription: draft.contentText?.slice(0, 2000) || "",
+      productImageUrl: imageUrl,
+      accessKey,
+      secretKey,
         });
         const bodyObj = typeof rec.body === "string" ? JSON.parse(rec.body) : rec.body;
         const recCode = bodyObj?.data?.predictedCategoryId;
@@ -153,19 +177,20 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
     contentText: contentHtml,
     notices,
     requested: autoRequest,
-    items: optionsUsed.length > 0
-      ? optionsUsed.map((opt) =>
-          buildSingleItem({
-            itemName: opt,
-            price: finalPrice,
-            stock: 10,
-            outboundShippingTimeDay: 1,
-            imageUrl,
-            contentText: contentHtml,
-            notices,
-          }),
-        )
-      : undefined,
+    items:
+      optionsUsed.length > 0
+        ? optionsUsed.map((opt) =>
+            buildSingleItem({
+              itemName: opt.label,
+              price: finalPrice + (opt.priceDelta || 0),
+              stock: Number.isFinite(opt.stock) && opt.stock > 0 ? opt.stock : 10,
+              outboundShippingTimeDay: 1,
+              imageUrl,
+              contentText: contentHtml,
+              notices,
+            }),
+          )
+        : undefined,
   });
 
   const res = await createSellerProduct({
@@ -193,7 +218,7 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
     draft: { title: draft.title, price: draft.price, imageUrl: draft.imageUrl },
     finalPrice,
     category: { requested: displayCategoryCode, used: finalCategoryCode, auto: allowAutoCategory },
-    optionsUsed,
+    optionsUsed: optionsUsed.map((opt) => opt.label),
     create: { status: res.status, body: createBody, sellerProductId: createdId },
     approval,
   };
