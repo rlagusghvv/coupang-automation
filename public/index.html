@@ -29,6 +29,23 @@
             <button id="submit">업로드</button>
           </div>
           <p class="hint">1688 도메인은 자동 스킵됩니다.</p>
+
+          <div class="divider"></div>
+          <label>쿠팡 주문 → 도매매 엑셀 생성</label>
+          <div class="grid">
+            <div>
+              <label>시작일 (YYYY-MM-DD)</label>
+              <input id="orderFrom" type="date" />
+            </div>
+            <div>
+              <label>종료일 (YYYY-MM-DD)</label>
+              <input id="orderTo" type="date" />
+            </div>
+          </div>
+          <div class="row">
+            <button id="exportOrders">엑셀 생성</button>
+          </div>
+          <p class="hint">상태: 결제완료(ACCEPT)만 포함됩니다.</p>
         </div>
 
         <div class="panel hidden" id="panel-settings">

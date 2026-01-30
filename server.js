@@ -14,6 +14,7 @@ import {
   getUserBySession,
   updateSettings,
 } from "./src/server/storage_sqlite.js";
+import { exportOrdersToDomeme } from "./src/pipeline/exportOrdersToDomeme.js";
 
 const app = express();
 app.set("trust proxy", true);
@@ -253,6 +254,26 @@ app.post("/api/upload", authRequired, async (req, res) => {
     return res.json({ ok: true, result });
   } catch (e) {
     uploadInProgress = false;
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+// ✅ 주문 엑셀 생성
+app.post("/api/orders/export", authRequired, async (req, res) => {
+  try {
+    const dateFrom = String(req.body?.dateFrom || "").trim();
+    const dateTo = String(req.body?.dateTo || "").trim();
+    if (!dateFrom || !dateTo) {
+      return res.status(400).json({ ok: false, error: "missing dates" });
+    }
+    const result = await exportOrdersToDomeme({
+      dateFrom,
+      dateTo,
+      status: "ACCEPT",
+      settings: req.user.settings || {},
+    });
+    return res.json({ ok: true, result });
+  } catch (e) {
     return res.status(500).json({ ok: false, error: String(e?.message || e) });
   }
 });

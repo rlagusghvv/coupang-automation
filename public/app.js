@@ -2,6 +2,9 @@ const $ = (id) => document.getElementById(id);
 
 const urlInput = $("url");
 const submitBtn = $("submit");
+const exportOrdersBtn = $("exportOrders");
+const orderFromInput = $("orderFrom");
+const orderToInput = $("orderTo");
 const statusEl = $("status");
 const logEl = $("log");
 const dot = $("dot");
@@ -455,10 +458,51 @@ async function run() {
   }
 }
 
+async function exportOrders() {
+  const dateFrom = orderFromInput.value;
+  const dateTo = orderToInput.value;
+  if (!dateFrom || !dateTo) {
+    setStatus("시작일/종료일을 입력하세요", "bad");
+    return;
+  }
+  exportOrdersBtn.disabled = true;
+  setStatus("엑셀 생성 중...", "");
+  log("");
+  renderSummary(null);
+  try {
+    const res = await fetch("/api/orders/export", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ dateFrom, dateTo }),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok || !json.ok) {
+      setStatus("실패", "bad");
+      log(json);
+      return;
+    }
+    const result = json.result || {};
+    if (!result.ok) {
+      setStatus("실패", "bad");
+      log(result);
+      return;
+    }
+    setStatus("엑셀 생성 완료", "ok");
+    renderSummary(null);
+    log(result);
+  } catch (e) {
+    setStatus("에러", "bad");
+    log(String(e?.message || e));
+  } finally {
+    exportOrdersBtn.disabled = false;
+  }
+}
+
 submitBtn.addEventListener("click", run);
 urlInput.addEventListener("keydown", (e) => {
   if (e.key === "Enter") run();
 });
+exportOrdersBtn.addEventListener("click", exportOrders);
 
 tabs.forEach((t) => t.addEventListener("click", () => switchTab(t.dataset.tab)));
 $("saveSettings").addEventListener("click", saveSettings);
