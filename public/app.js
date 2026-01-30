@@ -67,7 +67,20 @@ function renderSummary(result) {
     return;
   }
 
+  if (result?.error === "image_host_unreachable") {
+    summaryEl.classList.remove("hidden");
+    summaryEl.innerHTML = `
+      <div class="title">업로드 차단됨</div>
+      <div class="row">
+        <div class="label">이유</div><div>이미지 호스트 접근 실패</div>
+        <div class="label">이미지 URL</div><div>${result.imageUrl || "-"}</div>
+      </div>
+    `;
+    return;
+  }
+
   const created = result?.create?.sellerProductId || "-";
+  const followUp = result?.followUp || null;
   const approvalMsg = (() => {
     try {
       const body = JSON.parse(result?.approval?.body || "{}");
@@ -104,9 +117,23 @@ function renderSummary(result) {
       <div class="label">상품 ID</div><div>${created}</div>
       <div class="label">생성 결과</div><div>${createStatus}</div>
       <div class="label">승인 요청</div><div>${approvalMsg}</div>
+      <div class="label">승인 상태</div><div>${followUp?.statusName || "-"}</div>
     </div>
     ${ipBlocked ? `<div class="warn">IP 허용 필요: ${ipBlocked}</div>` : ""}
+    ${
+      followUp?.approved && followUp?.productUrl
+        ? `<div class="row"><div class="label">상품 페이지</div><div><a id="productLink" href="${followUp.productUrl}" target="_blank" rel="noreferrer">바로 열기</a></div></div>`
+        : ""
+    }
   `;
+
+  if (followUp?.approved && followUp?.productUrl) {
+    const key = `opened:${followUp.productUrl}`;
+    if (!localStorage.getItem(key)) {
+      localStorage.setItem(key, "1");
+      window.open(followUp.productUrl, "_blank");
+    }
+  }
 }
 
 function switchTab(name) {

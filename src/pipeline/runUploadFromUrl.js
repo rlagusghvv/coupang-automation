@@ -10,6 +10,8 @@ import { parseProductFromDomaeqq } from "../sources/domaeqq/parseProductFromDoma
 import { buildSellerProductBody } from "../coupang/builders/buildSellerProductBody.js";
 import { createSellerProduct } from "../coupang/api/createSellerProduct.js";
 import { requestProductApproval } from "../coupang/api/requestProductApproval.js";
+import { getSellerProduct } from "../coupang/api/getSellerProduct.js";
+import { getSellerProductHistories } from "../coupang/api/getSellerProductHistories.js";
 import { getCategoryMetas } from "../coupang/api/getCategoryMetas.js";
 import { checkAutoCategoryAgreed } from "../coupang/api/checkAutoCategoryAgreed.js";
 import { recommendCategory } from "../coupang/api/recommendCategory.js";
@@ -24,6 +26,7 @@ import { downloadImagesWithPlaywright } from "../utils/playwrightImageDownload.j
 const OUTBOUND_SHIPPING_PLACE_CODE = "24093380";
 const DISPLAY_CATEGORY_CODE = 77723;
 const IP_CHECK_URLS = ["https://ifconfig.me/ip", "https://api.ipify.org"];
+const IMAGE_CHECK_TIMEOUT_MS = 8000;
 
 function makeUniqueOptions(list) {
   const seen = new Map();
@@ -128,6 +131,16 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
   const imageUrl = downloaded.urlMap[draft.imageUrl];
   if (!imageUrl) {
     return { ok: false, skipped: false, error: "main image download failed" };
+  }
+
+  const imageReachable = await isUrlReachable(imageUrl, IMAGE_CHECK_TIMEOUT_MS);
+  if (!imageReachable) {
+    return {
+      ok: false,
+      skipped: false,
+      error: "image_host_unreachable",
+      imageUrl,
+    };
   }
 
   const contentLocalUrls = contentImages
@@ -258,6 +271,17 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
     approval = { status: ar.status, body: ar.body };
   }
 
+  let followUp = null;
+  if (createdId) {
+    followUp = await pollApprovalStatus({
+      sellerProductId: createdId,
+      accessKey,
+      secretKey,
+      attempts: 3,
+      delayMs: 3000,
+    });
+  }
+
   return {
     ok: true,
     draft: { title: draft.title, price: draft.price, imageUrl: draft.imageUrl },
@@ -266,6 +290,7 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
     optionsUsed: optionsUsed.map((opt) => opt.label),
     create: { status: res.status, body: createBody, sellerProductId: createdId },
     approval,
+    followUp,
   };
 }
 
@@ -279,4 +304,68 @@ async function getPublicIp() {
     } catch {}
   }
   return "";
+}
+
+async function isUrlReachable(url, timeoutMs = 8000) {
+  if (!url) return false;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, { method: "HEAD", signal: controller.signal });
+    if (res.ok) return true;
+  } catch {}
+  try {
+    const res = await fetch(url, { method: "GET", signal: controller.signal });
+    return res.ok;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function pollApprovalStatus({
+  sellerProductId,
+  accessKey,
+  secretKey,
+  attempts = 3,
+  delayMs = 3000,
+}) {
+  let last = null;
+  for (let i = 0; i < attempts; i += 1) {
+    try {
+      const res = await getSellerProduct({ sellerProductId, accessKey, secretKey });
+      const bodyObj = typeof res.body === "string" ? JSON.parse(res.body) : res.body;
+      const data = bodyObj?.data || {};
+      const statusName = data?.statusName || data?.status?.statusName || data?.status || "";
+      const productId = data?.productId || data?.displayProductId || null;
+      const vendorItemId = data?.vendorItemId || null;
+      const approved =
+        String(statusName).includes("승인완료") || String(statusName).toUpperCase() === "APPROVED";
+      last = {
+        status: res.status,
+        statusName,
+        approved,
+        productId,
+        vendorItemId,
+      };
+      if (approved) break;
+
+      try {
+        const hist = await getSellerProductHistories({ sellerProductId, accessKey, secretKey });
+        const histBody = typeof hist.body === "string" ? JSON.parse(hist.body) : hist.body;
+        const items = histBody?.data || [];
+        if (Array.isArray(items) && items.length > 0) {
+          last.lastHistory = items[0];
+        }
+      } catch {}
+    } catch {}
+
+    if (i < attempts - 1) await new Promise((r) => setTimeout(r, delayMs));
+  }
+
+  if (last?.productId) {
+    last.productUrl = `https://www.coupang.com/vp/products/${last.productId}`;
+  }
+  return last;
 }

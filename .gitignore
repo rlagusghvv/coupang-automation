@@ -13,3 +13,4 @@ data/sessions.json
 data/app.db
 .server-port
 .server.pid
+.watcher.pid
