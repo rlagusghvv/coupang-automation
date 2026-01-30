@@ -2,12 +2,19 @@ import path from "node:path";
 
 export function resolveLocalImageBase(settings = {}) {
   const fromSettings = (settings.localImageBaseUrl || "").trim();
-  if (fromSettings) return fromSettings;
+  if (fromSettings) return normalizeBase(fromSettings);
   const fromProxyBase = (settings.imageProxyBase || "").trim();
-  if (fromProxyBase) return fromProxyBase;
+  if (fromProxyBase) return normalizeBase(fromProxyBase);
   const fromEnv = (process.env.LOCAL_IMAGE_BASE || "").trim();
-  if (fromEnv) return fromEnv;
+  if (fromEnv) return normalizeBase(fromEnv);
   return "http://localhost:3000/couplus-out";
+}
+
+function normalizeBase(baseUrl) {
+  const raw = String(baseUrl || "").trim();
+  if (!raw) return "";
+  if (raw.includes("/couplus-out")) return raw.replace(/\/+$/, "");
+  return raw.replace(/\/+$/, "") + "/couplus-out";
 }
 
 export function ensureTrailingSlash(url) {
