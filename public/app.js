@@ -100,13 +100,18 @@ function switchTab(name) {
   panels[name].classList.remove("hidden");
 }
 
+function clearSettingsUI() {
+  Object.values(settingsEls).forEach((el) => {
+    if (el.type === "checkbox") el.checked = false;
+    else el.value = "";
+  });
+}
+
 async function loadSettings() {
   const res = await fetch("/api/settings");
   const json = await res.json().catch(() => ({}));
   if (!json.ok) {
-    Object.values(settingsEls).forEach((el) => {
-      el.value = "";
-    });
+    clearSettingsUI();
     return;
   }
   const s = json.settings || {};
@@ -154,11 +159,12 @@ async function updateAuthStatus() {
   const res = await fetch("/api/me");
   if (!res.ok) {
     authEls.status.textContent = "로그인 필요";
-    return;
+    return false;
   }
   const json = await res.json();
   const label = json?.user?.email || json?.user?.id || "알 수 없음";
   authEls.status.textContent = `로그인됨: ${label}`;
+  return true;
 }
 
 async function loadVersionInfo() {
@@ -281,6 +287,9 @@ $("signup").addEventListener("click", signup);
 $("login").addEventListener("click", login);
 $("logout").addEventListener("click", logout);
 
-updateAuthStatus();
-loadSettings();
-loadVersionInfo();
+(async () => {
+  const authed = await updateAuthStatus();
+  if (authed) await loadSettings();
+  else clearSettingsUI();
+  await loadVersionInfo();
+})();
