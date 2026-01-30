@@ -25,6 +25,7 @@ const settingsEls = {
   pagesAccountId: $("pagesAccountId"),
   pagesApiToken: $("pagesApiToken"),
   pagesAutoDeploy: $("pagesAutoDeploy"),
+  payloadOnly: $("payloadOnly"),
   marginRate: $("marginRate"),
   marginAdd: $("marginAdd"),
   priceMin: $("priceMin"),
@@ -40,6 +41,7 @@ const authEls = {
 const versionEl = $("versionInfo");
 const currentIpEl = $("currentIp");
 const refreshIpBtn = $("refreshIp");
+let lastPayload = null;
 
 function setStatus(text, state) {
   statusEl.textContent = text;
@@ -70,6 +72,7 @@ function renderSummary(result) {
   if (!result) {
     summaryEl.classList.add("hidden");
     summaryEl.innerHTML = "";
+    lastPayload = null;
     return;
   }
 
@@ -111,6 +114,36 @@ function renderSummary(result) {
       </div>
       ${deploy.stderr ? `<div class="warn">stderr: ${deploy.stderr}</div>` : ""}
     `;
+    return;
+  }
+
+  if (result?.payloadOnly) {
+    lastPayload = result.payload || null;
+    summaryEl.classList.remove("hidden");
+    summaryEl.innerHTML = `
+      <div class="title">Payload 생성 완료</div>
+      <div class="row">
+        <div class="label">상품명</div><div>${result?.draft?.title || "-"}</div>
+        <div class="label">가격</div><div>${result?.finalPrice ?? "-"}</div>
+        <div class="label">카테고리</div><div>${result?.category?.used ?? "-"}</div>
+        <div class="label">상태</div><div>쿠팡 API 호출 없음</div>
+      </div>
+      <div class="row">
+        <div class="label">Payload</div>
+        <div><button id="downloadPayload" class="mini-btn">JSON 다운로드</button></div>
+      </div>
+    `;
+    const btn = document.getElementById("downloadPayload");
+    btn?.addEventListener("click", () => {
+      if (!lastPayload) return;
+      const blob = new Blob([JSON.stringify(lastPayload, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "coupang_payload.json";
+      a.click();
+      URL.revokeObjectURL(url);
+    });
     return;
   }
 
@@ -211,6 +244,7 @@ async function loadSettings() {
   settingsEls.pagesAccountId.value = s.pagesAccountId || "";
   settingsEls.pagesApiToken.value = s.pagesApiToken || "";
   settingsEls.pagesAutoDeploy.checked = String(s.pagesAutoDeploy || "") === "1";
+  settingsEls.payloadOnly.checked = String(s.payloadOnly || "") === "1";
   settingsEls.marginRate.value = s.marginRate ?? "";
   settingsEls.marginAdd.value = s.marginAdd ?? "";
   settingsEls.priceMin.value = s.priceMin ?? "";
@@ -235,6 +269,7 @@ async function saveSettings() {
     pagesAccountId: settingsEls.pagesAccountId.value.trim(),
     pagesApiToken: settingsEls.pagesApiToken.value.trim(),
     pagesAutoDeploy: settingsEls.pagesAutoDeploy.checked ? "1" : "",
+    payloadOnly: settingsEls.payloadOnly.checked ? "1" : "",
     marginRate: Number(settingsEls.marginRate.value || 0),
     marginAdd: Number(settingsEls.marginAdd.value || 0),
     priceMin: Number(settingsEls.priceMin.value || 0),
@@ -371,6 +406,7 @@ async function run() {
   submitBtn.disabled = true;
   setStatus("업로드 중...", "");
   log("");
+  lastPayload = null;
   renderSummary(null);
 
   try {

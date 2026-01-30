@@ -85,12 +85,13 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
     return { ok: false, skipped: true, reason: c.reason, url: c.url };
   }
 
+  const payloadOnly = String(settings.payloadOnly || "").trim() === "1";
   const allowedIpsRaw =
     String(settings.allowedIps || process.env.COUPANG_ALLOWED_IPS || "")
       .split(",")
       .map((s) => s.trim())
       .filter(Boolean);
-  if (allowedIpsRaw.length > 0) {
+  if (!payloadOnly && allowedIpsRaw.length > 0) {
     const currentIp = await getPublicIp().catch(() => "");
     if (!currentIp || !allowedIpsRaw.includes(currentIp)) {
       return {
@@ -274,6 +275,18 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
           })
         : undefined,
   });
+
+  if (payloadOnly) {
+    return {
+      ok: true,
+      payloadOnly: true,
+      payload: body,
+      draft: { title: draft.title, price: draft.price, imageUrl: draft.imageUrl },
+      finalPrice,
+      category: { requested: displayCategoryCode, used: finalCategoryCode, auto: allowAutoCategory },
+      optionsUsed: optionsUsed.map((opt) => opt.label),
+    };
+  }
 
   const res = await createSellerProduct({
     vendorId,
