@@ -197,6 +197,12 @@ function extractOptionVariantsFromItemOptionController(scriptText) {
       try {
         const dataObj = JSON.parse(dataJson);
         const variants = [];
+        const setMap = dataObj?.set || dataObj?.orgSet || {};
+        const setKeys = Object.keys(setMap)
+          .map((k) => Number(k))
+          .filter((n) => Number.isFinite(n))
+          .sort((a, b) => a - b)
+          .map((n) => String(n));
         const dataMap = dataObj?.data;
         if (dataMap && typeof dataMap === "object") {
           for (const key of Object.keys(dataMap)) {
@@ -208,14 +214,40 @@ function extractOptionVariantsFromItemOptionController(scriptText) {
             const stock = Number(item?.qty ?? 0);
             const hidden = Number(item?.hid ?? 0);
             if (hidden === 1) continue;
-            variants.push({ name, priceDelta, stock: Number.isNaN(stock) ? 0 : stock });
+
+            const values = [];
+            if (setKeys.length > 0) {
+              const idxParts = String(key || "").split("_");
+              for (let i = 0; i < setKeys.length; i += 1) {
+                const setKey = setKeys[i];
+                const setInfo = setMap[setKey] || {};
+                const optionName = String(setInfo.name || `옵션${i + 1}`).trim();
+                const rawIdx = idxParts[i];
+                const optIdx = Number.isFinite(Number(rawIdx)) ? String(Number(rawIdx)) : rawIdx;
+                const optionValue =
+                  (setInfo.opts && setInfo.opts[optIdx] != null
+                    ? String(setInfo.opts[optIdx])
+                    : "") || "";
+                if (optionValue) values.push({ optionName, optionValue });
+              }
+            }
+
+            variants.push({
+              name,
+              priceDelta,
+              stock: Number.isNaN(stock) ? 0 : stock,
+              values,
+            });
           }
         }
         if (variants.length > 0) {
           const seen = new Set();
           const uniq = [];
           for (const v of variants) {
-            const k = `${v.name}::${v.priceDelta}`;
+            const valKey = Array.isArray(v.values)
+              ? v.values.map((x) => `${x.optionName}:${x.optionValue}`).join("|")
+              : "";
+            const k = `${v.name}::${v.priceDelta}::${valKey}`;
             if (seen.has(k)) continue;
             seen.add(k);
             uniq.push(v);
@@ -501,6 +533,7 @@ export async function parseProductFromDomaeqq(url) {
             name,
             priceDelta: 0,
             stock: 0,
+            values: [],
           }));
         }
       }
@@ -530,7 +563,7 @@ export async function parseProductFromDomaeqq(url) {
 
     // ✅ 마지막 fallback: 페이지에서 긁은 옵션 텍스트 사용
     if (finalOptions.length === 0 && Array.isArray(options) && options.length > 0) {
-      finalOptions = options.map((name) => ({ name, priceDelta: 0, stock: 0 }));
+      finalOptions = options.map((name) => ({ name, priceDelta: 0, stock: 0, values: [] }));
     }
 
     return makeDraft({

@@ -11,6 +11,7 @@ export function buildSingleItem({
   imageUrl,
   contentText = "테스트 상품입니다.",
   notices,
+  optionValues,
 } = {}) {
   if (!imageUrl) throw new Error("imageUrl required (item)");
 
@@ -46,6 +47,9 @@ export function buildSingleItem({
   };
 
   if (notices === null) delete item.notices;
+  if (Array.isArray(optionValues) && optionValues.length > 0) {
+    item.optionValues = optionValues;
+  }
 
   return item;
 }

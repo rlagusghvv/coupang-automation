@@ -38,10 +38,15 @@ function makeUniqueOptions(list) {
       typeof raw === "object" && raw && Number.isFinite(Number(raw.stock))
         ? Number(raw.stock)
         : null;
+    const values =
+      typeof raw === "object" && raw && Array.isArray(raw.values) ? raw.values : [];
 
     const base = String(rawName || "").replace(/\s+/g, " ").trim();
     if (!base) continue;
-    const key = `${base.toLowerCase()}::${priceDelta}`;
+    const valueKey = values
+      .map((v) => `${String(v.optionName || "").trim()}:${String(v.optionValue || "").trim()}`)
+      .join("|");
+    const key = `${base.toLowerCase()}::${priceDelta}::${valueKey}`;
     const count = (seen.get(key) || 0) + 1;
     seen.set(key, count);
     const uniqName = count === 1 ? base : `${base} (${count})`;
@@ -50,6 +55,7 @@ function makeUniqueOptions(list) {
       label: `${idx}. ${uniqName}`,
       priceDelta,
       stock,
+      values,
     });
   }
   return out;
@@ -188,6 +194,7 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
               imageUrl,
               contentText: contentHtml,
               notices,
+              optionValues: Array.isArray(opt.values) && opt.values.length > 0 ? opt.values : undefined,
             }),
           )
         : undefined,
