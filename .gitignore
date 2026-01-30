@@ -11,3 +11,5 @@ storageState.json
 data/users.json
 data/sessions.json
 data/app.db
+.server-port
+.server.pid
