@@ -60,6 +60,23 @@ function renderSummary(result) {
     }
   })();
 
+  const createStatus = (() => {
+    try {
+      const body = JSON.parse(result?.create?.body || "{}");
+      if (body?.code === "SUCCESS") return "성공";
+      if (body?.message) return `실패: ${body.message}`;
+    } catch {}
+    return result?.create?.status ? `HTTP ${result.create.status}` : "알 수 없음";
+  })();
+
+  const ipBlocked = (() => {
+    try {
+      const body = JSON.parse(result?.create?.body || "{}");
+      if (body?.message?.includes("ip address")) return body.message;
+    } catch {}
+    return "";
+  })();
+
   summaryEl.classList.remove("hidden");
   summaryEl.innerHTML = `
     <div class="title">업로드 결과</div>
@@ -68,8 +85,10 @@ function renderSummary(result) {
       <div class="label">가격</div><div>${result?.finalPrice ?? "-"}</div>
       <div class="label">카테고리</div><div>${result?.category?.used ?? "-"}</div>
       <div class="label">상품 ID</div><div>${created}</div>
+      <div class="label">생성 결과</div><div>${createStatus}</div>
       <div class="label">승인 요청</div><div>${approvalMsg}</div>
     </div>
+    ${ipBlocked ? `<div class="warn">IP 허용 필요: ${ipBlocked}</div>` : ""}
   `;
 }
 
@@ -210,7 +229,15 @@ async function run() {
       log(json);
       renderSummary(null);
     } else {
-      setStatus("완료", "ok");
+      const createBody = (() => {
+        try {
+          return JSON.parse(json?.result?.create?.body || "{}");
+        } catch {
+          return {};
+        }
+      })();
+      const ok = createBody?.code === "SUCCESS";
+      setStatus(ok ? "완료" : "실패", ok ? "ok" : "bad");
       renderSummary(json.result);
       log(json.result);
     }
