@@ -116,6 +116,16 @@ label {
   gap: 10px;
 }
 
+.mini-row {
+  align-items: center;
+}
+
+.mini-btn {
+  padding: 8px 12px;
+  border-radius: 10px;
+  font-size: 12px;
+}
+
 .toggle {
   display: flex;
   align-items: center;

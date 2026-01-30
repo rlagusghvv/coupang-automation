@@ -41,6 +41,7 @@ const TOKENS_PATH =
 const SERVER_STARTED_AT = new Date().toISOString();
 const PACKAGE_JSON_PATH = path.join(process.cwd(), "package.json");
 const GIT_DIR = path.join(process.cwd(), ".git");
+const IP_CHECK_URLS = ["https://ifconfig.me/ip", "https://api.ipify.org"];
 
 function log(...args) {
   console.log("[server]", new Date().toISOString(), ...args);
@@ -91,6 +92,18 @@ function readGitInfo() {
   } catch {
     return {};
   }
+}
+
+async function getPublicIp() {
+  for (const url of IP_CHECK_URLS) {
+    try {
+      const res = await fetch(url, { method: "GET" });
+      if (!res.ok) continue;
+      const text = (await res.text()).trim();
+      if (text && text.length < 80) return text;
+    } catch {}
+  }
+  return "";
 }
 
 function readTokens() {
@@ -158,6 +171,11 @@ app.get("/api/version", (req, res) => {
     serverStartedAt: SERVER_STARTED_AT,
     now: new Date().toISOString(),
   });
+});
+
+app.get("/api/ip", async (req, res) => {
+  const ip = await getPublicIp().catch(() => "");
+  return res.json({ ok: true, ip: ip || "" });
 });
 
 // ✅ 계정: 회원가입

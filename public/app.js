@@ -38,6 +38,8 @@ const authEls = {
   status: $("authStatus"),
 };
 const versionEl = $("versionInfo");
+const currentIpEl = $("currentIp");
+const refreshIpBtn = $("refreshIp");
 
 function setStatus(text, state) {
   statusEl.textContent = text;
@@ -262,6 +264,19 @@ async function loadVersionInfo() {
   }
 }
 
+async function loadCurrentIp() {
+  if (!currentIpEl) return;
+  currentIpEl.textContent = "조회중...";
+  try {
+    const res = await fetch("/api/ip");
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok || !json.ok) throw new Error("ip fetch failed");
+    currentIpEl.textContent = json.ip || "-";
+  } catch {
+    currentIpEl.textContent = "-";
+  }
+}
+
 async function signup() {
   const res = await fetch("/api/signup", {
     method: "POST",
@@ -365,10 +380,12 @@ $("saveSettings").addEventListener("click", saveSettings);
 $("signup").addEventListener("click", signup);
 $("login").addEventListener("click", login);
 $("logout").addEventListener("click", logout);
+refreshIpBtn?.addEventListener("click", loadCurrentIp);
 
 (async () => {
   const authed = await updateAuthStatus();
   if (authed) await loadSettings();
   else clearSettingsUI();
   await loadVersionInfo();
+  await loadCurrentIp();
 })();
