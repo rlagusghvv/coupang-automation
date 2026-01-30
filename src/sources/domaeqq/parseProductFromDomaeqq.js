@@ -259,6 +259,7 @@ export async function parseProductFromDomaeqq(url) {
         String(s || "")
           .replace(/\s+/g, " ")
           .replace(/\(.*?\)/g, "")
+          .replace(/[\[\]{}]/g, "")
           .trim();
 
       const fromSelects = Array.from(document.querySelectorAll("select"))
@@ -275,8 +276,11 @@ export async function parseProductFromDomaeqq(url) {
         .filter((t) => t && t.length < 80);
 
       const merged = Array.from(new Set([...fromSelects, ...fromButtons]));
+      const cleaned = merged
+        .filter((t) => t && t.length < 80)
+        .filter((t) => !/선택|옵션|구매|전체옵션보기/i.test(t));
       // 너무 많은 경우는 상위 20개로 제한
-      return merged.slice(0, 20);
+      return cleaned.slice(0, 20);
     });
 
     return makeDraft({

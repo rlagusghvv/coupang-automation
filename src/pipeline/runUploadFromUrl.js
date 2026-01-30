@@ -27,12 +27,16 @@ const DISPLAY_CATEGORY_CODE = 77723;
 function makeUniqueOptions(list) {
   const seen = new Map();
   const out = [];
+  let idx = 0;
   for (const raw of list) {
-    const name = String(raw || "").trim();
-    if (!name) continue;
-    const count = (seen.get(name) || 0) + 1;
-    seen.set(name, count);
-    out.push(count === 1 ? name : `${name} (${count})`);
+    const base = String(raw || "").replace(/\s+/g, " ").trim();
+    if (!base) continue;
+    const key = base.toLowerCase();
+    const count = (seen.get(key) || 0) + 1;
+    seen.set(key, count);
+    const name = count === 1 ? base : `${base} (${count})`;
+    idx += 1;
+    out.push(`${idx}. ${name}`);
   }
   return out;
 }
@@ -131,6 +135,11 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
 
   const autoRequest = String(settings.autoRequest || "").trim() === "1";
 
+  const optionsUsed =
+    Array.isArray(draft.options) && draft.options.length > 0
+      ? makeUniqueOptions(draft.options)
+      : [];
+
   const body = buildSellerProductBody({
     vendorId,
     vendorUserId,
@@ -144,8 +153,8 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
     contentText: contentHtml,
     notices,
     requested: autoRequest,
-    items: Array.isArray(draft.options) && draft.options.length > 0
-      ? makeUniqueOptions(draft.options).map((opt) =>
+    items: optionsUsed.length > 0
+      ? optionsUsed.map((opt) =>
           buildSingleItem({
             itemName: opt,
             price: finalPrice,
@@ -184,6 +193,7 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
     draft: { title: draft.title, price: draft.price, imageUrl: draft.imageUrl },
     finalPrice,
     category: { requested: displayCategoryCode, used: finalCategoryCode, auto: allowAutoCategory },
+    optionsUsed,
     create: { status: res.status, body: createBody, sellerProductId: createdId },
     approval,
   };
