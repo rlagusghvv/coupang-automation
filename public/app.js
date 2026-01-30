@@ -24,6 +24,7 @@ const settingsEls = {
   marginAdd: $("marginAdd"),
   priceMin: $("priceMin"),
   roundUnit: $("roundUnit"),
+  autoRequest: $("autoRequest"),
 };
 
 const authEls = {
@@ -118,6 +119,7 @@ async function loadSettings() {
   settingsEls.marginAdd.value = s.marginAdd ?? "";
   settingsEls.priceMin.value = s.priceMin ?? "";
   settingsEls.roundUnit.value = s.roundUnit ?? "";
+  settingsEls.autoRequest.checked = String(s.autoRequest || "") === "1";
 }
 
 async function saveSettings() {
@@ -132,6 +134,7 @@ async function saveSettings() {
     marginAdd: Number(settingsEls.marginAdd.value || 0),
     priceMin: Number(settingsEls.priceMin.value || 0),
     roundUnit: Number(settingsEls.roundUnit.value || 0),
+    autoRequest: settingsEls.autoRequest.checked ? "1" : "",
   };
   const res = await fetch("/api/settings", {
     method: "POST",

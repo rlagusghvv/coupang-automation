@@ -115,6 +115,8 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
     }
   }
 
+  const autoRequest = String(settings.autoRequest || "").trim() === "1";
+
   const body = buildSellerProductBody({
     vendorId,
     vendorUserId,
@@ -127,6 +129,7 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
     stock: 10,
     contentText: contentHtml,
     notices,
+    requested: autoRequest,
   });
 
   const res = await createSellerProduct({
@@ -144,7 +147,7 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
   } catch {}
 
   let approval = null;
-  if (createdId) {
+  if (createdId && !autoRequest) {
     const ar = await requestProductApproval({ sellerProductId: createdId, accessKey, secretKey });
     approval = { status: ar.status, body: ar.body };
   }

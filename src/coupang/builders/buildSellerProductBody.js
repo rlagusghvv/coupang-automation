@@ -17,6 +17,7 @@ export function buildSellerProductBody({
   contentText = "", // ✅ 추가
   notices,
   allowAutoCategory = false,
+  requested = false,
 } = {}) {
   if (!vendorId) throw new Error("vendorId required");
   if (!vendorUserId) throw new Error("vendorUserId required");
@@ -30,7 +31,7 @@ export function buildSellerProductBody({
   const body = {
     vendorId,
     vendorUserId,
-    requested: false,
+    requested: Boolean(requested),
 
     ...(displayCategoryCode != null ? { displayCategoryCode } : {}),
     sellerProductName,

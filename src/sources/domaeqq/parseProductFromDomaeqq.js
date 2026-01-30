@@ -51,6 +51,29 @@ function extractBodyHtml(html) {
   return String(html || "");
 }
 
+function extractImageUrlsFromHtml(html, baseUrl) {
+  const out = [];
+  const re = /<img[^>]+src=["']?([^"' >]+)["']?/gi;
+  let m;
+  while ((m = re.exec(String(html || "")))) {
+    let src = String(m[1] || "").trim();
+    if (!src) continue;
+    if (src.startsWith("//")) src = "https:" + src;
+    if (!/^https?:\/\//i.test(src)) {
+      try {
+        src = new URL(src, baseUrl).toString();
+      } catch {}
+    }
+    if (!out.includes(src)) out.push(src);
+  }
+  return out;
+}
+
+function buildImageHtml(urls) {
+  if (!urls || urls.length === 0) return "";
+  return urls.map((u) => `<p><img src="${u}" /></p>`).join("");
+}
+
 function extractMainBlock(html) {
   const s = String(html || "");
   const idWrap = s.match(/<div[^>]+id=["']?wrap["']?[^>]*>([\s\S]*?)<\/div>/i);
@@ -200,7 +223,14 @@ export async function parseProductFromDomaeqq(url) {
           const html = await res.text();
           const bodyOnly = extractBodyHtml(html);
           const mainOnly = extractMainBlock(bodyOnly);
-          finalContentHtml = sanitizeHtml(mainOnly, detailHtmlUrl) || contentHtml;
+          const imgList = extractImageUrlsFromHtml(bodyOnly, detailHtmlUrl);
+          const imgHtml = buildImageHtml(imgList);
+          // 이미지가 충분하면 이미지 기반으로 구성, 아니면 본문 블럭 사용
+          if (imgList.length >= 2) {
+            finalContentHtml = sanitizeHtml(imgHtml, detailHtmlUrl) || contentHtml;
+          } else {
+            finalContentHtml = sanitizeHtml(mainOnly, detailHtmlUrl) || contentHtml;
+          }
         }
       } catch {
         // fallback to contentHtml

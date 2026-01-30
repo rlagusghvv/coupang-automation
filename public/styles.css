@@ -110,6 +110,14 @@ label {
   gap: 10px;
 }
 
+.toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
 input {
   width: 100%;
   padding: 14px 14px;
