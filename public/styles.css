@@ -249,6 +249,23 @@ button:disabled {
   font-size: 12px;
 }
 
+.payload-preview {
+  margin-top: 10px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.payload-pre {
+  margin: 10px 0 0;
+  background: #0b0c10;
+  color: #d5d7de;
+  border-radius: 10px;
+  padding: 12px;
+  max-height: 320px;
+  overflow: auto;
+  font-size: 12px;
+}
+
 @media (max-width: 640px) {
   .row {
     grid-template-columns: 1fr;

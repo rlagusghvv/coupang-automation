@@ -132,6 +132,10 @@ function renderSummary(result) {
         <div class="label">Payload</div>
         <div><button id="downloadPayload" class="mini-btn">JSON 다운로드</button></div>
       </div>
+      <details class="payload-preview">
+        <summary>Payload 미리보기</summary>
+        <pre id="payloadPreview" class="payload-pre"></pre>
+      </details>
     `;
     const btn = document.getElementById("downloadPayload");
     btn?.addEventListener("click", () => {
@@ -144,6 +148,10 @@ function renderSummary(result) {
       a.click();
       URL.revokeObjectURL(url);
     });
+    const pre = document.getElementById("payloadPreview");
+    if (pre && lastPayload) {
+      pre.textContent = JSON.stringify(lastPayload, null, 2);
+    }
     return;
   }
 
