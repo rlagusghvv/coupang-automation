@@ -111,7 +111,11 @@ function renderSummary(result) {
 
   const createStatus = (() => {
     try {
-      const body = JSON.parse(result?.create?.body || "{}");
+      const rawBody = result?.create?.body || "";
+      if (typeof rawBody === "string" && /access denied|permission to access/i.test(rawBody)) {
+        return "실패: 접근 권한 없음 (IP 허용 필요)";
+      }
+      const body = JSON.parse(rawBody || "{}");
       if (body?.code === "SUCCESS") return "성공";
       if (body?.message) return `실패: ${body.message}`;
     } catch {}
@@ -120,7 +124,11 @@ function renderSummary(result) {
 
   const ipBlocked = (() => {
     try {
-      const body = JSON.parse(result?.create?.body || "{}");
+      const rawBody = result?.create?.body || "";
+      if (typeof rawBody === "string" && /access denied|permission to access/i.test(rawBody)) {
+        return "API 접근 권한 없음 (허용 IP 확인 필요)";
+      }
+      const body = JSON.parse(rawBody || "{}");
       if (body?.message?.includes("ip address")) return body.message;
     } catch {}
     return "";
