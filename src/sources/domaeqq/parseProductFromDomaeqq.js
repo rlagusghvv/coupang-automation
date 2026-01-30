@@ -75,7 +75,35 @@ function buildImageHtml(urls) {
 }
 
 function parseOptionPopupHtml(html) {
-  const text = String(html || "")
+  const raw = String(html || "");
+
+  // 1) <option> 태그 우선 추출
+  const optMatches = [];
+  const optRe = /<option[^>]*>([^<]+)<\/option>/gi;
+  let m;
+  while ((m = optRe.exec(raw))) {
+    const t = String(m[1] || "").trim();
+    if (t) optMatches.push(t);
+  }
+
+  const blacklist = ["옵션", "상품옵션", "선택", "닫기"];
+
+  const normalize = (s) =>
+    String(s || "")
+      .replace(/\s+/g, " ")
+      .replace(/\(.*?\)/g, "")
+      .replace(/[\[\]{}]/g, "")
+      .trim();
+
+  const cleanedOptions = Array.from(new Set(optMatches))
+    .map(normalize)
+    .filter((s) => s.length >= 2 && s.length < 60)
+    .filter((s) => !blacklist.some((b) => s.includes(b)));
+
+  if (cleanedOptions.length > 0) return cleanedOptions;
+
+  // 2) fallback: 전체 텍스트에서 추출
+  const text = raw
     .replace(/<script[\s\S]*?<\/script>/gi, "")
     .replace(/<style[\s\S]*?<\/style>/gi, "")
     .replace(/<[^>]+>/g, "\n")
@@ -87,19 +115,11 @@ function parseOptionPopupHtml(html) {
     .map((s) => s.trim())
     .filter(Boolean);
 
-  const blacklist = [
-    "옵션",
-    "상품옵션",
-    "선택",
-    "닫기",
-  ];
-
   const cleaned = lines
     .map((s) => s.replace(/^\d+\s*[.)-]?\s*/g, "").trim())
     .filter((s) => s.length >= 2 && s.length < 60)
     .filter((s) => !blacklist.some((b) => s.includes(b)));
 
-  // 중복 제거
   return Array.from(new Set(cleaned));
 }
 
@@ -343,21 +363,39 @@ export async function parseProductFromDomaeqq(url) {
     });
 
     // ✅ 옵션 팝업(전체보기) 우선 사용
-    let finalOptions = options;
+    let finalOptions = [];
     try {
+      const productId = String(url).match(/\d+/)?.[0] || "";
       const popupUrl = `https://domeggook.com/main/popup/item/popup_itemOptionView.php?no=${encodeURIComponent(
-        String(url).match(/\\d+/)?.[0] || "",
+        productId,
       )}&market=dome`;
-      const res = await fetch(popupUrl, {
+      const res = await page.request.get(popupUrl, {
         headers: { Referer: url, "User-Agent": "Mozilla/5.0" },
       });
-      if (res.ok) {
+      if (res.ok()) {
         const html = await res.text();
         const parsed = parseOptionPopupHtml(html);
         if (parsed.length > 0) finalOptions = parsed;
       }
-    } catch {
-      // fallback to on-page options
+    } catch {}
+
+    const garbageWords = [
+      "마이페이지",
+      "로그아웃",
+      "관심상품",
+      "공지사항",
+      "장바구니",
+      "상품문의",
+      "회원정보",
+      "고객센터",
+      "e-money",
+      "포인트",
+    ];
+
+    const looksGarbage = finalOptions.some((t) => garbageWords.some((g) => t.includes(g)));
+    if (finalOptions.length === 0 || looksGarbage) {
+      // 팝업 실패/오염 시 옵션 비활성화
+      finalOptions = [];
     }
 
     return makeDraft({
