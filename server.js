@@ -417,7 +417,7 @@ function escapeHtml(s) {
     .replaceAll("'", "&#039;");
 }
 
-app.listen(PORT, "0.0.0.0", () => {
+app.listen(PORT, "127.0.0.1", () => {
   log(`server running: http://localhost:${PORT}`);
   log(`authorize start: http://localhost:${PORT}/auth/kakao`);
 });
