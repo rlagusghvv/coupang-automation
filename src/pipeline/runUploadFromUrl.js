@@ -142,6 +142,11 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
         skipped: false,
         error: "pages_deploy_failed",
         detail: deployRes.error,
+        deploy: {
+          code: deployRes.code ?? null,
+          stdout: deployRes.stdout || "",
+          stderr: deployRes.stderr || "",
+        },
       };
     }
   }

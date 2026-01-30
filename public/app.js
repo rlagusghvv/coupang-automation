@@ -84,13 +84,16 @@ function renderSummary(result) {
   }
 
   if (result?.error === "pages_deploy_failed") {
+    const deploy = result.deploy || {};
     summaryEl.classList.remove("hidden");
     summaryEl.innerHTML = `
       <div class="title">업로드 차단됨</div>
       <div class="row">
         <div class="label">이유</div><div>Pages 배포 실패</div>
         <div class="label">상세</div><div>${result.detail || "-"}</div>
+        <div class="label">코드</div><div>${deploy.code ?? "-"}</div>
       </div>
+      ${deploy.stderr ? `<div class="warn">stderr: ${deploy.stderr}</div>` : ""}
     `;
     return;
   }
