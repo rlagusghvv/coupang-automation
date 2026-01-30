@@ -45,6 +45,29 @@
           <div class="row">
             <button id="exportOrders">엑셀 생성</button>
           </div>
+          <div class="row">
+            <button id="uploadOrders">도매매 업로드</button>
+          </div>
+          <div class="row">
+            <span class="hint">마지막 생성 엑셀: <span id="lastExportPath">-</span></span>
+          </div>
+          <div class="divider"></div>
+          <label>SKU 매핑</label>
+          <div class="row">
+            <button id="loadMissing">누락 목록 불러오기</button>
+            <button id="loadSkuMap">매핑 불러오기</button>
+            <button id="saveSkuMap">매핑 저장</button>
+          </div>
+          <div class="grid">
+            <div>
+              <label>누락 목록 (읽기전용)</label>
+              <textarea id="missingSku" rows="6" readonly></textarea>
+            </div>
+            <div>
+              <label>SKU 매핑 JSON</label>
+              <textarea id="skuMap" rows="6" placeholder='{\"vendorItemId\": {\"itemNo\":\"47185732\",\"optionCode\":\"00_01\",\"optionName\":\"...\"}}'></textarea>
+            </div>
+          </div>
           <p class="hint">상태: 결제완료(ACCEPT)만 포함됩니다.</p>
         </div>
 
@@ -77,6 +100,14 @@
             <div>
               <label>허용 IP 목록 (쉼표로 구분)</label>
               <input id="allowedIps" type="text" placeholder="104.28.211.26, 104.28.243.28" />
+            </div>
+            <div>
+              <label>도매매 ID</label>
+              <input id="domemeId" type="text" placeholder="domeme id" />
+            </div>
+            <div>
+              <label>도매매 PW</label>
+              <input id="domemePw" type="password" placeholder="domeme password" />
             </div>
             <div>
               <label>Pages 프로젝트명</label>

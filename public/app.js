@@ -5,6 +5,13 @@ const submitBtn = $("submit");
 const exportOrdersBtn = $("exportOrders");
 const orderFromInput = $("orderFrom");
 const orderToInput = $("orderTo");
+const uploadOrdersBtn = $("uploadOrders");
+const lastExportPathEl = $("lastExportPath");
+const loadMissingBtn = $("loadMissing");
+const loadSkuMapBtn = $("loadSkuMap");
+const saveSkuMapBtn = $("saveSkuMap");
+const missingSkuEl = $("missingSku");
+const skuMapEl = $("skuMap");
 const statusEl = $("status");
 const logEl = $("log");
 const dot = $("dot");
@@ -24,6 +31,8 @@ const settingsEls = {
   coupangDeliveryCompanyCode: $("deliveryCode"),
   imageProxyBase: $("proxyBase"),
   allowedIps: $("allowedIps"),
+  domemeId: $("domemeId"),
+  domemePw: $("domemePw"),
   pagesProjectName: $("pagesProjectName"),
   pagesAccountId: $("pagesAccountId"),
   pagesApiToken: $("pagesApiToken"),
@@ -251,6 +260,8 @@ async function loadSettings() {
   settingsEls.coupangDeliveryCompanyCode.value = s.coupangDeliveryCompanyCode || "";
   settingsEls.imageProxyBase.value = s.imageProxyBase || "";
   settingsEls.allowedIps.value = s.allowedIps || "";
+  settingsEls.domemeId.value = s.domemeId || "";
+  settingsEls.domemePw.value = s.domemePw || "";
   settingsEls.pagesProjectName.value = s.pagesProjectName || "";
   settingsEls.pagesAccountId.value = s.pagesAccountId || "";
   settingsEls.pagesApiToken.value = s.pagesApiToken || "";
@@ -276,6 +287,8 @@ async function saveSettings() {
     coupangDeliveryCompanyCode: settingsEls.coupangDeliveryCompanyCode.value.trim(),
     imageProxyBase: settingsEls.imageProxyBase.value.trim(),
     allowedIps: settingsEls.allowedIps.value.trim(),
+    domemeId: settingsEls.domemeId.value.trim(),
+    domemePw: settingsEls.domemePw.value,
     pagesProjectName: settingsEls.pagesProjectName.value.trim(),
     pagesAccountId: settingsEls.pagesAccountId.value.trim(),
     pagesApiToken: settingsEls.pagesApiToken.value.trim(),
@@ -490,6 +503,8 @@ async function exportOrders() {
     setStatus("엑셀 생성 완료", "ok");
     renderSummary(null);
     log(result);
+    if (lastExportPathEl) lastExportPathEl.textContent = result.filePath || "-";
+    if (result.filePath) lastExportPathEl?.setAttribute("data-path", result.filePath);
   } catch (e) {
     setStatus("에러", "bad");
     log(String(e?.message || e));
@@ -498,11 +513,94 @@ async function exportOrders() {
   }
 }
 
+async function uploadOrders() {
+  const filePath = lastExportPathEl?.getAttribute("data-path") || "";
+  if (!filePath) {
+    setStatus("엑셀 파일 경로 없음", "bad");
+    return;
+  }
+  uploadOrdersBtn.disabled = true;
+  setStatus("도매매 업로드 중...", "");
+  log("");
+  try {
+    const res = await fetch("/api/orders/upload", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ filePath }),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok || !json.ok) {
+      setStatus("실패", "bad");
+      log(json);
+      return;
+    }
+    setStatus("업로드 완료", "ok");
+    log(json.result || json);
+  } catch (e) {
+    setStatus("에러", "bad");
+    log(String(e?.message || e));
+  } finally {
+    uploadOrdersBtn.disabled = false;
+  }
+}
+
+async function loadMissingSku() {
+  const res = await fetch("/api/orders/missing");
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok || !json.ok) {
+    setStatus("실패", "bad");
+    log(json);
+    return;
+  }
+  if (missingSkuEl) {
+    missingSkuEl.value = JSON.stringify(json.missing || [], null, 2);
+  }
+}
+
+async function loadSkuMap() {
+  const res = await fetch("/api/sku-map");
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok || !json.ok) {
+    setStatus("실패", "bad");
+    log(json);
+    return;
+  }
+  if (skuMapEl) {
+    skuMapEl.value = JSON.stringify(json.map || {}, null, 2);
+  }
+}
+
+async function saveSkuMap() {
+  let map = {};
+  try {
+    map = JSON.parse(skuMapEl?.value || "{}");
+  } catch (e) {
+    setStatus("JSON 파싱 실패", "bad");
+    return;
+  }
+  const res = await fetch("/api/sku-map", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ map }),
+  });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok || !json.ok) {
+    setStatus("저장 실패", "bad");
+    log(json);
+    return;
+  }
+  setStatus("매핑 저장 완료", "ok");
+}
+
 submitBtn.addEventListener("click", run);
 urlInput.addEventListener("keydown", (e) => {
   if (e.key === "Enter") run();
 });
 exportOrdersBtn.addEventListener("click", exportOrders);
+uploadOrdersBtn.addEventListener("click", uploadOrders);
+loadMissingBtn.addEventListener("click", loadMissingSku);
+loadSkuMapBtn.addEventListener("click", loadSkuMap);
+saveSkuMapBtn.addEventListener("click", saveSkuMap);
 
 tabs.forEach((t) => t.addEventListener("click", () => switchTab(t.dataset.tab)));
 $("saveSettings").addEventListener("click", saveSettings);

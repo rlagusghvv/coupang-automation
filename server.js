@@ -15,6 +15,7 @@ import {
   updateSettings,
 } from "./src/server/storage_sqlite.js";
 import { exportOrdersToDomeme } from "./src/pipeline/exportOrdersToDomeme.js";
+import { uploadDomemeExcel } from "./src/pipeline/uploadDomemeExcel.js";
 
 const app = express();
 app.set("trust proxy", true);
@@ -272,6 +273,54 @@ app.post("/api/orders/export", authRequired, async (req, res) => {
       status: "ACCEPT",
       settings: req.user.settings || {},
     });
+    return res.json({ ok: true, result });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+// ✅ SKU 매핑 불러오기
+app.get("/api/sku-map", authRequired, (req, res) => {
+  try {
+    const mapPath = path.join(process.cwd(), "data", "sku_map.json");
+    if (!fs.existsSync(mapPath)) return res.json({ ok: true, map: {} });
+    const map = JSON.parse(fs.readFileSync(mapPath, "utf-8"));
+    return res.json({ ok: true, map });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+// ✅ SKU 매핑 저장
+app.post("/api/sku-map", authRequired, (req, res) => {
+  try {
+    const mapPath = path.join(process.cwd(), "data", "sku_map.json");
+    const map = req.body?.map || {};
+    fs.writeFileSync(mapPath, JSON.stringify(map, null, 2), "utf-8");
+    return res.json({ ok: true });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+// ✅ 매핑 누락 목록
+app.get("/api/orders/missing", authRequired, (req, res) => {
+  try {
+    const missingPath = path.join(process.cwd(), "out", "order_exports", "missing_sku_map.json");
+    if (!fs.existsSync(missingPath)) return res.json({ ok: true, missing: [] });
+    const missing = JSON.parse(fs.readFileSync(missingPath, "utf-8"));
+    return res.json({ ok: true, missing });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+// ✅ 도매매 엑셀 업로드
+app.post("/api/orders/upload", authRequired, async (req, res) => {
+  try {
+    const filePath = String(req.body?.filePath || "").trim();
+    if (!filePath) return res.status(400).json({ ok: false, error: "missing filePath" });
+    const result = await uploadDomemeExcel({ filePath, settings: req.user.settings || {} });
     return res.json({ ok: true, result });
   } catch (e) {
     return res.status(500).json({ ok: false, error: String(e?.message || e) });
