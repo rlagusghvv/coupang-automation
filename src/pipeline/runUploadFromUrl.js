@@ -61,6 +61,19 @@ function makeUniqueOptions(list) {
   return out;
 }
 
+function buildItemAttributesFromOptionValues(values) {
+  if (!Array.isArray(values) || values.length === 0) return null;
+  const attrs = values
+    .map((v) => {
+      const attributeTypeName = String(v?.optionName || "").trim();
+      const attributeValueName = String(v?.optionValue || "").trim();
+      if (!attributeTypeName || !attributeValueName) return null;
+      return { attributeTypeName, attributeValueName };
+    })
+    .filter(Boolean);
+  return attrs.length > 0 ? attrs : null;
+}
+
 export async function runUploadFromUrl(inputUrl, settings = {}) {
   const c = classifyUrl(inputUrl);
   if (!c.ok) {
@@ -185,18 +198,24 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
     requested: autoRequest,
     items:
       optionsUsed.length > 0
-        ? optionsUsed.map((opt) =>
-            buildSingleItem({
+        ? optionsUsed.map((opt) => {
+            const rawPrice = finalPrice + (opt.priceDelta || 0);
+            const minPrice = Number.isFinite(Number(settings.priceMin))
+              ? Number(settings.priceMin)
+              : 1000;
+            const itemPrice = Math.max(minPrice, rawPrice);
+
+            return buildSingleItem({
               itemName: opt.label,
-              price: finalPrice + (opt.priceDelta || 0),
+              price: itemPrice,
               stock: Number.isFinite(opt.stock) && opt.stock > 0 ? opt.stock : 10,
               outboundShippingTimeDay: 1,
               imageUrl,
               contentText: contentHtml,
               notices,
-              optionValues: Array.isArray(opt.values) && opt.values.length > 0 ? opt.values : undefined,
-            }),
-          )
+              attributes: buildItemAttributesFromOptionValues(opt.values) || undefined,
+            });
+          })
         : undefined,
   });
 
