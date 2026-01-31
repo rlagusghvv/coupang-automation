@@ -583,7 +583,11 @@ function escapeHtml(s) {
     .replaceAll("'", "&#039;");
 }
 
-app.listen(PORT, "127.0.0.1", () => {
-  log(`server running: http://localhost:${PORT}`);
-  log(`authorize start: http://localhost:${PORT}/auth/kakao`);
+const HOST = (process.env.HOST || "127.0.0.1").trim();
+
+app.listen(PORT, HOST, () => {
+  const baseHost = HOST === "0.0.0.0" ? "localhost" : HOST;
+  log(`server running: http://${baseHost}:${PORT}`);
+  log(`authorize start: http://${baseHost}:${PORT}/auth/kakao`);
+  log(`bind: ${HOST}:${PORT}`);
 });
