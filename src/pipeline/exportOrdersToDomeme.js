@@ -127,9 +127,17 @@ export async function exportOrdersToDomeme({
   status = "ACCEPT",
   settings = {},
 }) {
-  const accessKey = settings.coupangAccessKey || COUPANG_ACCESS_KEY;
-  const secretKey = settings.coupangSecretKey || COUPANG_SECRET_KEY;
-  const vendorId = settings.coupangVendorId || COUPANG_VENDOR_ID;
+  const accessKey = String(settings.coupangAccessKey || COUPANG_ACCESS_KEY || "").trim();
+  const secretKey = String(settings.coupangSecretKey || COUPANG_SECRET_KEY || "").trim();
+  const vendorId = String(settings.coupangVendorId || COUPANG_VENDOR_ID || "").trim();
+
+  const missingEnv = [];
+  if (!accessKey) missingEnv.push("COUPANG_ACCESS_KEY");
+  if (!secretKey) missingEnv.push("COUPANG_SECRET_KEY");
+  if (!vendorId) missingEnv.push("COUPANG_VENDOR_ID");
+  if (missingEnv.length > 0) {
+    return { ok: false, skipped: true, reason: "missing_coupang_env", missing: missingEnv };
+  }
 
   const createdAtFrom = formatDateKST(dateFrom);
   const createdAtTo = formatDateKST(dateTo);

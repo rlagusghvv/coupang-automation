@@ -109,12 +109,29 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
   }
 
   // 사용자별 설정 우선
-  const accessKey = settings.coupangAccessKey || COUPANG_ACCESS_KEY;
-  const secretKey = settings.coupangSecretKey || COUPANG_SECRET_KEY;
-  const vendorId = settings.coupangVendorId || COUPANG_VENDOR_ID;
-  const vendorUserId = settings.coupangVendorUserId || COUPANG_VENDOR_USER_ID;
-  const deliveryCompanyCode =
-    settings.coupangDeliveryCompanyCode || COUPANG_DELIVERY_COMPANY_CODE;
+  const accessKey = String(settings.coupangAccessKey || COUPANG_ACCESS_KEY || "").trim();
+  const secretKey = String(settings.coupangSecretKey || COUPANG_SECRET_KEY || "").trim();
+  const vendorId = String(settings.coupangVendorId || COUPANG_VENDOR_ID || "").trim();
+  const vendorUserId = String(
+    settings.coupangVendorUserId || COUPANG_VENDOR_USER_ID || "",
+  ).trim();
+  const deliveryCompanyCode = String(
+    settings.coupangDeliveryCompanyCode || COUPANG_DELIVERY_COMPANY_CODE || "",
+  ).trim();
+
+  // 서버는 키 없이도 뜰 수 있어야 하므로, 여기서만 검증한다.
+  if (!payloadOnly) {
+    const missing = [];
+    if (!accessKey) missing.push("COUPANG_ACCESS_KEY");
+    if (!secretKey) missing.push("COUPANG_SECRET_KEY");
+    if (!vendorId) missing.push("COUPANG_VENDOR_ID");
+    if (!vendorUserId) missing.push("COUPANG_VENDOR_USER_ID");
+    if (!deliveryCompanyCode) missing.push("COUPANG_DELIVERY_COMPANY_CODE");
+    if (missing.length > 0) {
+      return { ok: false, skipped: true, reason: "missing_coupang_env", missing };
+    }
+  }
+
   const draft = await parseProductFromDomaeqq(c.url);
   const localImageBase = resolveLocalImageBase(settings);
 
