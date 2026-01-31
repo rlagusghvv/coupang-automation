@@ -141,8 +141,8 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
   const contentImages = extractImageUrls(draft.contentText).slice(0, Math.max(0, maxContentImages));
   const downloadList = Array.from(new Set([draft.imageUrl, ...contentImages])).filter(Boolean);
 
-  const storageStatePath =
-    process.env.DOMEGGOOK_STORAGE_STATE || path.join(process.cwd(), "storageState.json");
+  const { DOMEGGOOK_STORAGE_STATE_PATH } = await import("../config/paths.js");
+  const storageStatePath = DOMEGGOOK_STORAGE_STATE_PATH;
   const downloaded = await downloadImagesWithPlaywright({
     pageUrl: draft.sourceUrl,
     imageUrls: downloadList,

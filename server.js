@@ -17,6 +17,7 @@ import {
 import { exportOrdersToDomeme } from "./src/pipeline/exportOrdersToDomeme.js";
 import { uploadDomemeExcel } from "./src/pipeline/uploadDomemeExcel.js";
 import { spawn } from "node:child_process";
+import { DOMEME_STORAGE_STATE_PATH } from "./src/config/paths.js";
 
 const app = express();
 app.set("trust proxy", true);
@@ -391,7 +392,7 @@ app.post("/api/domeme/session/start", authRequired, (req, res) => {
 // ✅ 도매매 세션 상태 확인
 app.get("/api/domeme/session/status", authRequired, (req, res) => {
   try {
-    const filePath = path.join(process.cwd(), "storageState.domeme.json");
+    const filePath = DOMEME_STORAGE_STATE_PATH;
     if (!fs.existsSync(filePath)) return res.json({ ok: true, exists: false, filePath });
     const stat = fs.statSync(filePath);
     return res.json({

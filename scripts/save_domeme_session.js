@@ -3,7 +3,9 @@ import path from "node:path";
 import { chromium } from "playwright";
 
 const LOGIN_URL = "https://domemedb.domeggook.com/index/";
-const OUT_PATH = path.join(process.cwd(), "storageState.domeme.json");
+import { DOMEME_STORAGE_STATE_PATH } from "../src/config/paths.js";
+
+const OUT_PATH = DOMEME_STORAGE_STATE_PATH;
 
 const userId = process.env.DOMEME_ID || "";
 const userPw = process.env.DOMEME_PW || "";

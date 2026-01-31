@@ -2,9 +2,9 @@ import { chromium } from "playwright";
 import path from "node:path";
 import readline from "node:readline";
 
-const storagePath =
-  process.env.DOMEGGOOK_STORAGE_STATE ||
-  path.join(process.cwd(), "storageState.json");
+import { DOMEGGOOK_STORAGE_STATE_PATH } from "../src/config/paths.js";
+
+const storagePath = DOMEGGOOK_STORAGE_STATE_PATH;
 
 function waitForEnter() {
   return new Promise((resolve) => {
