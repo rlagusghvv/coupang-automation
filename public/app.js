@@ -33,6 +33,7 @@ const settingsEls = {
   coupangDeliveryCompanyCode: $("deliveryCode"),
   imageProxyBase: $("proxyBase"),
   allowedIps: $("allowedIps"),
+  domeggookStorageStatePath: $("domeggookStorageStatePath"),
   domemeId: $("domemeId"),
   domemePw: $("domemePw"),
   domemeStorageStatePath: $("domemeStorageStatePath"),
@@ -48,6 +49,12 @@ const settingsEls = {
   roundUnit: $("roundUnit"),
   autoRequest: $("autoRequest"),
 };
+
+const badgeDomeggook = $("badgeDomeggook");
+const badgeDomeme = $("badgeDomeme");
+
+const domeggookSessionBtn = $("createDomeggookSession");
+const domeggookSessionStatusEl = $("domeggookSessionStatus");
 const domemeSessionBtn = $("createDomemeSession");
 const domemeSessionStatusEl = $("domemeSessionStatus");
 
@@ -310,6 +317,9 @@ async function loadSettings() {
   settingsEls.coupangDeliveryCompanyCode.value = s.coupangDeliveryCompanyCode || "";
   settingsEls.imageProxyBase.value = s.imageProxyBase || "";
   settingsEls.allowedIps.value = s.allowedIps || "";
+  if (settingsEls.domeggookStorageStatePath) {
+    settingsEls.domeggookStorageStatePath.value = s.domeggookStorageStatePath || "";
+  }
   settingsEls.domemeId.value = s.domemeId || "";
   settingsEls.domemePw.value = s.domemePw || "";
   settingsEls.domemeStorageStatePath.value = s.domemeStorageStatePath || "";
@@ -330,23 +340,70 @@ async function loadSettings() {
   evaluateUploadGate();
 }
 
+function setSessionBadge(el, { label, exists, updatedAt }) {
+  if (!el) return;
+  el.classList.remove("ok", "bad");
+  if (exists) {
+    el.classList.add("ok");
+    el.textContent = `${label}: OK`;
+    if (updatedAt) el.title = `updatedAt: ${updatedAt}`;
+  } else {
+    el.classList.add("bad");
+    el.textContent = `${label}: 없음`;
+    el.title = "";
+  }
+}
+
+async function refreshDomeggookSessionStatus() {
+  if (domeggookSessionStatusEl) domeggookSessionStatusEl.textContent = "조회중...";
+  try {
+    const res = await fetch("/api/domeggook/session/status");
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok || !json.ok) throw new Error("status failed");
+
+    if (json.exists) {
+      if (domeggookSessionStatusEl) domeggookSessionStatusEl.textContent = `저장됨 (${json.updatedAt})`;
+      if (settingsEls.domeggookStorageStatePath && json.filePath) {
+        settingsEls.domeggookStorageStatePath.value = json.filePath;
+      }
+    } else {
+      if (domeggookSessionStatusEl) domeggookSessionStatusEl.textContent = "없음";
+    }
+
+    setSessionBadge(badgeDomeggook, {
+      label: "도매꾹",
+      exists: Boolean(json.exists),
+      updatedAt: json.updatedAt || "",
+    });
+  } catch {
+    if (domeggookSessionStatusEl) domeggookSessionStatusEl.textContent = "-";
+    setSessionBadge(badgeDomeggook, { label: "도매꾹", exists: false });
+  }
+}
+
 async function refreshDomemeSessionStatus() {
-  if (!domemeSessionStatusEl) return;
-  domemeSessionStatusEl.textContent = "조회중...";
+  if (domemeSessionStatusEl) domemeSessionStatusEl.textContent = "조회중...";
   try {
     const res = await fetch("/api/domeme/session/status");
     const json = await res.json().catch(() => ({}));
     if (!res.ok || !json.ok) throw new Error("status failed");
     if (json.exists) {
-      domemeSessionStatusEl.textContent = `저장됨 (${json.updatedAt})`;
+      if (domemeSessionStatusEl) domemeSessionStatusEl.textContent = `저장됨 (${json.updatedAt})`;
       if (settingsEls.domemeStorageStatePath && json.filePath) {
         settingsEls.domemeStorageStatePath.value = json.filePath;
       }
     } else {
-      domemeSessionStatusEl.textContent = "없음";
+      if (domemeSessionStatusEl) domemeSessionStatusEl.textContent = "없음";
     }
+
+    setSessionBadge(badgeDomeme, {
+      label: "도매매",
+      exists: Boolean(json.exists),
+      updatedAt: json.updatedAt || "",
+    });
   } catch {
-    domemeSessionStatusEl.textContent = "-";
+    if (domemeSessionStatusEl) domemeSessionStatusEl.textContent = "-";
+    setSessionBadge(badgeDomeme, { label: "도매매", exists: false });
   }
 }
 
@@ -359,6 +416,7 @@ async function saveSettings() {
     coupangDeliveryCompanyCode: settingsEls.coupangDeliveryCompanyCode.value.trim(),
     imageProxyBase: settingsEls.imageProxyBase.value.trim(),
     allowedIps: settingsEls.allowedIps.value.trim(),
+    domeggookStorageStatePath: settingsEls.domeggookStorageStatePath?.value?.trim?.() || "",
     domemeId: settingsEls.domemeId.value.trim(),
     domemePw: settingsEls.domemePw.value,
     domemeStorageStatePath: settingsEls.domemeStorageStatePath.value.trim(),
@@ -754,6 +812,25 @@ refreshIpBtn?.addEventListener("click", loadCurrentIp);
 refreshIpBtn?.addEventListener("click", evaluateUploadGate);
 refreshHistoryBtn?.addEventListener("click", loadUploadHistory);
 settingsEls.allowedIps?.addEventListener("input", evaluateUploadGate);
+domeggookSessionBtn?.addEventListener("click", async () => {
+  setStatus("도매꾹 세션 생성 중...", "");
+  try {
+    const res = await fetch("/api/domeggook/session/start", { method: "POST" });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok || !json.ok) {
+      setStatus("실패", "bad");
+      log(json);
+      return;
+    }
+    setStatus("브라우저에서 네이버 로그인 후 Enter → 저장", "ok");
+  } catch (e) {
+    setStatus("에러", "bad");
+    log(String(e?.message || e));
+  } finally {
+    setTimeout(refreshDomeggookSessionStatus, 1500);
+  }
+});
+
 domemeSessionBtn?.addEventListener("click", async () => {
   setStatus("도매매 세션 생성 중...", "");
   try {
@@ -779,6 +856,7 @@ domemeSessionBtn?.addEventListener("click", async () => {
   else clearSettingsUI();
   await loadVersionInfo();
   await loadCurrentIp();
+  await refreshDomeggookSessionStatus();
   await refreshDomemeSessionStatus();
   evaluateUploadGate();
 })();

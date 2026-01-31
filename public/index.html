@@ -13,6 +13,10 @@
         <h1>링크 하나로 자동 업로드</h1>
         <p class="sub">도매꾹 상품 URL만 넣으면, 이미지/상세/카테고리/가격까지 자동 처리합니다.</p>
         <p class="version" id="versionInfo">버전 확인 중...</p>
+        <div class="session-badges">
+          <span class="badge" id="badgeDomeggook">도매꾹: -</span>
+          <span class="badge" id="badgeDomeme">도매매: -</span>
+        </div>
       </header>
 
       <section class="card">
@@ -112,6 +116,18 @@
             <div>
               <label>허용 IP 목록 (쉼표로 구분)</label>
               <input id="allowedIps" type="text" placeholder="104.28.211.26, 104.28.243.28" />
+            </div>
+            <div>
+              <label>도매꾹 세션 파일 경로</label>
+              <input id="domeggookStorageStatePath" type="text" placeholder="/Users/.../storageState.domeggook.json" />
+            </div>
+            <div>
+              <label>도매꾹 세션 만들기</label>
+              <div class="row compact-row">
+                <button id="createDomeggookSession">브라우저 열기</button>
+                <span class="hint">네이버 로그인 후 Enter → 저장</span>
+              </div>
+              <p class="hint">세션 상태: <span id="domeggookSessionStatus">-</span></p>
             </div>
             <div>
               <label>도매매 ID</label>

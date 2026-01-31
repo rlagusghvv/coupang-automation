@@ -35,6 +35,15 @@ function dbGet(db, sql, params = []) {
   });
 }
 
+function dbAll(db, sql, params = []) {
+  return new Promise((resolve, reject) => {
+    db.all(sql, params, (err, rows) => {
+      if (err) reject(err);
+      else resolve(rows || []);
+    });
+  });
+}
+
 export async function initDb() {
   const db = openDb();
   await dbRun(
@@ -55,6 +64,24 @@ export async function initDb() {
       created_at INTEGER NOT NULL
     )`,
   );
+
+  // Upload preview history (MVP)
+  await dbRun(
+    db,
+    `CREATE TABLE IF NOT EXISTS preview_history (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id TEXT NOT NULL,
+      url TEXT NOT NULL,
+      title TEXT NOT NULL DEFAULT '',
+      source_price REAL,
+      final_price REAL,
+      image_url TEXT NOT NULL DEFAULT '',
+      images_json TEXT NOT NULL DEFAULT '[]',
+      options_json TEXT NOT NULL DEFAULT '[]',
+      created_at TEXT NOT NULL
+    )`,
+  );
+
   db.close();
 }
 
@@ -147,4 +174,77 @@ export async function updateSettings(userId, nextSettings) {
   ]);
   db.close();
   return merged;
+}
+
+export async function addPreviewHistory({
+  userId,
+  url,
+  title = "",
+  sourcePrice = null,
+  finalPrice = null,
+  imageUrl = "",
+  images = [],
+  options = [],
+}) {
+  if (!userId) throw new Error("userId required");
+  if (!url) throw new Error("url required");
+
+  const db = openDb();
+  await dbRun(
+    db,
+    `INSERT INTO preview_history (
+      user_id, url, title, source_price, final_price, image_url, images_json, options_json, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      userId,
+      String(url),
+      String(title || ""),
+      Number.isFinite(Number(sourcePrice)) ? Number(sourcePrice) : null,
+      Number.isFinite(Number(finalPrice)) ? Number(finalPrice) : null,
+      String(imageUrl || ""),
+      JSON.stringify(Array.isArray(images) ? images : []),
+      JSON.stringify(Array.isArray(options) ? options : []),
+      new Date().toISOString(),
+    ],
+  );
+  db.close();
+}
+
+export async function listPreviewHistory(userId, limit = 50) {
+  if (!userId) throw new Error("userId required");
+  const lim = Math.max(1, Math.min(200, Number(limit) || 50));
+
+  const db = openDb();
+  const rows = await dbAll(
+    db,
+    `SELECT id, url, title, source_price, final_price, image_url, images_json, options_json, created_at
+     FROM preview_history
+     WHERE user_id = ?
+     ORDER BY id DESC
+     LIMIT ?`,
+    [userId, lim],
+  );
+  db.close();
+
+  return rows.map((r) => {
+    let images = [];
+    let options = [];
+    try {
+      images = JSON.parse(r.images_json || "[]");
+    } catch {}
+    try {
+      options = JSON.parse(r.options_json || "[]");
+    } catch {}
+    return {
+      id: r.id,
+      at: r.created_at,
+      url: r.url,
+      title: r.title,
+      sourcePrice: r.source_price,
+      finalPrice: r.final_price,
+      imageUrl: r.image_url,
+      images,
+      options,
+    };
+  });
 }

@@ -15,16 +15,38 @@ Pages/Workers 런타임에서는 Playwright 실행이 불가합니다.
 
 Express 서버를 그대로 사용:
 
-```
+```bash
 npm install
 npm run start
 ```
 
-업로드 엔드포인트는:
+### ✅ 서버는 쿠팡 키 없이도 실행됩니다
+- 먼저 UI/로그인/세션 생성/Preview 기능부터 확인 가능
+- Execute(실제 쿠팡 업로드)는 설정에 쿠팡 키가 있어야 동작
+
+### 엔드포인트
+- Preview (쿠팡 키 불필요)
+```http
+POST /api/upload/preview
+{ "url": "https://domeggook.com/..." }
 ```
+
+- Execute (쿠팡 키 필요)
+```http
+POST /api/upload/execute
+{ "url": "https://domeggook.com/..." }
+```
+
+- Legacy
+```http
 POST /api/upload
 { "url": "https://domeggook.com/..." }
 ```
+
+### 세션 파일 저장 위치
+- 기본: `~/.couplus/`
+  - 도매꾹: `storageState.domeggook.json`
+  - 도매매: `storageState.domeme.json`
 
 ## 3) Pages에서 테스트
 

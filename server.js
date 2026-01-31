@@ -4,6 +4,7 @@ import express from "express";
 import fs from "node:fs";
 import path from "node:path";
 import { runUploadFromUrl } from "./src/pipeline/runUploadFromUrl.js";
+import { previewUploadFromUrl } from "./src/pipeline/previewUploadFromUrl.js";
 import { classifyUrl } from "./src/utils/urlFilter.js";
 import {
   initDb,
@@ -13,11 +14,16 @@ import {
   destroySession,
   getUserBySession,
   updateSettings,
+  addPreviewHistory,
+  listPreviewHistory,
 } from "./src/server/storage_sqlite.js";
 import { exportOrdersToDomeme } from "./src/pipeline/exportOrdersToDomeme.js";
 import { uploadDomemeExcel } from "./src/pipeline/uploadDomemeExcel.js";
 import { spawn } from "node:child_process";
-import { DOMEME_STORAGE_STATE_PATH } from "./src/config/paths.js";
+import {
+  DOMEME_STORAGE_STATE_PATH,
+  DOMEGGOOK_STORAGE_STATE_PATH,
+} from "./src/config/paths.js";
 
 const app = express();
 app.set("trust proxy", true);
@@ -266,7 +272,90 @@ app.post("/api/settings", authRequired, async (req, res) => {
   }
 });
 
-// ✅ 업로드 API
+// ✅ 업로드 Preview API (쿠팡 키 없어도 동작)
+app.post("/api/upload/preview", authRequired, async (req, res) => {
+  try {
+    const url = String(req.body?.url || "").trim();
+    if (!url) return res.status(400).json({ ok: false, error: "missing url" });
+
+    const c = classifyUrl(url);
+    if (!c.ok) return res.status(400).json({ ok: false, error: c.reason, url: c.url });
+
+    const preview = await previewUploadFromUrl(c.url, req.user.settings || {});
+    if (!preview.ok) return res.status(400).json({ ok: false, preview });
+
+    // Store preview history in sqlite
+    try {
+      await addPreviewHistory({
+        userId: req.user.id,
+        url: preview.url,
+        title: preview.draft?.title || "",
+        sourcePrice: preview.draft?.price ?? null,
+        finalPrice: preview.computed?.finalPrice ?? null,
+        imageUrl: preview.draft?.imageUrl || "",
+        images: preview.computed?.images || [],
+        options: preview.options || [],
+      });
+    } catch {}
+
+    return res.json({ ok: true, preview });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+app.get("/api/upload/preview/history", authRequired, async (req, res) => {
+  try {
+    const limit = Number(req.query.limit || 50);
+    const history = await listPreviewHistory(req.user.id, limit);
+    return res.json({ ok: true, history });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+// ✅ 업로드 Execute API (쿠팡 키 필요) - MVP stub
+app.post("/api/upload/execute", authRequired, async (req, res) => {
+  try {
+    const url = String(req.body?.url || "").trim();
+    if (!url) return res.status(400).json({ ok: false, error: "missing url" });
+
+    const settings = req.user.settings || {};
+    const missing = [];
+    if (!String(settings.coupangAccessKey || "").trim()) missing.push("coupangAccessKey");
+    if (!String(settings.coupangSecretKey || "").trim()) missing.push("coupangSecretKey");
+    if (!String(settings.coupangVendorId || "").trim()) missing.push("coupangVendorId");
+    if (!String(settings.coupangVendorUserId || "").trim()) missing.push("coupangVendorUserId");
+    if (!String(settings.coupangDeliveryCompanyCode || "").trim()) missing.push("coupangDeliveryCompanyCode");
+
+    if (missing.length > 0) {
+      return res.status(400).json({
+        ok: false,
+        error: "missing_coupang_keys",
+        missing,
+        hint: "설정 탭에서 쿠팡 키/벤더 정보를 저장하세요.",
+      });
+    }
+
+    const c = classifyUrl(url);
+    if (!c.ok) return res.status(400).json({ ok: false, error: c.reason, url: c.url });
+
+    // NOTE: For now we simply reuse the existing pipeline.
+    if (uploadInProgress) {
+      return res.status(409).json({ ok: false, error: "upload in progress" });
+    }
+    uploadInProgress = true;
+
+    const result = await runUploadFromUrl(c.url, settings);
+    uploadInProgress = false;
+    return res.json({ ok: true, result });
+  } catch (e) {
+    uploadInProgress = false;
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+// ✅ 업로드 API (legacy)
 app.post("/api/upload", authRequired, async (req, res) => {
   try {
     const url = String(req.body?.url || "").trim();
@@ -393,6 +482,39 @@ app.post("/api/domeme/session/start", authRequired, (req, res) => {
 app.get("/api/domeme/session/status", authRequired, (req, res) => {
   try {
     const filePath = DOMEME_STORAGE_STATE_PATH;
+    if (!fs.existsSync(filePath)) return res.json({ ok: true, exists: false, filePath });
+    const stat = fs.statSync(filePath);
+    return res.json({
+      ok: true,
+      exists: true,
+      filePath,
+      updatedAt: new Date(stat.mtimeMs).toISOString(),
+    });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+// ✅ 도매꾹 세션 생성 시작 (네이버 로그인)
+app.post("/api/domeggook/session/start", authRequired, (req, res) => {
+  try {
+    const scriptPath = path.join(process.cwd(), "scripts", "save_domeggook_login_state.js");
+    const child = spawn("node", [scriptPath], {
+      cwd: process.cwd(),
+      detached: true,
+      stdio: "ignore",
+    });
+    child.unref();
+    return res.json({ ok: true });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+// ✅ 도매꾹 세션 상태 확인
+app.get("/api/domeggook/session/status", authRequired, (req, res) => {
+  try {
+    const filePath = DOMEGGOOK_STORAGE_STATE_PATH;
     if (!fs.existsSync(filePath)) return res.json({ ok: true, exists: false, filePath });
     const stat = fs.statSync(filePath);
     return res.json({
