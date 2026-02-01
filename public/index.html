@@ -31,20 +31,10 @@
         </div>
       </header>
 
-      <div class="layout">
-        <nav class="sidenav card">
-          <div class="tabs vertical">
-            <button class="tab active" data-tab="upload">업로드</button>
-            <button class="tab" data-tab="orders">주문/발주</button>
-            <button class="tab" data-tab="history">히스토리</button>
-            <button class="tab" data-tab="settings">설정</button>
-            <button class="tab" data-tab="account">계정</button>
-          </div>
-        </nav>
-
-        <section class="content card">
-
-        <div class="panel" id="panel-upload">
+      <div class="settings-page">
+        <section class="settings-section card">
+          <h2 class="section-title">상품 업로드</h2>
+          <div class="panel" id="panel-upload">
           <label for="url">도매꾹 상품 링크</label>
           <div class="row">
             <input id="url" type="url" placeholder="https://domeggook.com/..." />
@@ -52,9 +42,12 @@
           </div>
 
         </div>
+        </section>
 
-        <div class="panel hidden order-actions" id="panel-orders">
-          <label>쿠팡 주문 → 도매처 발주</label>
+        <section class="settings-section card">
+          <h2 class="section-title">주문/발주</h2>
+          <div class="panel order-actions" id="panel-orders">
+            <label>쿠팡 주문 → 도매처 발주</label>
 
           <div class="row compact-row hidden" id="devOrdersRow">
             <button id="seedOrders">(개발용) 더미 주문 2개 생성</button>
@@ -129,14 +122,24 @@
           <p class="hint">상태: 결제완료(ACCEPT)만 포함됩니다.</p>
         </div>
 
-        <div class="panel hidden" id="panel-history">
+          </div>
+        </section>
+
+        <section class="settings-section card">
+          <h2 class="section-title">히스토리</h2>
+          <div class="panel" id="panel-history">
           <div class="row compact-row">
             <button id="refreshHistory">히스토리 새로고침</button>
           </div>
           <div class="history-table" id="historyTable"></div>
         </div>
 
-        <div class="panel hidden" id="panel-settings">
+          </div>
+        </section>
+
+        <section class="settings-section card">
+          <h2 class="section-title">설정</h2>
+          <div class="panel" id="panel-settings">
           <div class="grid">
             <div>
               <label>쿠팡 Access Key</label>
@@ -259,7 +262,12 @@
           </div>
         </div>
 
-        <div class="panel hidden" id="panel-account">
+          </div>
+        </section>
+
+        <section class="settings-section card">
+          <h2 class="section-title">계정</h2>
+          <div class="panel" id="panel-account">
           <div class="grid">
             <div>
               <label>이메일</label>
