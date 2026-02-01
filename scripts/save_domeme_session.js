@@ -5,47 +5,23 @@ import { DOMEME_STORAGE_STATE_PATH } from "../src/config/paths.js";
 const LOGIN_URL = "https://domemedb.domeggook.com/index/";
 const OUT_PATH = DOMEME_STORAGE_STATE_PATH;
 
-async function waitForLoggedIn(page, timeoutMs = 10 * 60 * 1000) {
-  const started = Date.now();
-  // IMPORTANT: Do NOT accept "some cookies exist" as logged-in.
-  // We only treat it as logged-in when the UI shows an authenticated indicator.
-  const selectors = [
-    'text=로그아웃',
-    'a:has-text("로그아웃")',
-    'a[href*="logout"]',
-    'a[href*="mypage"]',
-    'a[href*="order"]',
-  ];
-  while (Date.now() - started < timeoutMs) {
-    for (const sel of selectors) {
-      try {
-        const loc = page.locator(sel).first();
-        if ((await loc.count()) > 0) return true;
-      } catch {}
-    }
-    await page.waitForTimeout(1000);
-  }
-  return false;
-}
+const WAIT_MS = Math.max(30_000, Number(process.env.COUPLUS_SESSION_WAIT_MS || "600000")); // default 10m
 
 (async () => {
   const browser = await chromium.launch({ headless: false });
   const context = await browser.newContext();
   const page = await context.newPage();
 
+  console.log("[domeme] 브라우저가 열리면 네이버 로그인으로 도매매 로그인을 완료하세요.");
+  console.log(`[domeme] ${Math.round(WAIT_MS / 1000)}초 동안 대기 후 세션을 저장합니다 (로그인 완료하면 그냥 기다리면 됨).`);
+
   await page.goto(LOGIN_URL, { waitUntil: "domcontentloaded", timeout: 90000 });
 
-  console.log("브라우저가 열렸습니다. 네이버 로그인으로 도매매 로그인을 완료하세요.");
-
-  const ok = await waitForLoggedIn(page);
-  if (!ok) {
-    console.error("로그인 감지 실패(타임아웃). 브라우저에서 로그인 후 다시 시도하세요.");
-    await browser.close();
-    process.exit(2);
-  }
+  // Give user time to log in manually. Avoid brittle auto-detect.
+  await page.waitForTimeout(WAIT_MS);
 
   await context.storageState({ path: OUT_PATH });
-  console.log("세션 저장 완료:", OUT_PATH);
+  console.log("[domeme] 세션 저장 완료:", OUT_PATH);
 
   await browser.close();
 })();
