@@ -96,7 +96,40 @@ export async function uploadVendorPurchaseExcel({ vendor, filePath, settings = {
 
     const stillEmpty = pageText.includes("엑셀파일을 업로드해주세요");
     if (stillEmpty) {
-      return { ok: false, error: "upload_not_applied", currentUrl: page.url(), usedStorageState: Boolean(storageStatePath) };
+      return {
+        ok: false,
+        error: "upload_not_applied",
+        currentUrl: page.url(),
+        usedStorageState: Boolean(storageStatePath),
+      };
+    }
+
+    // Domeggook shows an "오류발생내역" block even for non-fatal warnings (e.g., e-money required).
+    let warning = "";
+    let fatalError = "";
+    if (pageText.includes("오류발생내역")) {
+      const lines = pageText
+        .split(/\n+/)
+        .map((s) => s.trim())
+        .filter(Boolean);
+
+      // Fatal: any actual row like "2행 ... 오류내용"
+      const fatal = lines.find((l) => /^\d+행\s+/.test(l));
+      if (fatal) fatalError = fatal;
+
+      // Warning: e-money required
+      const warn = lines.find((l) => l.includes("이머니") || l.includes("바로결제"));
+      if (warn) warning = warn;
+
+      if (fatalError) {
+        return {
+          ok: false,
+          error: "vendor_validation_failed",
+          detail: fatalError,
+          currentUrl: page.url(),
+          usedStorageState: Boolean(storageStatePath),
+        };
+      }
     }
 
     // After upload, try to discover the payment URL.
@@ -108,6 +141,7 @@ export async function uploadVendorPurchaseExcel({ vendor, filePath, settings = {
       payUrl,
       currentUrl: page.url(),
       usedStorageState: Boolean(storageStatePath),
+      warning: warning || undefined,
     };
   } catch (e) {
     return { ok: false, error: "upload_failed", detail: String(e?.message || e) };
