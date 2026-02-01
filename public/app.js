@@ -94,6 +94,33 @@ try {
   }
 } catch {}
 
+// Theme: auto | light | dark
+const THEME_KEY = "couplus.theme";
+function applyTheme(mode) {
+  const root = document.documentElement;
+  if (mode === "dark") root.dataset.theme = "dark";
+  else if (mode === "light") root.dataset.theme = "light";
+  else root.removeAttribute("data-theme");
+
+  const btn = document.getElementById("themeToggle");
+  if (btn) btn.textContent = mode === "dark" ? "다크" : mode === "light" ? "라이트" : "자동";
+}
+function getTheme() {
+  return localStorage.getItem(THEME_KEY) || "auto";
+}
+function setTheme(mode) {
+  localStorage.setItem(THEME_KEY, mode);
+  applyTheme(mode);
+}
+try {
+  applyTheme(getTheme());
+  document.getElementById("themeToggle")?.addEventListener("click", () => {
+    const cur = getTheme();
+    const next = cur === "auto" ? "light" : cur === "light" ? "dark" : "auto";
+    setTheme(next);
+  });
+} catch {}
+
 let lastPayload = null;
 let lastPurchaseDrafts = null;
 let lastPayUrls = null;
