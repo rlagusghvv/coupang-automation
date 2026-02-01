@@ -58,16 +58,72 @@ function collectItemsFromOrders(orders = []) {
   return items.filter((x) => x.sourceUrl && x.qty > 0);
 }
 
-// MVP: We generate a very simple purchase sheet (URL + qty + title)
-// This is meant for automation smoke-tests from seeded orders.
+// Purchase sheet template (based on the official vendor Excel form headers)
+// NOTE: For now, we fill required address fields with placeholders for seeded orders.
 export async function exportPaidOrdersToVendor({ orders = [], vendor }) {
   const v = String(vendor || "").trim();
   if (!v) return { ok: false, error: "missing_vendor" };
 
   const items = collectItemsFromOrders(orders).filter((x) => x.source === v);
 
-  const headers = ["sourceUrl", "qty", "title", "orderId"];
-  const rows = items.map((it) => [it.sourceUrl, it.qty, it.title, String(it.orderId || "")]);
+  // Template columns (Korean headers)
+  const headers = [
+    "마켓",
+    "상품번호",
+    "옵션코드",
+    "옵션명",
+    "수량",
+    "수령자명",
+    "우편번호",
+    "배송주소",
+    "배송 상세주소\n(선택입력)",
+    "휴대전화",
+    "추가연락처\n(선택입력)",
+    "쇼핑몰명\n(도매매 전용)",
+    "전달사항",
+    "배송요청사항\n(도매매 전용)",
+    "통관고유번호\n(해외직배송 전용)",
+  ];
+
+  const guessProductNo = (url) => {
+    const m = String(url || "").match(/(\d{6,})/);
+    return m ? m[1] : "";
+  };
+
+  const rows = items.map((it) => {
+    const productNo = guessProductNo(it.sourceUrl);
+    const optionCode = "00_01";
+    const optionName = it.title || "";
+    // Placeholders for seeded orders (real Coupang order fields will replace these later)
+    const receiver = "테스트";
+    const zipcode = "00000";
+    const addr1 = "서울특별시";
+    const addr2 = "";
+    const phone = "010-0000-0000";
+    const extraPhone = "";
+    const mallName = v === "domeme" ? "쿠팡" : "";
+    const memo = String(it.orderId || "");
+    const request = v === "domeme" ? "문앞" : "";
+    const customsNo = "";
+
+    return [
+      v,
+      productNo,
+      optionCode,
+      optionName,
+      it.qty,
+      receiver,
+      zipcode,
+      addr1,
+      addr2,
+      phone,
+      extraPhone,
+      mallName,
+      memo,
+      request,
+      customsNo,
+    ];
+  });
 
   const outDir = path.join(process.cwd(), "out", "purchase_sheets");
   ensureDir(outDir);
