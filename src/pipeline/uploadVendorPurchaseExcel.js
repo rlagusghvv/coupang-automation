@@ -68,12 +68,19 @@ export async function uploadVendorPurchaseExcel({ vendor, filePath, settings = {
   try {
     await page.goto(UPLOAD_URL, { waitUntil: "domcontentloaded", timeout: 90000 });
 
-    const fileInput = page.locator("input[type='file']").first();
+    // IMPORTANT: There are multiple file inputs on the page (e.g., image upload).
+    // We must target the Excel upload input: <form id="lFrmUpload"> ... <input type="file" name="xls"> ...
+    const fileInput = page.locator("#lFrmUpload input[type='file'][name='xls']").first();
     if (!(await fileInput.count())) {
-      return { ok: false, error: "file_input_not_found", url: page.url() };
+      // fallback
+      const anyFile = page.locator("#lFrmUpload input[type='file'], input[type='file']").first();
+      if (!(await anyFile.count())) {
+        return { ok: false, error: "file_input_not_found", url: page.url() };
+      }
+      await anyFile.setInputFiles(filePath);
+    } else {
+      await fileInput.setInputFiles(filePath);
     }
-
-    await fileInput.setInputFiles(filePath);
 
     const uploadBtn = page
       .locator(
@@ -96,9 +103,25 @@ export async function uploadVendorPurchaseExcel({ vendor, filePath, settings = {
 
     const stillEmpty = pageText.includes("엑셀파일을 업로드해주세요");
     if (stillEmpty) {
+      // Try to surface any visible error block for debugging.
+      let detail = "";
+      try {
+        if (pageText.includes("오류발생내역")) {
+          const lines = pageText
+            .split(/\n+/)
+            .map((s) => s.trim())
+            .filter(Boolean);
+          const s = lines.findIndex((l) => l.includes("오류발생내역"));
+          const e = lines.findIndex((l) => l.includes("주문가능내역"));
+          const block = s >= 0 ? lines.slice(s, e > s ? e : s + 40).slice(0, 10) : [];
+          detail = block.join(" | ");
+        }
+      } catch {}
+
       return {
         ok: false,
         error: "upload_not_applied",
+        detail: detail || undefined,
         currentUrl: page.url(),
         usedStorageState: Boolean(storageStatePath),
       };
