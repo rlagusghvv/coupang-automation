@@ -452,7 +452,7 @@ app.post("/api/dev/orders/seed", authRequired, async (req, res) => {
             source: "domeggook",
             sourceUrl: "https://domeggook.com/49643476",
             title: "[MOCK] 도매꾹 테스트 상품 (SbaLg3)",
-            qty: 1,
+            qty: 8,
           },
         ],
       },

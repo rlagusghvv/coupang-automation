@@ -92,7 +92,8 @@ export async function exportPaidOrdersToVendor({ orders = [], vendor }) {
 
   const rows = items.map((it) => {
     const productNo = guessProductNo(it.sourceUrl);
-    const optionCode = "00_00";
+    // For products without options, Domeggook requires optionCode "00".
+    const optionCode = "00";
     const optionName = it.title || "";
     // Placeholders for seeded orders (real Coupang order fields will replace these later)
     const receiver = "테스트";
