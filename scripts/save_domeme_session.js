@@ -1,48 +1,55 @@
-import fs from "node:fs";
-import path from "node:path";
 import { chromium } from "playwright";
 
-const LOGIN_URL = "https://domemedb.domeggook.com/index/";
 import { DOMEME_STORAGE_STATE_PATH } from "../src/config/paths.js";
 
+const LOGIN_URL = "https://domemedb.domeggook.com/index/";
 const OUT_PATH = DOMEME_STORAGE_STATE_PATH;
 
-const userId = process.env.DOMEME_ID || "";
-const userPw = process.env.DOMEME_PW || "";
-
-const browser = await chromium.launch({ headless: false });
-const context = await browser.newContext();
-const page = await context.newPage();
-
-await page.goto(LOGIN_URL, { waitUntil: "domcontentloaded", timeout: 90000 });
-
-// If credentials provided, try autofill
-if (userId && userPw) {
-  const idSelectors = [
-    "input[name='id']",
-    "input[name='user_id']",
-    "input#id",
-    "input[type='text']",
+async function waitForLoggedIn(page, timeoutMs = 10 * 60 * 1000) {
+  const started = Date.now();
+  const selectors = [
+    'text=로그아웃',
+    'a[href*="logout"]',
+    'a[href*="mypage"]',
+    'a[href*="order"]',
   ];
-  const pwSelectors = [
-    "input[name='pw']",
-    "input[name='password']",
-    "input#pw",
-    "input[type='password']",
-  ];
-  const idInput = page.locator(idSelectors.join(",")).first();
-  const pwInput = page.locator(pwSelectors.join(",")).first();
-  if (await idInput.count()) await idInput.fill(userId);
-  if (await pwInput.count()) await pwInput.fill(userPw);
+  while (Date.now() - started < timeoutMs) {
+    for (const sel of selectors) {
+      try {
+        const loc = page.locator(sel).first();
+        if ((await loc.count()) > 0) return true;
+      } catch {}
+    }
+    try {
+      const u = page.url();
+      if (u && !u.includes("nid.naver.com") && u.includes("domemedb.domeggook.com")) {
+        const cookies = await page.context().cookies();
+        if (Array.isArray(cookies) && cookies.length > 0) return true;
+      }
+    } catch {}
+    await page.waitForTimeout(1000);
+  }
+  return false;
 }
 
-console.log("브라우저가 열렸습니다. 네이버 로그인 후 도매매 로그인이 완료되면 Enter를 눌러주세요.");
-process.stdin.setEncoding("utf-8");
-await new Promise((resolve) => process.stdin.once("data", resolve));
+(async () => {
+  const browser = await chromium.launch({ headless: false });
+  const context = await browser.newContext();
+  const page = await context.newPage();
 
-await context.storageState({ path: OUT_PATH });
-console.log("세션 저장 완료:", OUT_PATH);
+  await page.goto(LOGIN_URL, { waitUntil: "domcontentloaded", timeout: 90000 });
 
-await page.close();
-await context.close();
-await browser.close();
+  console.log("브라우저가 열렸습니다. 네이버 로그인으로 도매매 로그인을 완료하세요.");
+
+  const ok = await waitForLoggedIn(page);
+  if (!ok) {
+    console.error("로그인 감지 실패(타임아웃). 브라우저에서 로그인 후 다시 시도하세요.");
+    await browser.close();
+    process.exit(2);
+  }
+
+  await context.storageState({ path: OUT_PATH });
+  console.log("세션 저장 완료:", OUT_PATH);
+
+  await browser.close();
+})();
