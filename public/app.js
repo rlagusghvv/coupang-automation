@@ -85,6 +85,15 @@ const lastPurchaseDraftEl = $("lastPurchaseDraft");
 const purchaseLogEl = $("purchaseLog");
 const purchasePayActionsEl = $("purchasePayActions");
 
+// Register Service Worker (PWA)
+try {
+  if ("serviceWorker" in navigator) {
+    window.addEventListener("load", () => {
+      navigator.serviceWorker.register("/sw.js").catch(() => {});
+    });
+  }
+} catch {}
+
 let lastPayload = null;
 let lastPurchaseDrafts = null;
 let lastPayUrls = null;
