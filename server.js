@@ -970,7 +970,9 @@ function escapeHtml(s) {
     .replaceAll("'", "&#039;");
 }
 
-const HOST = (process.env.HOST || "127.0.0.1").trim();
+// Default to 0.0.0.0 so the UI is reachable over Tailscale.
+// Override with HOST=127.0.0.1 if you explicitly want local-only.
+const HOST = (process.env.HOST || "0.0.0.0").trim();
 
 app.listen(PORT, HOST, () => {
   const baseHost = HOST === "0.0.0.0" ? "localhost" : HOST;
