@@ -235,6 +235,83 @@ app.get("/api/ip", async (req, res) => {
   return res.json({ ok: true, ip: ip || "" });
 });
 
+// ✅ 모바일/대시보드용: 세션상태 + 최근 히스토리 + 최근 구매로그 + payUrl 요약
+app.get("/api/dashboard", async (req, res) => {
+  try {
+    const token = getSessionToken(req);
+    const user = token ? await getUserBySession(token) : null;
+
+    const limitPreview = Math.max(1, Math.min(200, Number(req.query.previewLimit || 20) || 20));
+    const limitPurchase = Math.max(1, Math.min(200, Number(req.query.purchaseLimit || 50) || 50));
+
+    const domeme = (() => {
+      try {
+        const filePath = DOMEME_STORAGE_STATE_PATH;
+        if (!fs.existsSync(filePath)) return { ok: true, exists: false, valid: false };
+        const stat = fs.statSync(filePath);
+        return { ok: true, exists: true, valid: true, updatedAt: new Date(stat.mtimeMs).toISOString() };
+      } catch (e) {
+        return { ok: false, error: String(e?.message || e) };
+      }
+    })();
+
+    const domeggook = (() => {
+      try {
+        const filePath = DOMEGGOOK_STORAGE_STATE_PATH;
+        if (!fs.existsSync(filePath)) return { ok: true, exists: false, valid: false };
+        const stat = fs.statSync(filePath);
+        return { ok: true, exists: true, valid: true, updatedAt: new Date(stat.mtimeMs).toISOString() };
+      } catch (e) {
+        return { ok: false, error: String(e?.message || e) };
+      }
+    })();
+
+    let previewHistory = [];
+    let purchaseLogs = [];
+    let payUrls = {};
+
+    if (user) {
+      // preview history (sqlite)
+      try {
+        previewHistory = await listPreviewHistory(user.id, limitPreview);
+      } catch {
+        previewHistory = [];
+      }
+
+      // purchase logs (runtime memory)
+      try {
+        const list = runtimeState.purchaseLogs.get(String(user.id)) || [];
+        purchaseLogs = list.slice(0, limitPurchase);
+
+        // latest payUrls by vendor
+        for (const it of purchaseLogs) {
+          const vendor = String(it?.vendor || "").trim();
+          const url = String(it?.payUrl || "").trim();
+          if (!vendor || !url) continue;
+          if (!payUrls[vendor]) payUrls[vendor] = url;
+        }
+      } catch {
+        purchaseLogs = [];
+        payUrls = {};
+      }
+    }
+
+    return res.json({
+      ok: true,
+      auth: {
+        authenticated: Boolean(user),
+        user: user ? { id: user.id, email: user.email || "" } : null,
+      },
+      sessionStatus: { domeme, domeggook },
+      previewHistory,
+      purchaseLogs,
+      payUrls,
+    });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
 // ✅ 계정: 회원가입
 app.post("/api/signup", async (req, res) => {
   try {
