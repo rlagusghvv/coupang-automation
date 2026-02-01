@@ -7,8 +7,11 @@ const OUT_PATH = DOMEME_STORAGE_STATE_PATH;
 
 async function waitForLoggedIn(page, timeoutMs = 10 * 60 * 1000) {
   const started = Date.now();
+  // IMPORTANT: Do NOT accept "some cookies exist" as logged-in.
+  // We only treat it as logged-in when the UI shows an authenticated indicator.
   const selectors = [
     'text=로그아웃',
+    'a:has-text("로그아웃")',
     'a[href*="logout"]',
     'a[href*="mypage"]',
     'a[href*="order"]',
@@ -20,13 +23,6 @@ async function waitForLoggedIn(page, timeoutMs = 10 * 60 * 1000) {
         if ((await loc.count()) > 0) return true;
       } catch {}
     }
-    try {
-      const u = page.url();
-      if (u && !u.includes("nid.naver.com") && u.includes("domemedb.domeggook.com")) {
-        const cookies = await page.context().cookies();
-        if (Array.isArray(cookies) && cookies.length > 0) return true;
-      }
-    } catch {}
     await page.waitForTimeout(1000);
   }
   return false;

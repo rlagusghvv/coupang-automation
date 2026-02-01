@@ -6,9 +6,11 @@ const storagePath = DOMEGGOOK_STORAGE_STATE_PATH;
 
 async function waitForLoggedIn(page, timeoutMs = 10 * 60 * 1000) {
   const started = Date.now();
-  // Heuristics: look for logout / mypage / member indicators.
+  // IMPORTANT: Do NOT accept "some cookies exist" as logged-in.
+  // We only treat it as logged-in when the UI shows an authenticated indicator.
   const selectors = [
     'text=로그아웃',
+    'a:has-text("로그아웃")',
     'a[href*="logout"]',
     'a[href*="mypage"]',
     'a[href*="member"]',
@@ -21,15 +23,6 @@ async function waitForLoggedIn(page, timeoutMs = 10 * 60 * 1000) {
         if ((await loc.count()) > 0) return true;
       } catch {}
     }
-    // also consider we are no longer on login-like domain
-    try {
-      const u = page.url();
-      if (u && !u.includes("nid.naver.com") && u.includes("domeggook.com")) {
-        // Still need at least one cookie set
-        const cookies = await page.context().cookies();
-        if (Array.isArray(cookies) && cookies.length > 0) return true;
-      }
-    } catch {}
 
     await page.waitForTimeout(1000);
   }

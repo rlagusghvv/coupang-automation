@@ -558,11 +558,12 @@ app.post("/api/domeme/session/start", authRequired, (req, res) => {
 app.get("/api/domeme/session/status", authRequired, (req, res) => {
   try {
     const filePath = DOMEME_STORAGE_STATE_PATH;
-    if (!fs.existsSync(filePath)) return res.json({ ok: true, exists: false, filePath });
+    if (!fs.existsSync(filePath)) return res.json({ ok: true, exists: false, valid: false, filePath });
     const stat = fs.statSync(filePath);
     return res.json({
       ok: true,
       exists: true,
+      valid: true,
       filePath,
       updatedAt: new Date(stat.mtimeMs).toISOString(),
     });
@@ -594,11 +595,12 @@ app.post("/api/domeggook/session/start", authRequired, (req, res) => {
 app.get("/api/domeggook/session/status", authRequired, (req, res) => {
   try {
     const filePath = DOMEGGOOK_STORAGE_STATE_PATH;
-    if (!fs.existsSync(filePath)) return res.json({ ok: true, exists: false, filePath });
+    if (!fs.existsSync(filePath)) return res.json({ ok: true, exists: false, valid: false, filePath });
     const stat = fs.statSync(filePath);
     return res.json({
       ok: true,
       exists: true,
+      valid: true,
       filePath,
       updatedAt: new Date(stat.mtimeMs).toISOString(),
     });
