@@ -450,9 +450,9 @@ app.post("/api/dev/orders/seed", authRequired, async (req, res) => {
         items: [
           {
             source: "domeggook",
-            sourceUrl: "https://domeggook.com/44047997?from=lstBiz",
-            title: "[MOCK] 도매꾹 테스트 상품",
-            qty: 2,
+            sourceUrl: "https://domeggook.com/49643476",
+            title: "[MOCK] 도매꾹 테스트 상품 (SbaLg3)",
+            qty: 1,
           },
         ],
       },
