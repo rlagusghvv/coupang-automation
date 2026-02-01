@@ -31,6 +31,80 @@ body {
   gap: 16px;
 }
 
+/* Top bar (Apple-ish dashboard) */
+.topbar {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 4px 2px 2px;
+}
+
+.brand {
+  display: grid;
+  gap: 4px;
+}
+
+.brand .logo {
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.brand .tagline {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.topbar-right {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+}
+
+.layout {
+  display: grid;
+  grid-template-columns: 220px 1fr;
+  gap: 14px;
+  align-items: start;
+}
+
+.sidenav.card {
+  padding: 12px;
+}
+
+.tabs.vertical {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  border-radius: 0;
+}
+
+.tabs.vertical .tab {
+  width: 100%;
+  text-align: left;
+  border: 1px solid var(--border);
+  background: #fff;
+  color: var(--text);
+  padding: 10px 12px;
+  border-radius: 12px;
+}
+
+.tabs.vertical .tab.active {
+  border-color: rgba(37, 99, 235, 0.28);
+  background: rgba(37, 99, 235, 0.10);
+  color: #1d4ed8;
+}
+
+.content.card {
+  padding: 18px;
+}
+
+/* Legacy header styles (kept for compatibility) */
 .hero {
   padding: 6px 2px;
   display: flex;
@@ -108,6 +182,15 @@ h1 {
   background: #f1f5f9;
   border-radius: 999px;
   padding: 6px;
+}
+
+@media (max-width: 860px) {
+  .layout {
+    grid-template-columns: 1fr;
+  }
+  .topbar-right {
+    align-items: flex-start;
+  }
 }
 
 .tab {
