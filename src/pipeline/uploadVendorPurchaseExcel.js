@@ -93,6 +93,9 @@ export async function uploadVendorPurchaseExcel({ vendor, filePath, settings = {
         page.waitForLoadState("domcontentloaded").catch(() => {}),
         uploadBtn.click().catch(() => {}),
       ]);
+
+      // Form submit often updates the page via XHR/DOM; give it a moment.
+      await page.waitForTimeout(2500).catch(() => {});
     }
 
     // Basic validation: ensure the page is no longer asking to upload a file.
