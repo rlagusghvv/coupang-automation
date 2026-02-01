@@ -53,6 +53,23 @@
 
           <div class="divider"></div>
 
+          <label>시드 주문 → 발주 업로드 (MVP)</label>
+          <div class="row compact-row">
+            <button id="draftPurchase">발주 엑셀 생성</button>
+            <button id="uploadPurchase">발주 업로드</button>
+          </div>
+          <div class="row compact-row">
+            <span class="hint">마지막 발주 엑셀: <span id="lastPurchaseDraft">-</span></span>
+          </div>
+          <div class="grid">
+            <div>
+              <label>발주 로그</label>
+              <textarea id="purchaseLog" rows="6" readonly></textarea>
+            </div>
+          </div>
+
+          <div class="divider"></div>
+
           <label>쿠팡 주문 → 도매매 엑셀 생성</label>
           <div class="grid">
             <div>

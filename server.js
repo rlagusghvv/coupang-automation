@@ -20,6 +20,8 @@ import {
 import { addOrder, clearOrders, listOrders } from "./src/server/orders_sqlite.js";
 import { exportOrdersToDomeme } from "./src/pipeline/exportOrdersToDomeme.js";
 import { uploadDomemeExcel } from "./src/pipeline/uploadDomemeExcel.js";
+import { exportPaidOrdersToVendors } from "./src/pipeline/exportPaidOrdersToVendor.js";
+import { uploadVendorPurchaseExcel } from "./src/pipeline/uploadVendorPurchaseExcel.js";
 import { spawn } from "node:child_process";
 import { newSessionFlag, touchFlag } from "./src/server/session_control.js";
 import {
@@ -323,6 +325,80 @@ app.get("/api/orders", authRequired, async (req, res) => {
     const limit = Number(req.query.limit || 50);
     const orders = await listOrders(req.user.id, limit);
     return res.json({ ok: true, orders });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+// ---- MVP: seeded orders -> vendor purchase upload flow ----
+app.post("/api/purchase/draft", authRequired, async (req, res) => {
+  try {
+    const limit = Math.max(1, Math.min(200, Number(req.body?.limit || 200) || 200));
+    const orders = await listOrders(req.user.id, limit);
+    const paid = orders.filter((o) => String(o.status || "") === "paid");
+
+    const draft = await exportPaidOrdersToVendors({ orders: paid, vendors: ["domeme", "domeggook"] });
+
+    const draftsByVendor = {};
+    for (const r of draft.results || []) {
+      if (r?.vendor) draftsByVendor[r.vendor] = r;
+    }
+
+    runtimeState.purchaseDrafts.set(String(req.user.id), {
+      createdAt: Date.now(),
+      drafts: draftsByVendor,
+    });
+
+    return res.json({ ok: true, draft: { ...draft, paidOrderCount: paid.length } });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+app.post("/api/purchase/upload", authRequired, async (req, res) => {
+  try {
+    const vendors = Array.isArray(req.body?.vendors) && req.body.vendors.length
+      ? req.body.vendors
+      : ["domeme", "domeggook"];
+
+    const cached = runtimeState.purchaseDrafts.get(String(req.user.id)) || null;
+    let drafts = cached?.drafts || null;
+
+    // If no cached drafts, auto-draft from latest paid orders.
+    if (!drafts) {
+      const orders = await listOrders(req.user.id, 200);
+      const paid = orders.filter((o) => String(o.status || "") === "paid");
+      const draft = await exportPaidOrdersToVendors({ orders: paid, vendors });
+      drafts = {};
+      for (const r of draft.results || []) {
+        if (r?.vendor) drafts[r.vendor] = r;
+      }
+      runtimeState.purchaseDrafts.set(String(req.user.id), {
+        createdAt: Date.now(),
+        drafts,
+      });
+    }
+
+    const results = [];
+    for (const v of vendors) {
+      const d = drafts?.[v] || null;
+      const filePath = String(req.body?.filePaths?.[v] || d?.filePath || "").trim();
+      if (!filePath) {
+        results.push({ ok: false, vendor: v, error: "missing_filePath" });
+        continue;
+      }
+
+      // eslint-disable-next-line no-await-in-loop
+      const r = await uploadVendorPurchaseExcel({
+        vendor: v,
+        filePath,
+        settings: req.user.settings || {},
+        storageStateDefaultPath: v === "domeme" ? DOMEME_STORAGE_STATE_PATH : DOMEGGOOK_STORAGE_STATE_PATH,
+      });
+      results.push(r);
+    }
+
+    return res.json({ ok: true, results });
   } catch (e) {
     return res.status(500).json({ ok: false, error: String(e?.message || e) });
   }

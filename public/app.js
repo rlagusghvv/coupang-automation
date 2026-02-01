@@ -78,7 +78,14 @@ const refreshOrdersBtn = $("refreshOrders");
 const ordersListWrap = $("ordersListWrap");
 const ordersListEl = $("ordersList");
 
+// MVP: seeded orders -> vendor purchase upload
+const draftPurchaseBtn = $("draftPurchase");
+const uploadPurchaseBtn = $("uploadPurchase");
+const lastPurchaseDraftEl = $("lastPurchaseDraft");
+const purchaseLogEl = $("purchaseLog");
+
 let lastPayload = null;
+let lastPurchaseDrafts = null;
 
 function setStatus(text, state) {
   statusEl.textContent = text;
@@ -821,6 +828,85 @@ async function loadOrders() {
   }
 }
 
+async function appendPurchaseLog(line) {
+  if (!purchaseLogEl) return;
+  const prev = purchaseLogEl.value || "";
+  purchaseLogEl.value = (prev ? prev + "\n" : "") + String(line || "");
+  purchaseLogEl.scrollTop = purchaseLogEl.scrollHeight;
+}
+
+async function draftPurchase() {
+  try {
+    setStatus("발주 엑셀 생성 중...", "");
+    if (purchaseLogEl) purchaseLogEl.value = "";
+    appendPurchaseLog(`[draft] 요청: ${new Date().toLocaleString()}`);
+
+    const res = await fetch("/api/purchase/draft", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ limit: 200 }),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok || !json.ok) {
+      appendPurchaseLog(`[draft] 실패: ${JSON.stringify(json)}`);
+      setStatus("발주 엑셀 생성 실패", "bad");
+      return;
+    }
+
+    const results = json?.draft?.results || [];
+    lastPurchaseDrafts = {};
+    for (const r of results) {
+      if (r?.vendor && r?.filePath) lastPurchaseDrafts[r.vendor] = r.filePath;
+    }
+
+    if (lastPurchaseDraftEl) {
+      lastPurchaseDraftEl.textContent = results
+        .map((r) => `${r.vendor || "-"}: ${r.filePath || "-"}`)
+        .join(" | ");
+    }
+
+    appendPurchaseLog(`[draft] 완료: ${JSON.stringify(results, null, 2)}`);
+    setStatus("발주 엑셀 생성 완료", "ok");
+  } catch (e) {
+    appendPurchaseLog(`[draft] 에러: ${String(e?.message || e)}`);
+    setStatus("발주 엑셀 생성 에러", "bad");
+  }
+}
+
+async function uploadPurchase() {
+  try {
+    setStatus("발주 업로드 중...", "");
+    appendPurchaseLog(`[upload] 요청: ${new Date().toLocaleString()}`);
+
+    const res = await fetch("/api/purchase/upload", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ vendors: ["domeme", "domeggook"], filePaths: lastPurchaseDrafts || {} }),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok || !json.ok) {
+      appendPurchaseLog(`[upload] 실패: ${JSON.stringify(json)}`);
+      setStatus("발주 업로드 실패", "bad");
+      return;
+    }
+
+    const results = json.results || [];
+    appendPurchaseLog(`[upload] 결과: ${JSON.stringify(results, null, 2)}`);
+
+    const payUrls = results
+      .filter((r) => r && r.ok && r.payUrl)
+      .map((r) => `${r.vendor}: ${r.payUrl}`)
+      .join(" | ");
+
+    if (payUrls) appendPurchaseLog(`[upload] 결제하러 가기: ${payUrls}`);
+
+    setStatus("발주 업로드 완료", "ok");
+  } catch (e) {
+    appendPurchaseLog(`[upload] 에러: ${String(e?.message || e)}`);
+    setStatus("발주 업로드 에러", "bad");
+  }
+}
+
 async function seedDummyOrders() {
   try {
     const res = await fetch("/api/dev/orders/seed?dev=1", { method: "POST" });
@@ -866,6 +952,9 @@ try {
 } catch {}
 seedOrdersBtn?.addEventListener("click", seedDummyOrders);
 refreshOrdersBtn?.addEventListener("click", loadOrders);
+draftPurchaseBtn?.addEventListener("click", draftPurchase);
+uploadPurchaseBtn?.addEventListener("click", uploadPurchase);
+
 domeggookSessionBtn?.addEventListener("click", async () => {
   setStatus("도매꾹 세션 생성 중...", "");
   try {
