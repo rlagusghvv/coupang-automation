@@ -129,7 +129,8 @@ export async function exportPaidOrdersToVendor({ orders = [], vendor }) {
 
   const outDir = path.join(process.cwd(), "out", "purchase_sheets");
   ensureDir(outDir);
-  const fileName = `purchase_${safeName(v)}_${new Date().toISOString().slice(0, 10)}_${Date.now()}.xlsx`;
+  // Domeggook Excel upload is strict; prefer legacy .xls for maximum compatibility.
+  const fileName = `purchase_${safeName(v)}_${new Date().toISOString().slice(0, 10)}_${Date.now()}.xls`;
   const outPath = path.join(outDir, fileName);
 
   const built = buildXlsx({ outPath, headers, rows });
