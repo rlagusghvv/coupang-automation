@@ -83,9 +83,11 @@ const draftPurchaseBtn = $("draftPurchase");
 const uploadPurchaseBtn = $("uploadPurchase");
 const lastPurchaseDraftEl = $("lastPurchaseDraft");
 const purchaseLogEl = $("purchaseLog");
+const purchasePayActionsEl = $("purchasePayActions");
 
 let lastPayload = null;
 let lastPurchaseDrafts = null;
+let lastPayUrls = null;
 
 function setStatus(text, state) {
   statusEl.textContent = text;
@@ -873,10 +875,69 @@ async function draftPurchase() {
   }
 }
 
+function renderPayButtons(payUrlsMap) {
+  if (!purchasePayActionsEl) return;
+  purchasePayActionsEl.innerHTML = "";
+  if (!payUrlsMap) return;
+
+  const vendors = [
+    { key: "domeggook", label: "도매꾹 결제하러 가기" },
+    { key: "domeme", label: "도매매 결제하러 가기" },
+  ];
+
+  for (const v of vendors) {
+    const url = payUrlsMap[v.key];
+    if (!url) continue;
+
+    // Use /go redirect to avoid mixed-content quirks and keep links stable.
+    const goUrl = `/go?u=${encodeURIComponent(url)}`;
+
+    const a = document.createElement("a");
+    a.href = goUrl;
+    a.target = "_blank";
+    a.rel = "noopener noreferrer";
+    a.textContent = v.label;
+    a.className = "btn";
+    a.style.display = "inline-flex";
+    a.style.alignItems = "center";
+    a.style.justifyContent = "center";
+    a.style.padding = "12px 14px";
+    a.style.borderRadius = "12px";
+    a.style.textDecoration = "none";
+    a.style.color = "#fff";
+    a.style.background = "linear-gradient(135deg, var(--accent), var(--accent-2))";
+
+    const copyBtn = document.createElement("button");
+    copyBtn.type = "button";
+    copyBtn.className = "ghost";
+    copyBtn.textContent = "링크 복사";
+    copyBtn.style.padding = "12px 14px";
+    copyBtn.addEventListener("click", async () => {
+      try {
+        await navigator.clipboard.writeText(url);
+        setStatus("링크 복사됨", "ok");
+      } catch {
+        setStatus("복사 실패(브라우저 권한)", "bad");
+      }
+    });
+
+    const wrap = document.createElement("div");
+    wrap.style.display = "flex";
+    wrap.style.gap = "10px";
+    wrap.style.marginTop = "10px";
+    wrap.appendChild(a);
+    wrap.appendChild(copyBtn);
+
+    purchasePayActionsEl.appendChild(wrap);
+  }
+}
+
 async function uploadPurchase() {
   try {
     setStatus("발주 업로드 중...", "");
     appendPurchaseLog(`[upload] 요청: ${new Date().toLocaleString()}`);
+    lastPayUrls = null;
+    renderPayButtons(null);
 
     const res = await fetch("/api/purchase/upload", {
       method: "POST",
@@ -893,12 +954,21 @@ async function uploadPurchase() {
     const results = json.results || [];
     appendPurchaseLog(`[upload] 결과: ${JSON.stringify(results, null, 2)}`);
 
-    const payUrls = results
-      .filter((r) => r && r.ok && r.payUrl)
-      .map((r) => `${r.vendor}: ${r.payUrl}`)
-      .join(" | ");
+    lastPayUrls = {};
+    for (const r of results) {
+      if (r && r.ok && r.vendor && r.payUrl) lastPayUrls[r.vendor] = r.payUrl;
+    }
 
-    if (payUrls) appendPurchaseLog(`[upload] 결제하러 가기: ${payUrls}`);
+    if (Object.keys(lastPayUrls).length) {
+      appendPurchaseLog(`[upload] 결제하러 가기 링크 생성됨`);
+      renderPayButtons(lastPayUrls);
+
+      // Try to auto-open payment pages (may be blocked by popup blocker)
+      try {
+        const first = lastPayUrls.domeggook || lastPayUrls.domeme;
+        if (first) window.open(`/go?u=${encodeURIComponent(first)}`, "_blank");
+      } catch {}
+    }
 
     setStatus("발주 업로드 완료", "ok");
   } catch (e) {
