@@ -120,7 +120,7 @@ body {
 }
 
 .toss-app {
-  padding-bottom: 78px; /* space for bottom bar */
+  padding-bottom: 110px; /* space for floating bottom bar */
 }
 
 .settings-page {
@@ -134,17 +134,19 @@ body {
 
 .bottombar {
   position: fixed;
-  left: 0;
-  right: 0;
-  bottom: 0;
+  left: 12px;
+  right: 12px;
+  bottom: calc(10px + env(safe-area-inset-bottom));
   z-index: 50;
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 8px;
-  padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
+  padding: 10px 10px;
   background: rgba(255, 255, 255, 0.82);
-  border-top: 1px solid var(--border);
+  border: 1px solid var(--border);
+  border-radius: 18px;
   backdrop-filter: blur(12px);
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.12);
 }
 
 .nav-item {
@@ -163,6 +165,8 @@ body {
 
 :root[data-theme="dark"] .bottombar {
   background: rgba(17, 24, 39, 0.72);
+  border-color: rgba(148, 163, 184, 0.18);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.55);
 }
 
 .settings-section.card {
