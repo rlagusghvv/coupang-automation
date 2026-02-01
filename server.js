@@ -585,7 +585,7 @@ app.post("/api/domeme/session/save", authRequired, (req, res) => {
 });
 
 // ✅ 도매매 세션 상태 확인
-app.get("/api/domeme/session/status", authRequired, (req, res) => {
+app.get("/api/domeme/session/status", (req, res) => {
   try {
     const filePath = DOMEME_STORAGE_STATE_PATH;
     if (!fs.existsSync(filePath)) return res.json({ ok: true, exists: false, valid: false, filePath });
@@ -650,7 +650,7 @@ app.post("/api/domeggook/session/save", authRequired, (req, res) => {
 });
 
 // ✅ 도매꾹 세션 상태 확인
-app.get("/api/domeggook/session/status", authRequired, (req, res) => {
+app.get("/api/domeggook/session/status", (req, res) => {
   try {
     const filePath = DOMEGGOOK_STORAGE_STATE_PATH;
     if (!fs.existsSync(filePath)) return res.json({ ok: true, exists: false, valid: false, filePath });
