@@ -1,4 +1,5 @@
 import 'package:couplus_mobile/api/api_client.dart';
+import 'package:couplus_mobile/ui/widgets.dart';
 import 'package:flutter/material.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -32,7 +33,7 @@ class _HomeScreenState extends State<HomeScreen> {
     } catch (e) {
       setState(() => _error = e.toString());
     } finally {
-      setState(() => _loading = false);
+      if (mounted) setState(() => _loading = false);
     }
   }
 
@@ -49,72 +50,126 @@ class _HomeScreenState extends State<HomeScreen> {
     final purchaseLogs = (data?['purchaseLogs'] as List?) ?? const [];
     final payUrls = (data?['payUrls'] as Map?) ?? {};
 
-    return RefreshIndicator(
+    final isAuthed = auth['authenticated'] == true;
+
+    return AppScaffold(
+      title: 'CoupElephant',
       onRefresh: _refresh,
-      child: ListView(
-        padding: const EdgeInsets.all(16),
+      actions: [
+        IconButton(
+          onPressed: _loading ? null : _refresh,
+          icon: const Icon(Icons.refresh),
+        ),
+      ],
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text('Couplus', style: Theme.of(context).textTheme.headlineSmall),
-              IconButton(
-                onPressed: _loading ? null : _refresh,
-                icon: const Icon(Icons.refresh),
+              InfoChip(
+                label: isAuthed ? 'Logged in' : 'Login required',
+                color: isAuthed ? const Color(0xFF2F9E44) : const Color(0xFFE03131),
               ),
+              const SizedBox(width: 10),
+              if (_loading) const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)),
             ],
           ),
-          if (_loading) const LinearProgressIndicator(),
           if (_error != null) ...[
             const SizedBox(height: 12),
-            Text(_error!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
+            ErrorBanner(message: _error!, onRetry: _refresh),
           ],
-          const SizedBox(height: 16),
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(12),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text('Auth'),
-                  const SizedBox(height: 8),
-                  Text('authenticated: ${auth['authenticated'] ?? false}'),
-                  Text('user: ${auth['user'] ?? '-'}'),
-                ],
-              ),
+          const SizedBox(height: 14),
+          AppCard(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const SectionHeader('Session'),
+                const SizedBox(height: 10),
+                KvRow(
+                  k: '도매매',
+                  v: domeme['valid'] == true ? 'Connected' : 'Not connected',
+                  vStyle: TextStyle(
+                    fontWeight: FontWeight.w800,
+                    color: domeme['valid'] == true ? const Color(0xFF2F9E44) : Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.65),
+                  ),
+                ),
+                KvRow(
+                  k: '도매꾹',
+                  v: domeggook['valid'] == true ? 'Connected' : 'Not connected',
+                  vStyle: TextStyle(
+                    fontWeight: FontWeight.w800,
+                    color: domeggook['valid'] == true ? const Color(0xFF2F9E44) : Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.65),
+                  ),
+                ),
+                const Divider(height: 24),
+                Text(
+                  '로그인/세션 관리는 More 탭에서 할 수 있어요.',
+                  style: TextStyle(color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.65)),
+                ),
+              ],
             ),
           ),
           const SizedBox(height: 12),
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(12),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text('Session status'),
-                  const SizedBox(height: 8),
-                  Text('domeme: ${domeme['valid'] == true ? 'valid' : 'missing'}'),
-                  Text('domeggook: ${domeggook['valid'] == true ? 'valid' : 'missing'}'),
-                ],
-              ),
+          AppCard(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const SectionHeader('Activity'),
+                const SizedBox(height: 10),
+                Row(
+                  children: [
+                    Expanded(child: _Metric(title: 'Preview', value: '${previewHistory.length}')),
+                    const SizedBox(width: 10),
+                    Expanded(child: _Metric(title: 'Purchase logs', value: '${purchaseLogs.length}')),
+                    const SizedBox(width: 10),
+                    Expanded(child: _Metric(title: 'Pay URLs', value: '${payUrls.keys.length}')),
+                  ],
+                ),
+              ],
             ),
           ),
           const SizedBox(height: 12),
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(12),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text('Recent activity'),
-                  const SizedBox(height: 8),
-                  Text('previewHistory: ${previewHistory.length}'),
-                  Text('purchaseLogs: ${purchaseLogs.length}'),
-                  Text('payUrls: ${payUrls.keys.length}'),
-                ],
-              ),
+          AppCard(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const SectionHeader('Account'),
+                const SizedBox(height: 10),
+                KvRow(k: 'Authenticated', v: isAuthed ? 'Yes' : 'No'),
+                KvRow(k: 'User', v: (auth['user'] ?? '-').toString()),
+              ],
             ),
           ),
+        ],
+      ),
+    );
+  }
+}
+
+class _Metric extends StatelessWidget {
+  const _Metric({required this.title, required this.value});
+
+  final String title;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: cs.primary.withValues(alpha: 0.06),
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
+            style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: cs.onSurface.withValues(alpha: 0.65)),
+          ),
+          const SizedBox(height: 6),
+          Text(value, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w900)),
         ],
       ),
     );

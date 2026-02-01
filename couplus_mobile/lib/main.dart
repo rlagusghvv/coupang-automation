@@ -2,6 +2,7 @@ import 'package:couplus_mobile/api/api_client.dart';
 import 'package:couplus_mobile/screens/home_screen.dart';
 import 'package:couplus_mobile/screens/more_screen.dart';
 import 'package:couplus_mobile/screens/work_screen.dart';
+import 'package:couplus_mobile/ui/app_theme.dart';
 import 'package:flutter/material.dart';
 
 void main() {
@@ -14,20 +15,9 @@ class CouplusApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Couplus',
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.indigo),
-        useMaterial3: true,
-        brightness: Brightness.light,
-      ),
-      darkTheme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: Colors.indigo,
-          brightness: Brightness.dark,
-        ),
-        useMaterial3: true,
-        brightness: Brightness.dark,
-      ),
+      title: 'CoupElephant',
+      theme: AppTheme.light(),
+      darkTheme: AppTheme.dark(),
       themeMode: ThemeMode.system,
       home: const RootTabs(),
     );
@@ -47,6 +37,12 @@ class _RootTabsState extends State<RootTabs> {
   late final ApiClient _api = ApiClient();
 
   @override
+  void initState() {
+    super.initState();
+    _api.init();
+  }
+
+  @override
   Widget build(BuildContext context) {
     final pages = [
       HomeScreen(api: _api),
@@ -56,13 +52,13 @@ class _RootTabsState extends State<RootTabs> {
 
     return Scaffold(
       body: SafeArea(child: pages[_index]),
-      bottomNavigationBar: BottomNavigationBar(
-        currentIndex: _index,
-        onTap: (i) => setState(() => _index = i),
-        items: const [
-          BottomNavigationBarItem(icon: Icon(Icons.home), label: 'Home'),
-          BottomNavigationBarItem(icon: Icon(Icons.work), label: 'Work'),
-          BottomNavigationBarItem(icon: Icon(Icons.more_horiz), label: 'More'),
+      bottomNavigationBar: NavigationBar(
+        selectedIndex: _index,
+        onDestinationSelected: (i) => setState(() => _index = i),
+        destinations: const [
+          NavigationDestination(icon: Icon(Icons.home_outlined), selectedIcon: Icon(Icons.home), label: 'Home'),
+          NavigationDestination(icon: Icon(Icons.work_outline), selectedIcon: Icon(Icons.work), label: 'Work'),
+          NavigationDestination(icon: Icon(Icons.more_horiz), selectedIcon: Icon(Icons.more_horiz), label: 'More'),
         ],
       ),
     );
