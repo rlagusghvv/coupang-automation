@@ -119,9 +119,50 @@ body {
   font-weight: 600;
 }
 
+.toss-app {
+  padding-bottom: 78px; /* space for bottom bar */
+}
+
 .settings-page {
   display: grid;
   gap: 12px;
+}
+
+.view.hidden {
+  display: none;
+}
+
+.bottombar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 50;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
+  background: rgba(255, 255, 255, 0.82);
+  border-top: 1px solid var(--border);
+  backdrop-filter: blur(12px);
+}
+
+.nav-item {
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--muted);
+  padding: 10px 10px;
+  border-radius: 12px;
+  font-weight: 700;
+}
+
+.nav-item.active {
+  background: rgba(10, 132, 255, 0.12);
+  color: var(--accent);
+}
+
+:root[data-theme="dark"] .bottombar {
+  background: rgba(17, 24, 39, 0.72);
 }
 
 .settings-section.card {

@@ -1042,6 +1042,32 @@ saveSkuMapBtn.addEventListener("click", saveSkuMap);
 
 tabs.forEach((t) => t.addEventListener("click", () => switchTab(t.dataset.tab)));
 $("saveSettings").addEventListener("click", saveSettings);
+
+// Toss-style bottom navigation (home / activity / settings)
+function switchView(name) {
+  const views = {
+    home: $("view-home"),
+    activity: $("view-activity"),
+    settings: $("view-settings"),
+  };
+  for (const [k, el] of Object.entries(views)) {
+    if (!el) continue;
+    if (k === name) el.classList.remove("hidden");
+    else el.classList.add("hidden");
+  }
+  document.querySelectorAll(".nav-item").forEach((b) => {
+    b.classList.toggle("active", b.dataset.view === name);
+  });
+  try {
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  } catch {
+    window.scrollTo(0, 0);
+  }
+}
+
+document.querySelectorAll(".nav-item").forEach((b) => {
+  b.addEventListener("click", () => switchView(b.dataset.view));
+});
 $("signup").addEventListener("click", signup);
 $("login").addEventListener("click", login);
 $("logout").addEventListener("click", logout);
