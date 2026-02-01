@@ -82,9 +82,10 @@ export async function uploadVendorPurchaseExcel({ vendor, filePath, settings = {
       await fileInput.setInputFiles(filePath);
     }
 
+    // IMPORTANT: Page has unrelated "업로드" buttons (e.g. image upload). Prefer the Excel form submit.
     const uploadBtn = page
       .locator(
-        "#lFrmUpload input[type='image'], button:has-text('업로드'), button:has-text('등록'), input[type='submit'], input[type='image'], button[type='submit']",
+        "#lFrmUpload input[type='image'][title*='파일'], #lFrmUpload input[type='image'][alt*='파일'], #lFrmUpload input[type='image'], #lFrmUpload input[type='submit'], #lFrmUpload button[type='submit']",
       )
       .first();
 
