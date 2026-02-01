@@ -539,13 +539,16 @@ app.get("/api/upload/history", authRequired, (req, res) => {
 app.post("/api/domeme/session/start", authRequired, (req, res) => {
   try {
     const scriptPath = path.join(process.cwd(), "scripts", "save_domeme_session.js");
+    const logPath = path.join(process.cwd(), "data", "session_start.log");
+    const out = fs.openSync(logPath, "a");
     const child = spawn("node", [scriptPath], {
       cwd: process.cwd(),
       detached: true,
-      stdio: "ignore",
+      stdio: ["ignore", out, out],
+      env: { ...process.env, COUPLUS_DEV: String(process.env.COUPLUS_DEV || "") },
     });
     child.unref();
-    return res.json({ ok: true });
+    return res.json({ ok: true, pid: child.pid, logPath });
   } catch (e) {
     return res.status(500).json({ ok: false, error: String(e?.message || e) });
   }
@@ -572,13 +575,16 @@ app.get("/api/domeme/session/status", authRequired, (req, res) => {
 app.post("/api/domeggook/session/start", authRequired, (req, res) => {
   try {
     const scriptPath = path.join(process.cwd(), "scripts", "save_domeggook_login_state.js");
+    const logPath = path.join(process.cwd(), "data", "session_start.log");
+    const out = fs.openSync(logPath, "a");
     const child = spawn("node", [scriptPath], {
       cwd: process.cwd(),
       detached: true,
-      stdio: "ignore",
+      stdio: ["ignore", out, out],
+      env: { ...process.env, COUPLUS_DEV: String(process.env.COUPLUS_DEV || "") },
     });
     child.unref();
-    return res.json({ ok: true });
+    return res.json({ ok: true, pid: child.pid, logPath });
   } catch (e) {
     return res.status(500).json({ ok: false, error: String(e?.message || e) });
   }
