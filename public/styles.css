@@ -128,6 +128,255 @@ body {
   gap: 12px;
 }
 
+/* Home dashboard (Toss-style cards) */
+.home-dashboard {
+  display: grid;
+  gap: 12px;
+}
+
+.dash-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+  box-shadow: var(--shadow);
+}
+
+.dash-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.dash-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+}
+
+.dash-sub {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.dash-chips {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.72);
+  color: var(--muted);
+}
+
+:root[data-theme="dark"] .chip {
+  background: rgba(15, 23, 42, 0.65);
+}
+
+.chip.ok {
+  border-color: rgba(22, 163, 74, 0.3);
+  background: rgba(22, 163, 74, 0.08);
+  color: #166534;
+}
+
+.chip.bad {
+  border-color: rgba(239, 68, 68, 0.3);
+  background: rgba(239, 68, 68, 0.08);
+  color: #b91c1c;
+}
+
+.dash-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+@media (max-width: 640px) {
+  .dash-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.dash-item {
+  padding: 12px;
+  border-radius: 16px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.55);
+}
+
+:root[data-theme="dark"] .dash-item {
+  background: rgba(15, 23, 42, 0.55);
+}
+
+.dash-label {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.dash-value {
+  margin-top: 6px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.btn-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+@media (max-width: 360px) {
+  .btn-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+.mini-card {
+  margin-top: 12px;
+  padding: 12px;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  background: rgba(248, 250, 252, 0.7);
+}
+
+:root[data-theme="dark"] .mini-card {
+  background: rgba(15, 23, 42, 0.45);
+}
+
+.mini-card.hidden {
+  display: none;
+}
+
+.mini-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+
+.mini-kv {
+  display: grid;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.kv-row {
+  display: grid;
+  grid-template-columns: 72px 1fr;
+  gap: 10px;
+}
+
+.kv-row .k {
+  color: var(--muted);
+}
+
+.thumb-row {
+  margin-top: 8px;
+}
+
+.thumb {
+  width: 100%;
+  max-height: 160px;
+  object-fit: cover;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+}
+
+.pay-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.pay-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 12px 14px;
+  border-radius: 12px;
+  text-decoration: none;
+  color: #fff;
+  font-weight: 700;
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+}
+
+.activity-list {
+  display: grid;
+  gap: 10px;
+}
+
+.activity-row {
+  padding: 12px;
+  border-radius: 16px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.55);
+}
+
+:root[data-theme="dark"] .activity-row {
+  background: rgba(15, 23, 42, 0.55);
+}
+
+.activity-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
+.activity-tag {
+  font-size: 11px;
+  font-weight: 800;
+  color: var(--accent);
+}
+
+.activity-time {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.activity-title {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.activity-meta {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.empty {
+  padding: 12px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 .view.hidden {
   display: none;
 }

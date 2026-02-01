@@ -5,4 +5,7 @@ export const runtimeState = {
 
   purchaseDrafts: new Map(),
   // key: `${userId}` -> { createdAt, drafts: { domeme?: {filePath,rowCount}, domeggook?: {...} } }
+
+  purchaseLogs: new Map(),
+  // key: `${userId}` -> Array<{ at: string, type: "draft"|"upload", vendor?: string, ok?: boolean, error?: string, filePath?: string, payUrl?: string }>
 };

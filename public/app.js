@@ -1,7 +1,17 @@
 const $ = (id) => document.getElementById(id);
 
+function escapeHtml(s) {
+  return String(s || "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
 const urlInput = $("url");
 const submitBtn = $("submit");
+const previewBtn = $("previewUpload");
 const exportOrdersBtn = $("exportOrders");
 const orderFromInput = $("orderFrom");
 const orderToInput = $("orderTo");
@@ -52,6 +62,24 @@ const settingsEls = {
 
 const badgeDomeggook = $("badgeDomeggook");
 const badgeDomeme = $("badgeDomeme");
+
+// Home dashboard elements
+const homeChipDomeggook = $("homeChipDomeggook");
+const homeChipDomeme = $("homeChipDomeme");
+const homeDomeggookSessionText = $("homeDomeggookSessionText");
+const homeDomemeSessionText = $("homeDomemeSessionText");
+const homeCreateDomeggookSessionBtn = $("homeCreateDomeggookSession");
+const homeSaveDomeggookSessionBtn = $("homeSaveDomeggookSession");
+const homeCreateDomemeSessionBtn = $("homeCreateDomemeSession");
+const homeSaveDomemeSessionBtn = $("homeSaveDomemeSession");
+const homeDraftPurchaseBtn = $("homeDraftPurchase");
+const homeUploadPurchaseBtn = $("homeUploadPurchase");
+const homePayButtonsEl = $("homePayButtons");
+const homeRefreshActivityBtn = $("homeRefreshActivity");
+const homeActivityListEl = $("homeActivityList");
+const homeUploadGateEl = $("homeUploadGate");
+const uploadPreviewCard = $("uploadPreviewCard");
+const uploadPreviewKv = $("uploadPreviewKv");
 
 const domeggookSessionBtn = $("createDomeggookSession");
 const domeggookSessionSaveBtn = $("saveDomeggookSession");
@@ -140,7 +168,10 @@ function parseAllowedIps(raw) {
 }
 
 function setUploadEnabled(enabled, reason = "") {
-  submitBtn.disabled = !enabled;
+  if (submitBtn) submitBtn.disabled = !enabled;
+  if (homeUploadGateEl) {
+    homeUploadGateEl.textContent = enabled ? "업로드 가능" : reason || "업로드 불가";
+  }
   if (!enabled && reason) {
     setStatus(reason, "bad");
   }
@@ -409,6 +440,20 @@ function setSessionBadge(el, { label, exists, updatedAt }) {
   }
 }
 
+function setSessionChip(el, { label, exists, updatedAt }) {
+  if (!el) return;
+  el.classList.remove("ok", "bad");
+  if (exists) {
+    el.classList.add("ok");
+    el.textContent = `${label}: OK`;
+    if (updatedAt) el.title = `updatedAt: ${updatedAt}`;
+  } else {
+    el.classList.add("bad");
+    el.textContent = `${label}: 없음`;
+    el.title = "";
+  }
+}
+
 async function refreshDomeggookSessionStatus() {
   if (domeggookSessionStatusEl) domeggookSessionStatusEl.textContent = "조회중...";
   try {
@@ -417,12 +462,15 @@ async function refreshDomeggookSessionStatus() {
     if (!res.ok || !json.ok) throw new Error("status failed");
 
     if (json.exists) {
-      if (domeggookSessionStatusEl) domeggookSessionStatusEl.textContent = `저장됨 (${json.updatedAt})`;
+      const label = `저장됨 (${json.updatedAt})`;
+      if (domeggookSessionStatusEl) domeggookSessionStatusEl.textContent = label;
+      if (homeDomeggookSessionText) homeDomeggookSessionText.textContent = label;
       if (settingsEls.domeggookStorageStatePath && json.filePath) {
         settingsEls.domeggookStorageStatePath.value = json.filePath;
       }
     } else {
       if (domeggookSessionStatusEl) domeggookSessionStatusEl.textContent = "없음";
+      if (homeDomeggookSessionText) homeDomeggookSessionText.textContent = "없음";
     }
 
     setSessionBadge(badgeDomeggook, {
@@ -430,9 +478,16 @@ async function refreshDomeggookSessionStatus() {
       exists: Boolean(json.exists),
       updatedAt: json.updatedAt || "",
     });
+    setSessionChip(homeChipDomeggook, {
+      label: "도매꾹",
+      exists: Boolean(json.exists),
+      updatedAt: json.updatedAt || "",
+    });
   } catch {
     if (domeggookSessionStatusEl) domeggookSessionStatusEl.textContent = "-";
+    if (homeDomeggookSessionText) homeDomeggookSessionText.textContent = "-";
     setSessionBadge(badgeDomeggook, { label: "도매꾹", exists: false });
+    setSessionChip(homeChipDomeggook, { label: "도매꾹", exists: false });
   }
 }
 
@@ -443,12 +498,15 @@ async function refreshDomemeSessionStatus() {
     const json = await res.json().catch(() => ({}));
     if (!res.ok || !json.ok) throw new Error("status failed");
     if (json.exists) {
-      if (domemeSessionStatusEl) domemeSessionStatusEl.textContent = `저장됨 (${json.updatedAt})`;
+      const label = `저장됨 (${json.updatedAt})`;
+      if (domemeSessionStatusEl) domemeSessionStatusEl.textContent = label;
+      if (homeDomemeSessionText) homeDomemeSessionText.textContent = label;
       if (settingsEls.domemeStorageStatePath && json.filePath) {
         settingsEls.domemeStorageStatePath.value = json.filePath;
       }
     } else {
       if (domemeSessionStatusEl) domemeSessionStatusEl.textContent = "없음";
+      if (homeDomemeSessionText) homeDomemeSessionText.textContent = "없음";
     }
 
     setSessionBadge(badgeDomeme, {
@@ -456,9 +514,16 @@ async function refreshDomemeSessionStatus() {
       exists: Boolean(json.exists),
       updatedAt: json.updatedAt || "",
     });
+    setSessionChip(homeChipDomeme, {
+      label: "도매매",
+      exists: Boolean(json.exists),
+      updatedAt: json.updatedAt || "",
+    });
   } catch {
     if (domemeSessionStatusEl) domemeSessionStatusEl.textContent = "-";
+    if (homeDomemeSessionText) homeDomemeSessionText.textContent = "-";
     setSessionBadge(badgeDomeme, { label: "도매매", exists: false });
+    setSessionChip(homeChipDomeme, { label: "도매매", exists: false });
   }
 }
 
@@ -610,6 +675,58 @@ async function logout() {
   Object.values(settingsEls).forEach((el) => {
     el.value = "";
   });
+}
+
+async function previewUpload() {
+  const url = urlInput?.value?.trim?.() || "";
+  if (!url) {
+    setStatus("URL을 입력하세요", "bad");
+    return;
+  }
+  if (previewBtn) previewBtn.disabled = true;
+  setStatus("미리보기 생성 중...", "");
+  log("");
+
+  try {
+    const res = await fetch("/api/upload/preview", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url }),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok || !json.ok) {
+      setStatus("미리보기 실패", "bad");
+      log(json);
+      if (uploadPreviewCard) uploadPreviewCard.classList.add("hidden");
+      return;
+    }
+
+    const p = json.preview || {};
+    const title = p.draft?.title || "-";
+    const price = p.finalPrice ?? "-";
+    const opts = Array.isArray(p.options) ? p.options.length : "-";
+    const images = Array.isArray(p.computed?.images) ? p.computed.images : [];
+
+    if (uploadPreviewKv) {
+      const firstImg = images[0] || "";
+      uploadPreviewKv.innerHTML = `
+        <div class="kv-row"><span class="k">상품명</span><span class="v">${escapeHtml(title)}</span></div>
+        <div class="kv-row"><span class="k">가격</span><span class="v">${escapeHtml(String(price))}</span></div>
+        <div class="kv-row"><span class="k">옵션</span><span class="v">${escapeHtml(String(opts))}개</span></div>
+        ${firstImg ? `<div class="thumb-row"><img class="thumb" src="${firstImg}" alt="preview" loading="lazy" /></div>` : ""}
+      `;
+    }
+    uploadPreviewCard?.classList.remove("hidden");
+
+    setStatus("미리보기 완료", "ok");
+    log(p);
+  } catch (e) {
+    setStatus("미리보기 에러", "bad");
+    log(String(e?.message || e));
+    uploadPreviewCard?.classList.add("hidden");
+  } finally {
+    if (previewBtn) previewBtn.disabled = false;
+  }
 }
 
 async function run() {
@@ -848,6 +965,101 @@ async function loadUploadHistory() {
   }
 }
 
+function renderHomeActivity(items) {
+  if (!homeActivityListEl) return;
+  const list = Array.isArray(items) ? items : [];
+  if (!list.length) {
+    homeActivityListEl.innerHTML = `<div class="empty">최근 활동이 없습니다.</div>`;
+    return;
+  }
+  homeActivityListEl.innerHTML = list
+    .slice(0, 10)
+    .map((it) => {
+      const time = it.at ? new Date(it.at).toLocaleString() : "-";
+      const tag = it.tag || "-";
+      const title = it.title || it.message || "-";
+      const meta = it.meta || "";
+      return `
+        <div class="activity-row">
+          <div class="activity-top">
+            <span class="activity-tag">${escapeHtml(tag)}</span>
+            <span class="activity-time">${escapeHtml(time)}</span>
+          </div>
+          <div class="activity-title">${escapeHtml(title)}</div>
+          ${meta ? `<div class="activity-meta">${escapeHtml(meta)}</div>` : ""}
+        </div>
+      `;
+    })
+    .join("");
+}
+
+async function loadPurchaseLogsAndRenderHomePay() {
+  // Try server logs first
+  let urls = null;
+  try {
+    const res = await fetch("/api/purchase/logs?limit=20");
+    const json = await res.json().catch(() => ({}));
+    if (res.ok && json.ok) {
+      const logs = Array.isArray(json.logs) ? json.logs : [];
+      const map = {};
+      for (const it of logs) {
+        if (it?.vendor && it?.payUrl) {
+          if (!map[it.vendor]) map[it.vendor] = it.payUrl;
+        }
+      }
+      if (Object.keys(map).length) urls = map;
+    }
+  } catch {}
+
+  // Fallback to localStorage
+  if (!urls) {
+    try {
+      const raw = localStorage.getItem("couplus.lastPayUrls");
+      const json = JSON.parse(raw || "{}") || {};
+      urls = json.urls || null;
+    } catch {
+      urls = null;
+    }
+  }
+
+  renderPayButtonsTo(homePayButtonsEl, urls);
+}
+
+async function loadHomeActivity() {
+  if (!homeActivityListEl) return;
+  homeActivityListEl.innerHTML = `<div class="empty">불러오는 중...</div>`;
+  try {
+    const [previewRes, purchaseRes] = await Promise.all([
+      fetch("/api/upload/preview/history?limit=5").then((r) => r.json().catch(() => ({}))),
+      fetch("/api/purchase/logs?limit=5").then((r) => r.json().catch(() => ({}))),
+    ]);
+
+    const preview = Array.isArray(previewRes?.history) ? previewRes.history : [];
+    const purchases = Array.isArray(purchaseRes?.logs) ? purchaseRes.logs : [];
+
+    const rows = [];
+    for (const p of preview) {
+      rows.push({
+        at: p.at,
+        tag: "PREVIEW",
+        title: p.title || "미리보기",
+        meta: p.finalPrice ? `가격 ${p.finalPrice}` : "",
+      });
+    }
+    for (const l of purchases) {
+      const vendorLabel = l.vendor === "domeggook" ? "도매꾹" : l.vendor === "domeme" ? "도매매" : l.vendor || "-";
+      const title = l.type === "draft" ? `발주 엑셀 생성 (${vendorLabel})` : `발주 업로드 (${vendorLabel})`;
+      const meta = l.ok === false ? `실패: ${l.error || "-"}` : l.payUrl ? "결제 링크 생성" : "";
+      rows.push({ at: l.at, tag: "PURCHASE", title, meta });
+    }
+
+    rows.sort((a, b) => new Date(b.at || 0).getTime() - new Date(a.at || 0).getTime());
+    renderHomeActivity(rows);
+  } catch {
+    renderHomeActivity([]);
+  }
+}
+
 async function loadOrders() {
   if (!ordersListEl || !ordersListWrap) return;
   try {
@@ -905,15 +1117,17 @@ async function draftPurchase() {
 
     appendPurchaseLog(`[draft] 완료: ${JSON.stringify(results, null, 2)}`);
     setStatus("발주 엑셀 생성 완료", "ok");
+    setTimeout(loadHomeActivity, 600);
+    setTimeout(loadPurchaseLogsAndRenderHomePay, 600);
   } catch (e) {
     appendPurchaseLog(`[draft] 에러: ${String(e?.message || e)}`);
     setStatus("발주 엑셀 생성 에러", "bad");
   }
 }
 
-function renderPayButtons(payUrlsMap) {
-  if (!purchasePayActionsEl) return;
-  purchasePayActionsEl.innerHTML = "";
+function renderPayButtonsTo(targetEl, payUrlsMap) {
+  if (!targetEl) return;
+  targetEl.innerHTML = "";
   if (!payUrlsMap) return;
 
   const vendors = [
@@ -925,7 +1139,6 @@ function renderPayButtons(payUrlsMap) {
     const url = payUrlsMap[v.key];
     if (!url) continue;
 
-    // Use /go redirect to avoid mixed-content quirks and keep links stable.
     const goUrl = `/go?u=${encodeURIComponent(url)}`;
 
     const a = document.createElement("a");
@@ -933,21 +1146,12 @@ function renderPayButtons(payUrlsMap) {
     a.target = "_blank";
     a.rel = "noopener noreferrer";
     a.textContent = v.label;
-    a.className = "btn";
-    a.style.display = "inline-flex";
-    a.style.alignItems = "center";
-    a.style.justifyContent = "center";
-    a.style.padding = "12px 14px";
-    a.style.borderRadius = "12px";
-    a.style.textDecoration = "none";
-    a.style.color = "#fff";
-    a.style.background = "linear-gradient(135deg, var(--accent), var(--accent-2))";
+    a.className = "pay-link";
 
     const copyBtn = document.createElement("button");
     copyBtn.type = "button";
     copyBtn.className = "ghost";
     copyBtn.textContent = "링크 복사";
-    copyBtn.style.padding = "12px 14px";
     copyBtn.addEventListener("click", async () => {
       try {
         await navigator.clipboard.writeText(url);
@@ -958,14 +1162,17 @@ function renderPayButtons(payUrlsMap) {
     });
 
     const wrap = document.createElement("div");
-    wrap.style.display = "flex";
-    wrap.style.gap = "10px";
-    wrap.style.marginTop = "10px";
+    wrap.className = "pay-row";
     wrap.appendChild(a);
     wrap.appendChild(copyBtn);
 
-    purchasePayActionsEl.appendChild(wrap);
+    targetEl.appendChild(wrap);
   }
+}
+
+function renderPayButtons(payUrlsMap) {
+  renderPayButtonsTo(purchasePayActionsEl, payUrlsMap);
+  renderPayButtonsTo(homePayButtonsEl, payUrlsMap);
 }
 
 async function uploadPurchase() {
@@ -998,6 +1205,9 @@ async function uploadPurchase() {
     if (Object.keys(lastPayUrls).length) {
       appendPurchaseLog(`[upload] 결제하러 가기 링크 생성됨`);
       renderPayButtons(lastPayUrls);
+      try {
+        localStorage.setItem("couplus.lastPayUrls", JSON.stringify({ at: Date.now(), urls: lastPayUrls }));
+      } catch {}
 
       // Try to auto-open payment pages (may be blocked by popup blocker)
       try {
@@ -1007,6 +1217,8 @@ async function uploadPurchase() {
     }
 
     setStatus("발주 업로드 완료", "ok");
+    setTimeout(loadHomeActivity, 600);
+    setTimeout(loadPurchaseLogsAndRenderHomePay, 600);
   } catch (e) {
     appendPurchaseLog(`[upload] 에러: ${String(e?.message || e)}`);
     setStatus("발주 업로드 에러", "bad");
@@ -1030,8 +1242,9 @@ async function seedDummyOrders() {
   }
 }
 
-submitBtn.addEventListener("click", run);
-urlInput.addEventListener("keydown", (e) => {
+submitBtn?.addEventListener("click", run);
+previewBtn?.addEventListener("click", previewUpload);
+urlInput?.addEventListener("keydown", (e) => {
   if (e.key === "Enter") run();
 });
 exportOrdersBtn.addEventListener("click", exportOrders);
@@ -1086,6 +1299,17 @@ seedOrdersBtn?.addEventListener("click", seedDummyOrders);
 refreshOrdersBtn?.addEventListener("click", loadOrders);
 draftPurchaseBtn?.addEventListener("click", draftPurchase);
 uploadPurchaseBtn?.addEventListener("click", uploadPurchase);
+
+// Home dashboard quick actions
+homeDraftPurchaseBtn?.addEventListener("click", draftPurchase);
+homeUploadPurchaseBtn?.addEventListener("click", uploadPurchase);
+homeRefreshActivityBtn?.addEventListener("click", loadHomeActivity);
+homeRefreshActivityBtn?.addEventListener("click", loadPurchaseLogsAndRenderHomePay);
+
+homeCreateDomeggookSessionBtn?.addEventListener("click", () => domeggookSessionBtn?.click());
+homeSaveDomeggookSessionBtn?.addEventListener("click", () => domeggookSessionSaveBtn?.click());
+homeCreateDomemeSessionBtn?.addEventListener("click", () => domemeSessionBtn?.click());
+homeSaveDomemeSessionBtn?.addEventListener("click", () => domemeSessionSaveBtn?.click());
 
 domeggookSessionBtn?.addEventListener("click", async () => {
   setStatus("도매꾹 세션 생성 중...", "");
@@ -1170,4 +1394,6 @@ domemeSessionSaveBtn?.addEventListener("click", async () => {
   await refreshDomeggookSessionStatus();
   await refreshDomemeSessionStatus();
   evaluateUploadGate();
+  await loadHomeActivity();
+  await loadPurchaseLogsAndRenderHomePay();
 })();

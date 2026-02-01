@@ -187,6 +187,20 @@ function mustEnv(name) {
 
 let uploadInProgress = false;
 
+const PURCHASE_LOG_LIMIT = 200;
+function appendPurchaseLog(userId, entry) {
+  try {
+    const key = String(userId);
+    const list = runtimeState.purchaseLogs.get(key) || [];
+    list.unshift({
+      at: new Date().toISOString(),
+      ...entry,
+    });
+    if (list.length > PURCHASE_LOG_LIMIT) list.length = PURCHASE_LOG_LIMIT;
+    runtimeState.purchaseLogs.set(key, list);
+  } catch {}
+}
+
 function getSessionToken(req) {
   const raw = req.headers.cookie || "";
   const m = raw.match(/session=([^;]+)/);
@@ -349,6 +363,16 @@ app.post("/api/purchase/draft", authRequired, async (req, res) => {
       drafts: draftsByVendor,
     });
 
+    for (const r of draft.results || []) {
+      appendPurchaseLog(req.user.id, {
+        type: "draft",
+        vendor: r?.vendor || "",
+        ok: Boolean(r?.ok),
+        error: r?.error || "",
+        filePath: r?.filePath || "",
+      });
+    }
+
     return res.json({ ok: true, draft: { ...draft, paidOrderCount: paid.length } });
   } catch (e) {
     return res.status(500).json({ ok: false, error: String(e?.message || e) });
@@ -385,6 +409,13 @@ app.post("/api/purchase/upload", authRequired, async (req, res) => {
       const filePath = String(req.body?.filePaths?.[v] || d?.filePath || "").trim();
       if (!filePath) {
         results.push({ ok: false, vendor: v, error: "missing_filePath" });
+        appendPurchaseLog(req.user.id, {
+          type: "upload",
+          vendor: v,
+          ok: false,
+          error: "missing_filePath",
+          filePath: "",
+        });
         continue;
       }
 
@@ -396,9 +427,27 @@ app.post("/api/purchase/upload", authRequired, async (req, res) => {
         storageStateDefaultPath: v === "domeme" ? DOMEME_STORAGE_STATE_PATH : DOMEGGOOK_STORAGE_STATE_PATH,
       });
       results.push(r);
+      appendPurchaseLog(req.user.id, {
+        type: "upload",
+        vendor: v,
+        ok: Boolean(r?.ok),
+        error: r?.error || "",
+        filePath,
+        payUrl: r?.payUrl || "",
+      });
     }
 
     return res.json({ ok: true, results });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+app.get("/api/purchase/logs", authRequired, async (req, res) => {
+  try {
+    const limit = Math.max(1, Math.min(200, Number(req.query.limit || 50) || 50));
+    const list = runtimeState.purchaseLogs.get(String(req.user.id)) || [];
+    return res.json({ ok: true, logs: list.slice(0, limit) });
   } catch (e) {
     return res.status(500).json({ ok: false, error: String(e?.message || e) });
   }
