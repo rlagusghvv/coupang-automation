@@ -54,8 +54,10 @@ const badgeDomeggook = $("badgeDomeggook");
 const badgeDomeme = $("badgeDomeme");
 
 const domeggookSessionBtn = $("createDomeggookSession");
+const domeggookSessionSaveBtn = $("saveDomeggookSession");
 const domeggookSessionStatusEl = $("domeggookSessionStatus");
 const domemeSessionBtn = $("createDomemeSession");
+const domemeSessionSaveBtn = $("saveDomemeSession");
 const domemeSessionStatusEl = $("domemeSessionStatus");
 
 const authEls = {
@@ -874,9 +876,27 @@ domeggookSessionBtn?.addEventListener("click", async () => {
       log(json);
       return;
     }
-    setStatus("브라우저에서 네이버 로그인 후 Enter → 저장", "ok");
+    setStatus("브라우저에서 네이버 로그인 후 ‘지금 저장’ 누르면 됩니다", "ok");
   } catch (e) {
     setStatus("에러", "bad");
+    log(String(e?.message || e));
+  } finally {
+    setTimeout(refreshDomeggookSessionStatus, 1500);
+  }
+});
+
+domeggookSessionSaveBtn?.addEventListener("click", async () => {
+  try {
+    const res = await fetch("/api/domeggook/session/save", { method: "POST" });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok || !json.ok) {
+      setStatus("세션 저장 실패", "bad");
+      log(json);
+      return;
+    }
+    setStatus("세션 저장 요청 완료(잠시 후 배지 갱신)", "ok");
+  } catch (e) {
+    setStatus("세션 저장 에러", "bad");
     log(String(e?.message || e));
   } finally {
     setTimeout(refreshDomeggookSessionStatus, 1500);
@@ -893,9 +913,27 @@ domemeSessionBtn?.addEventListener("click", async () => {
       log(json);
       return;
     }
-    setStatus("브라우저에서 네이버 로그인 후 저장됨", "ok");
+    setStatus("브라우저에서 네이버 로그인 후 ‘지금 저장’ 누르면 됩니다", "ok");
   } catch (e) {
     setStatus("에러", "bad");
+    log(String(e?.message || e));
+  } finally {
+    setTimeout(refreshDomemeSessionStatus, 1500);
+  }
+});
+
+domemeSessionSaveBtn?.addEventListener("click", async () => {
+  try {
+    const res = await fetch("/api/domeme/session/save", { method: "POST" });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok || !json.ok) {
+      setStatus("세션 저장 실패", "bad");
+      log(json);
+      return;
+    }
+    setStatus("세션 저장 요청 완료(잠시 후 배지 갱신)", "ok");
+  } catch (e) {
+    setStatus("세션 저장 에러", "bad");
     log(String(e?.message || e));
   } finally {
     setTimeout(refreshDomemeSessionStatus, 1500);

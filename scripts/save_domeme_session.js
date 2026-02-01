@@ -6,6 +6,7 @@ const LOGIN_URL = "https://domemedb.domeggook.com/index/";
 const OUT_PATH = DOMEME_STORAGE_STATE_PATH;
 
 const WAIT_MS = Math.max(30_000, Number(process.env.COUPLUS_SESSION_WAIT_MS || "600000")); // default 10m
+const FLAG_PATH = String(process.env.COUPLUS_SESSION_FLAG_PATH || "").trim();
 
 (async () => {
   const browser = await chromium.launch({ headless: false });
@@ -17,8 +18,17 @@ const WAIT_MS = Math.max(30_000, Number(process.env.COUPLUS_SESSION_WAIT_MS || "
 
   await page.goto(LOGIN_URL, { waitUntil: "domcontentloaded", timeout: 90000 });
 
-  // Give user time to log in manually. Avoid brittle auto-detect.
-  await page.waitForTimeout(WAIT_MS);
+  // Wait until user presses "save now" (flag file) or timeout.
+  const started = Date.now();
+  while (Date.now() - started < WAIT_MS) {
+    if (FLAG_PATH) {
+      try {
+        const fs = await import("node:fs");
+        if (fs.existsSync(FLAG_PATH)) break;
+      } catch {}
+    }
+    await page.waitForTimeout(500);
+  }
 
   await context.storageState({ path: OUT_PATH });
   console.log("[domeme] 세션 저장 완료:", OUT_PATH);

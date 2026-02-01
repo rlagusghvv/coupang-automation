@@ -213,6 +213,12 @@ button:disabled {
   cursor: not-allowed;
 }
 
+button.ghost {
+  color: var(--text);
+  background: #ffffff;
+  border: 1px solid rgba(15, 23, 42, 0.15);
+}
+
 .hint {
   color: var(--muted);
   font-size: 12px;

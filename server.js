@@ -21,10 +21,12 @@ import { addOrder, clearOrders, listOrders } from "./src/server/orders_sqlite.js
 import { exportOrdersToDomeme } from "./src/pipeline/exportOrdersToDomeme.js";
 import { uploadDomemeExcel } from "./src/pipeline/uploadDomemeExcel.js";
 import { spawn } from "node:child_process";
+import { newSessionFlag, touchFlag } from "./src/server/session_control.js";
 import {
   DOMEME_STORAGE_STATE_PATH,
   DOMEGGOOK_STORAGE_STATE_PATH,
 } from "./src/config/paths.js";
+import { runtimeState } from "./src/server/runtime_state.js";
 
 const app = express();
 app.set("trust proxy", true);
@@ -541,14 +543,42 @@ app.post("/api/domeme/session/start", authRequired, (req, res) => {
     const scriptPath = path.join(process.cwd(), "scripts", "save_domeme_session.js");
     const logPath = path.join(process.cwd(), "data", "session_start.log");
     const out = fs.openSync(logPath, "a");
+
+    const { id, flagPath } = newSessionFlag("domeme");
+    const key = `${req.user.id}:domeme`;
+
     const child = spawn("node", [scriptPath], {
       cwd: process.cwd(),
       detached: true,
       stdio: ["ignore", out, out],
-      env: { ...process.env, COUPLUS_DEV: String(process.env.COUPLUS_DEV || "") },
+      env: {
+        ...process.env,
+        COUPLUS_SESSION_FLAG_PATH: flagPath,
+        COUPLUS_SESSION_WAIT_MS: String(process.env.COUPLUS_SESSION_WAIT_MS || "600000"),
+      },
     });
+
+    runtimeState.sessionRuns.set(key, {
+      id,
+      flagPath,
+      pid: child.pid,
+      startedAt: Date.now(),
+    });
+
     child.unref();
-    return res.json({ ok: true, pid: child.pid, logPath });
+    return res.json({ ok: true, sessionId: id, pid: child.pid, logPath });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+app.post("/api/domeme/session/save", authRequired, (req, res) => {
+  try {
+    const key = `${req.user.id}:domeme`;
+    const run = runtimeState.sessionRuns.get(key);
+    if (!run?.flagPath) return res.status(400).json({ ok: false, error: "no_active_session" });
+    touchFlag(run.flagPath);
+    return res.json({ ok: true });
   } catch (e) {
     return res.status(500).json({ ok: false, error: String(e?.message || e) });
   }
@@ -578,14 +608,42 @@ app.post("/api/domeggook/session/start", authRequired, (req, res) => {
     const scriptPath = path.join(process.cwd(), "scripts", "save_domeggook_login_state.js");
     const logPath = path.join(process.cwd(), "data", "session_start.log");
     const out = fs.openSync(logPath, "a");
+
+    const { id, flagPath } = newSessionFlag("domeggook");
+    const key = `${req.user.id}:domeggook`;
+
     const child = spawn("node", [scriptPath], {
       cwd: process.cwd(),
       detached: true,
       stdio: ["ignore", out, out],
-      env: { ...process.env, COUPLUS_DEV: String(process.env.COUPLUS_DEV || "") },
+      env: {
+        ...process.env,
+        COUPLUS_SESSION_FLAG_PATH: flagPath,
+        COUPLUS_SESSION_WAIT_MS: String(process.env.COUPLUS_SESSION_WAIT_MS || "600000"),
+      },
     });
+
+    runtimeState.sessionRuns.set(key, {
+      id,
+      flagPath,
+      pid: child.pid,
+      startedAt: Date.now(),
+    });
+
     child.unref();
-    return res.json({ ok: true, pid: child.pid, logPath });
+    return res.json({ ok: true, sessionId: id, pid: child.pid, logPath });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+app.post("/api/domeggook/session/save", authRequired, (req, res) => {
+  try {
+    const key = `${req.user.id}:domeggook`;
+    const run = runtimeState.sessionRuns.get(key);
+    if (!run?.flagPath) return res.status(400).json({ ok: false, error: "no_active_session" });
+    touchFlag(run.flagPath);
+    return res.json({ ok: true });
   } catch (e) {
     return res.status(500).json({ ok: false, error: String(e?.message || e) });
   }
