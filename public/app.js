@@ -388,6 +388,67 @@ function clearSettingsUI() {
   });
 }
 
+
+function lockSensitiveField(id) {
+  const input = document.getElementById(id);
+  const locked = document.querySelector(`[data-sensitive="${id}"]`);
+  if (!input || !locked) return;
+  input.classList.add("hidden");
+  locked.classList.remove("hidden");
+}
+
+function unlockSensitiveField(id) {
+  const input = document.getElementById(id);
+  const locked = document.querySelector(`[data-sensitive="${id}"]`);
+  if (!input || !locked) return;
+  locked.classList.add("hidden");
+  input.classList.remove("hidden");
+  try {
+    input.focus();
+    input.select?.();
+  } catch {}
+}
+
+function initSensitiveFields() {
+  document.querySelectorAll('[data-action="unlock"]').forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const id = btn.dataset.target;
+      if (!id) return;
+      unlockSensitiveField(id);
+    });
+  });
+
+  document.querySelectorAll('.sensitive-input').forEach((input) => {
+    if (input.dataset._sensInit) return;
+    input.dataset._sensInit = "1";
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        lockSensitiveField(input.id);
+      }
+    });
+    input.addEventListener("blur", () => {
+      // Keep it explicit: if user clicks away, re-lock.
+      lockSensitiveField(input.id);
+    });
+  });
+}
+
+function updateSensitiveMasks() {
+  document.querySelectorAll('.field.sensitive').forEach((wrap) => {
+    const id = wrap.dataset.sensitiveId;
+    if (!id) return;
+    const input = document.getElementById(id);
+    const mask = wrap.querySelector('.mask-input');
+    const btn = wrap.querySelector('[data-action="unlock"]');
+    if (!input || !mask) return;
+    const has = Boolean(String(input.value || "").trim());
+    // Fixed-length mask (avoid leaking length)
+    mask.value = has ? "••••••••" : "";
+    if (btn) btn.textContent = has ? "Reveal/Edit" : "Set";
+  });
+}
+
 async function loadSettings() {
   const res = await fetch("/api/settings");
   const json = await res.json().catch(() => ({}));
@@ -424,7 +485,9 @@ async function loadSettings() {
   // Re-evaluate upload availability after settings load
   await loadCurrentIp();
   evaluateUploadGate();
+  updateSensitiveMasks();
 }
+
 
 function setSessionBadge(el, { label, exists, updatedAt }) {
   if (!el) return;
@@ -1256,21 +1319,32 @@ saveSkuMapBtn.addEventListener("click", saveSkuMap);
 tabs.forEach((t) => t.addEventListener("click", () => switchTab(t.dataset.tab)));
 $("saveSettings").addEventListener("click", saveSettings);
 
-// Toss-style bottom navigation (home / activity / settings)
-function switchView(name) {
+initSensitiveFields();
+
+// Bottom navigation (Home / Work / More)
+function switchView(name, { replace = false } = {}) {
   const views = {
     home: $("view-home"),
-    activity: $("view-activity"),
-    settings: $("view-settings"),
+    work: $("view-work"),
+    more: $("view-more"),
   };
+  const next = views[name] ? name : "home";
+
   for (const [k, el] of Object.entries(views)) {
     if (!el) continue;
-    if (k === name) el.classList.remove("hidden");
+    if (k === next) el.classList.remove("hidden");
     else el.classList.add("hidden");
   }
   document.querySelectorAll(".nav-item").forEach((b) => {
-    b.classList.toggle("active", b.dataset.view === name);
+    b.classList.toggle("active", b.dataset.view === next);
   });
+
+  try {
+    const url = `#${next}`;
+    if (replace) history.replaceState(null, "", url);
+    else history.pushState(null, "", url);
+  } catch {}
+
   try {
     window.scrollTo({ top: 0, behavior: "smooth" });
   } catch {
@@ -1281,6 +1355,16 @@ function switchView(name) {
 document.querySelectorAll(".nav-item").forEach((b) => {
   b.addEventListener("click", () => switchView(b.dataset.view));
 });
+
+// Initial route from hash (#home/#work/#more)
+try {
+  const initial = (location.hash || "").replace("#", "").trim();
+  if (initial) switchView(initial, { replace: true });
+  window.addEventListener("popstate", () => {
+    const cur = (location.hash || "").replace("#", "").trim();
+    switchView(cur || "home", { replace: true });
+  });
+} catch {}
 $("signup").addEventListener("click", signup);
 $("login").addEventListener("click", login);
 $("logout").addEventListener("click", logout);

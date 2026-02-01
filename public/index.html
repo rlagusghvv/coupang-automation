@@ -116,7 +116,7 @@
           </div>
         </section>
 
-        <section class="view hidden" id="view-activity">
+        <section class="view hidden" id="view-work">
           <div class="settings-page">
             <section class="settings-section card">
               <h2 class="section-title">주문/발주</h2>
@@ -213,164 +213,203 @@
           </div>
         </section>
 
-        <section class="view hidden" id="view-settings">
+        <section class="view hidden" id="view-more">
           <div class="settings-page">
             <section class="settings-section card">
-              <h2 class="section-title">설정</h2>
+              <h2 class="section-title">More</h2>
               <div class="panel" id="panel-settings">
-          <div class="grid">
-            <div>
-              <label>쿠팡 Access Key</label>
-              <input id="ckey" type="text" placeholder="access key" />
-            </div>
-            <div>
-              <label>쿠팡 Secret Key</label>
-              <input id="skey" type="password" placeholder="secret key" />
-            </div>
-            <div>
-              <label>Vendor ID</label>
-              <input id="vendorId" type="text" placeholder="A0..." />
-            </div>
-            <div>
-              <label>Vendor User ID</label>
-              <input id="vendorUserId" type="text" placeholder="..." />
-            </div>
-            <div>
-              <label>배송사 코드</label>
-              <input id="deliveryCode" type="text" placeholder="CJGLS" />
-            </div>
-            <div>
-              <label>이미지 프록시</label>
-              <input id="proxyBase" type="text" placeholder="https://coupang-automation.pages.dev" />
-            </div>
-            <div>
-              <label>허용 IP 목록 (쉼표로 구분)</label>
-              <input id="allowedIps" type="text" placeholder="104.28.211.26, 104.28.243.28" />
-            </div>
-            <div>
-              <label>도매꾹 세션 파일 경로</label>
-              <input id="domeggookStorageStatePath" type="text" placeholder="/Users/.../storageState.domeggook.json" />
-            </div>
-            <div>
-              <label>도매꾹 세션 만들기</label>
-              <div class="row compact-row">
-                <button id="createDomeggookSession">브라우저 열기</button>
-                <button id="saveDomeggookSession" class="ghost">지금 저장</button>
-                <span class="hint">로그인 완료되면 ‘지금 저장’</span>
+                <div class="settings-list">
+                  <details class="settings-cat" open>
+                    <summary>쿠팡 API</summary>
+                    <div class="grid">
+                      <div class="field sensitive" data-sensitive-id="ckey">
+                        <label>쿠팡 Access Key</label>
+                        <div class="sensitive-locked" data-sensitive="ckey">
+                          <input class="mask-input" type="password" value="••••••••" readonly />
+                          <button class="mini-btn" type="button" data-action="unlock" data-target="ckey">Reveal/Edit</button>
+                        </div>
+                        <input id="ckey" class="sensitive-input hidden" type="text" placeholder="access key" autocomplete="off" />
+                      </div>
+                      <div class="field sensitive" data-sensitive-id="skey">
+                        <label>쿠팡 Secret Key</label>
+                        <div class="sensitive-locked" data-sensitive="skey">
+                          <input class="mask-input" type="password" value="••••••••" readonly />
+                          <button class="mini-btn" type="button" data-action="unlock" data-target="skey">Reveal/Edit</button>
+                        </div>
+                        <input id="skey" class="sensitive-input hidden" type="password" placeholder="secret key" autocomplete="off" />
+                      </div>
+                      <div>
+                        <label>Vendor ID</label>
+                        <input id="vendorId" type="text" placeholder="A0..." />
+                      </div>
+                      <div>
+                        <label>Vendor User ID</label>
+                        <input id="vendorUserId" type="text" placeholder="..." />
+                      </div>
+                      <div>
+                        <label>배송사 코드</label>
+                        <input id="deliveryCode" type="text" placeholder="CJGLS" />
+                      </div>
+                      <div>
+                        <label>이미지 프록시</label>
+                        <input id="proxyBase" type="text" placeholder="https://coupang-automation.pages.dev" />
+                      </div>
+                      <div>
+                        <label>허용 IP 목록 (쉼표로 구분)</label>
+                        <input id="allowedIps" type="text" placeholder="104.28.211.26, 104.28.243.28" />
+                      </div>
+                    </div>
+                  </details>
+
+                  <details class="settings-cat">
+                    <summary>도매꾹 / 도매매 세션</summary>
+                    <div class="grid">
+                      <div>
+                        <label>도매꾹 세션 파일 경로</label>
+                        <input id="domeggookStorageStatePath" type="text" placeholder="/Users/.../storageState.domeggook.json" />
+                      </div>
+                      <div>
+                        <label>도매꾹 세션 만들기</label>
+                        <div class="row compact-row">
+                          <button id="createDomeggookSession">브라우저 열기</button>
+                          <button id="saveDomeggookSession" class="ghost">지금 저장</button>
+                          <span class="hint">로그인 완료되면 ‘지금 저장’</span>
+                        </div>
+                        <p class="hint">세션 상태: <span id="domeggookSessionStatus">-</span></p>
+                      </div>
+                      <div>
+                        <label>도매매 ID</label>
+                        <input id="domemeId" type="text" placeholder="domeme id" />
+                      </div>
+                      <div class="field sensitive" data-sensitive-id="domemePw">
+                        <label>도매매 PW</label>
+                        <div class="sensitive-locked" data-sensitive="domemePw">
+                          <input class="mask-input" type="password" value="••••••••" readonly />
+                          <button class="mini-btn" type="button" data-action="unlock" data-target="domemePw">Reveal/Edit</button>
+                        </div>
+                        <input id="domemePw" class="sensitive-input hidden" type="password" placeholder="domeme password" autocomplete="off" />
+                      </div>
+                      <div>
+                        <label>도매매 세션 파일 경로</label>
+                        <input id="domemeStorageStatePath" type="text" placeholder="/Users/.../storageState.domeme.json" />
+                      </div>
+                      <div>
+                        <label>도매매 세션 만들기</label>
+                        <div class="row compact-row">
+                          <button id="createDomemeSession">브라우저 열기</button>
+                          <button id="saveDomemeSession" class="ghost">지금 저장</button>
+                          <span class="hint">로그인 완료되면 ‘지금 저장’</span>
+                        </div>
+                        <p class="hint">세션 상태: <span id="domemeSessionStatus">-</span></p>
+                      </div>
+                    </div>
+                  </details>
+
+                  <details class="settings-cat">
+                    <summary>Cloudflare Pages</summary>
+                    <div class="grid">
+                      <div>
+                        <label>Pages 프로젝트명</label>
+                        <input id="pagesProjectName" type="text" placeholder="coupang-automation" />
+                      </div>
+                      <div>
+                        <label>Pages Account ID</label>
+                        <input id="pagesAccountId" type="text" placeholder="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" />
+                      </div>
+                      <div class="field sensitive" data-sensitive-id="pagesApiToken">
+                        <label>Pages API Token</label>
+                        <div class="sensitive-locked" data-sensitive="pagesApiToken">
+                          <input class="mask-input" type="password" value="••••••••" readonly />
+                          <button class="mini-btn" type="button" data-action="unlock" data-target="pagesApiToken">Reveal/Edit</button>
+                        </div>
+                        <input id="pagesApiToken" class="sensitive-input hidden" type="password" placeholder="cf api token" autocomplete="off" />
+                      </div>
+                      <div>
+                        <label>Pages 자동 배포</label>
+                        <input id="pagesAutoDeploy" type="checkbox" />
+                      </div>
+                    </div>
+                  </details>
+
+                  <details class="settings-cat">
+                    <summary>가격 / 자동화</summary>
+                    <div class="grid">
+                      <div>
+                        <label>마진률 (예: 0.3)</label>
+                        <input id="marginRate" type="number" step="0.01" />
+                      </div>
+                      <div>
+                        <label>추가금 (원)</label>
+                        <input id="marginAdd" type="number" step="10" />
+                      </div>
+                      <div>
+                        <label>최소가격</label>
+                        <input id="priceMin" type="number" step="10" />
+                      </div>
+                      <div>
+                        <label>라운딩 단위</label>
+                        <input id="roundUnit" type="number" step="1" />
+                      </div>
+                    </div>
+                    <p class="hint">가격 공식: 도매꾹가 × (1+마진률) + 추가금 → 라운딩</p>
+
+                    <div class="settings-actions">
+                      <label class="toggle">
+                        <input id="autoRequest" type="checkbox" />
+                        <span>자동 승인요청 (임시저장 없이 요청)</span>
+                      </label>
+                      <label class="toggle">
+                        <input id="payloadOnly" type="checkbox" />
+                        <span>쿠팡 API 호출 안함 (payload만 생성)</span>
+                      </label>
+                      <label class="toggle">
+                        <input id="soundOnComplete" type="checkbox" />
+                        <span>완료 알림 소리</span>
+                      </label>
+                    </div>
+                  </details>
+
+                  <details class="settings-cat">
+                    <summary>계정</summary>
+                    <div class="grid">
+                      <div>
+                        <label>이메일</label>
+                        <input id="email" type="email" />
+                      </div>
+                      <div class="field sensitive" data-sensitive-id="password">
+                        <label>비밀번호</label>
+                        <div class="sensitive-locked" data-sensitive="password">
+                          <input class="mask-input" type="password" value="••••••••" readonly />
+                          <button class="mini-btn" type="button" data-action="unlock" data-target="password">Reveal/Edit</button>
+                        </div>
+                        <input id="password" class="sensitive-input hidden" type="password" autocomplete="current-password" />
+                      </div>
+                    </div>
+                    <div class="row">
+                      <button id="signup">회원가입</button>
+                      <button id="login">로그인</button>
+                      <button id="logout">로그아웃</button>
+                    </div>
+                    <p class="hint" id="authStatus">로그인 필요</p>
+                  </details>
+                </div>
+
+                <div class="settings-actions more-actions">
+                  <button id="saveSettings">설정 저장</button>
+                  <div class="mini-row">
+                    <span class="hint">현재 공인 IP: <span id="currentIp">-</span></span>
+                    <button id="refreshIp" class="mini-btn">IP 새로고침</button>
+                  </div>
+                </div>
               </div>
-              <p class="hint">세션 상태: <span id="domeggookSessionStatus">-</span></p>
-            </div>
-            <div>
-              <label>도매매 ID</label>
-              <input id="domemeId" type="text" placeholder="domeme id" />
-            </div>
-            <div>
-              <label>도매매 PW</label>
-              <input id="domemePw" type="password" placeholder="domeme password" />
-            </div>
-            <div>
-              <label>도매매 세션 파일 경로</label>
-              <input id="domemeStorageStatePath" type="text" placeholder="/Users/.../storageState.domeme.json" />
-            </div>
-            <div>
-              <label>도매매 세션 만들기</label>
-              <div class="row compact-row">
-                <button id="createDomemeSession">브라우저 열기</button>
-                <button id="saveDomemeSession" class="ghost">지금 저장</button>
-                <span class="hint">로그인 완료되면 ‘지금 저장’</span>
-              </div>
-              <p class="hint">세션 상태: <span id="domemeSessionStatus">-</span></p>
-            </div>
-            <div>
-              <label>Pages 프로젝트명</label>
-              <input id="pagesProjectName" type="text" placeholder="coupang-automation" />
-            </div>
-            <div>
-              <label>Pages Account ID</label>
-              <input id="pagesAccountId" type="text" placeholder="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" />
-            </div>
-            <div>
-              <label>Pages API Token</label>
-              <input id="pagesApiToken" type="password" placeholder="cf api token" />
-            </div>
-            <div>
-              <label>Pages 자동 배포</label>
-              <input id="pagesAutoDeploy" type="checkbox" />
-            </div>
-          </div>
-
-          <div class="grid">
-            <div>
-              <label>마진률 (예: 0.3)</label>
-              <input id="marginRate" type="number" step="0.01" />
-            </div>
-            <div>
-              <label>추가금 (원)</label>
-              <input id="marginAdd" type="number" step="10" />
-            </div>
-            <div>
-              <label>최소가격</label>
-              <input id="priceMin" type="number" step="10" />
-            </div>
-            <div>
-              <label>라운딩 단위</label>
-              <input id="roundUnit" type="number" step="1" />
-            </div>
-          </div>
-          <p class="hint">가격 공식: 도매꾹가 × (1+마진률) + 추가금 → 라운딩</p>
-
-          <div class="settings-actions">
-            <label class="toggle">
-              <input id="autoRequest" type="checkbox" />
-              <span>자동 승인요청 (임시저장 없이 요청)</span>
-            </label>
-            <label class="toggle">
-              <input id="payloadOnly" type="checkbox" />
-              <span>쿠팡 API 호출 안함 (payload만 생성)</span>
-            </label>
-            <label class="toggle">
-              <input id="soundOnComplete" type="checkbox" />
-              <span>완료 알림 소리</span>
-            </label>
-            <button id="saveSettings">설정 저장</button>
-          </div>
-          <div class="mini-row">
-            <span class="hint">현재 공인 IP: <span id="currentIp">-</span></span>
-            <button id="refreshIp" class="mini-btn">IP 새로고침</button>
-          </div>
-        </div>
-
-          </div>
-            </section>
-
-            <section class="settings-section card">
-              <h2 class="section-title">계정</h2>
-              <div class="panel" id="panel-account">
-          <div class="grid">
-            <div>
-              <label>이메일</label>
-              <input id="email" type="email" />
-            </div>
-            <div>
-              <label>비밀번호</label>
-              <input id="password" type="password" />
-            </div>
-          </div>
-          <div class="row">
-            <button id="signup">회원가입</button>
-            <button id="login">로그인</button>
-            <button id="logout">로그아웃</button>
-          </div>
-          <p class="hint" id="authStatus">로그인 필요</p>
-        </div>
             </section>
           </div>
         </section>
 
         <nav class="bottombar" aria-label="primary">
-          <button class="nav-item active" type="button" data-view="home">홈</button>
-          <button class="nav-item" type="button" data-view="activity">작업</button>
-          <button class="nav-item" type="button" data-view="settings">설정</button>
+          <button class="nav-item active" type="button" data-view="home">Home</button>
+          <button class="nav-item" type="button" data-view="work">Work</button>
+          <button class="nav-item" type="button" data-view="more">More</button>
         </nav>
       </div>
 

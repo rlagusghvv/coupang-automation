@@ -910,3 +910,67 @@ textarea {
     gap: 6px;
   }
 }
+
+/* More (settings) list-style categories */
+.settings-list {
+  display: grid;
+  gap: 10px;
+}
+
+.settings-cat {
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.55);
+  padding: 2px 8px;
+}
+
+:root[data-theme="dark"] .settings-cat {
+  background: rgba(15, 23, 42, 0.55);
+}
+
+.settings-cat > summary {
+  cursor: pointer;
+  padding: 12px 10px;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  list-style: none;
+}
+
+.settings-cat > summary::-webkit-details-marker {
+  display: none;
+}
+
+.settings-cat[open] > summary {
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 10px;
+  margin-bottom: 10px;
+}
+
+.more-actions {
+  margin-top: 12px;
+}
+
+.field.sensitive {
+  display: grid;
+  gap: 8px;
+}
+
+.sensitive-locked {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.mask-input {
+  flex: 1;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.72);
+  color: var(--muted);
+  padding: 12px 12px;
+  border-radius: 14px;
+}
+
+:root[data-theme="dark"] .mask-input {
+  background: rgba(15, 23, 42, 0.6);
+}
+
