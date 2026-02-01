@@ -106,8 +106,10 @@ export async function exportPaidOrdersToVendor({ orders = [], vendor }) {
     const request = v === "domeme" ? "문앞" : "";
     const customsNo = "";
 
+    const market = v === "domeggook" ? "도매꾹" : "도매매";
+
     return [
-      v,
+      market,
       productNo,
       optionCode,
       optionName,

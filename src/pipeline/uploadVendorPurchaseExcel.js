@@ -76,7 +76,9 @@ export async function uploadVendorPurchaseExcel({ vendor, filePath, settings = {
     await fileInput.setInputFiles(filePath);
 
     const uploadBtn = page
-      .locator("button:has-text('업로드'), button:has-text('등록'), input[type='submit'], button[type='submit']")
+      .locator(
+        "#lFrmUpload input[type='image'], button:has-text('업로드'), button:has-text('등록'), input[type='submit'], input[type='image'], button[type='submit']",
+      )
       .first();
 
     if (await uploadBtn.count()) {
@@ -86,10 +88,27 @@ export async function uploadVendorPurchaseExcel({ vendor, filePath, settings = {
       ]);
     }
 
+    // Basic validation: ensure the page is no longer asking to upload a file.
+    let pageText = "";
+    try {
+      pageText = await page.locator("body").innerText();
+    } catch {}
+
+    const stillEmpty = pageText.includes("엑셀파일을 업로드해주세요");
+    if (stillEmpty) {
+      return { ok: false, error: "upload_not_applied", currentUrl: page.url(), usedStorageState: Boolean(storageStatePath) };
+    }
+
     // After upload, try to discover the payment URL.
     const payUrl = await bestEffortFindPayUrl(page);
 
-    return { ok: true, vendor: v, payUrl, currentUrl: page.url(), usedStorageState: Boolean(storageStatePath) };
+    return {
+      ok: true,
+      vendor: v,
+      payUrl,
+      currentUrl: page.url(),
+      usedStorageState: Boolean(storageStatePath),
+    };
   } catch (e) {
     return { ok: false, error: "upload_failed", detail: String(e?.message || e) };
   } finally {
