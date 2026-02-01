@@ -68,6 +68,14 @@ const currentIpEl = $("currentIp");
 const refreshIpBtn = $("refreshIp");
 const historyTableEl = $("historyTable");
 const refreshHistoryBtn = $("refreshHistory");
+
+// Dev-only dummy orders
+const devOrdersRow = $("devOrdersRow");
+const seedOrdersBtn = $("seedOrders");
+const refreshOrdersBtn = $("refreshOrders");
+const ordersListWrap = $("ordersListWrap");
+const ordersListEl = $("ordersList");
+
 let lastPayload = null;
 
 function setStatus(text, state) {
@@ -793,6 +801,41 @@ async function loadUploadHistory() {
   }
 }
 
+async function loadOrders() {
+  if (!ordersListEl || !ordersListWrap) return;
+  try {
+    const res = await fetch("/api/orders?limit=50");
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok || !json.ok) {
+      ordersListEl.value = JSON.stringify(json, null, 2);
+      ordersListWrap.classList.remove("hidden");
+      return;
+    }
+    ordersListEl.value = JSON.stringify(json.orders || [], null, 2);
+    ordersListWrap.classList.remove("hidden");
+  } catch (e) {
+    ordersListEl.value = String(e?.message || e);
+    ordersListWrap.classList.remove("hidden");
+  }
+}
+
+async function seedDummyOrders() {
+  try {
+    const res = await fetch("/api/dev/orders/seed?dev=1", { method: "POST" });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok || !json.ok) {
+      log(json);
+      setStatus("더미 주문 생성 실패", "bad");
+      return;
+    }
+    setStatus("더미 주문 생성 완료", "ok");
+    await loadOrders();
+  } catch (e) {
+    setStatus("더미 주문 생성 에러", "bad");
+    log(String(e?.message || e));
+  }
+}
+
 submitBtn.addEventListener("click", run);
 urlInput.addEventListener("keydown", (e) => {
   if (e.key === "Enter") run();
@@ -812,6 +855,15 @@ refreshIpBtn?.addEventListener("click", loadCurrentIp);
 refreshIpBtn?.addEventListener("click", evaluateUploadGate);
 refreshHistoryBtn?.addEventListener("click", loadUploadHistory);
 settingsEls.allowedIps?.addEventListener("input", evaluateUploadGate);
+
+// Dev-only UI: seed dummy orders when URL has ?dev=1
+try {
+  const dev = new URLSearchParams(location.search).get("dev") === "1";
+  if (dev && devOrdersRow) devOrdersRow.classList.remove("hidden");
+  if (dev && ordersListWrap) ordersListWrap.classList.remove("hidden");
+} catch {}
+seedOrdersBtn?.addEventListener("click", seedDummyOrders);
+refreshOrdersBtn?.addEventListener("click", loadOrders);
 domeggookSessionBtn?.addEventListener("click", async () => {
   setStatus("도매꾹 세션 생성 중...", "");
   try {

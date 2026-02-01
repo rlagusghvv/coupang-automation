@@ -38,6 +38,21 @@
         </div>
 
         <div class="panel hidden order-actions" id="panel-orders">
+          <label>쿠팡 주문 → 도매처 발주</label>
+
+          <div class="row compact-row hidden" id="devOrdersRow">
+            <button id="seedOrders">(개발용) 더미 주문 2개 생성</button>
+            <button id="refreshOrders">주문 목록 새로고침</button>
+          </div>
+          <div class="grid hidden" id="ordersListWrap">
+            <div>
+              <label>주문 목록 (MVP)</label>
+              <textarea id="ordersList" rows="6" readonly></textarea>
+            </div>
+          </div>
+
+          <div class="divider"></div>
+
           <label>쿠팡 주문 → 도매매 엑셀 생성</label>
           <div class="grid">
             <div>

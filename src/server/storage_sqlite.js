@@ -82,6 +82,19 @@ export async function initDb() {
     )`,
   );
 
+  // Orders (MVP scaffold)
+  await dbRun(
+    db,
+    `CREATE TABLE IF NOT EXISTS orders (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id TEXT NOT NULL,
+      source TEXT NOT NULL,          -- domeme | domeggook
+      status TEXT NOT NULL,          -- paid | drafted | uploaded | etc.
+      order_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL
+    )`,
+  );
+
   db.close();
 }
 

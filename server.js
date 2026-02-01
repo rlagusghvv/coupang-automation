@@ -17,6 +17,7 @@ import {
   addPreviewHistory,
   listPreviewHistory,
 } from "./src/server/storage_sqlite.js";
+import { addOrder, clearOrders, listOrders } from "./src/server/orders_sqlite.js";
 import { exportOrdersToDomeme } from "./src/pipeline/exportOrdersToDomeme.js";
 import { uploadDomemeExcel } from "./src/pipeline/uploadDomemeExcel.js";
 import { spawn } from "node:child_process";
@@ -309,6 +310,78 @@ app.get("/api/upload/preview/history", authRequired, async (req, res) => {
     const limit = Number(req.query.limit || 50);
     const history = await listPreviewHistory(req.user.id, limit);
     return res.json({ ok: true, history });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+// Orders (MVP scaffold)
+app.get("/api/orders", authRequired, async (req, res) => {
+  try {
+    const limit = Number(req.query.limit || 50);
+    const orders = await listOrders(req.user.id, limit);
+    return res.json({ ok: true, orders });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+// Dev-only: seed dummy paid orders (domeme + domeggook)
+app.post("/api/dev/orders/seed", authRequired, async (req, res) => {
+  try {
+    const enabled =
+      String(process.env.COUPLUS_DEV || "").trim() === "1" ||
+      String(req.query.dev || "").trim() === "1";
+    if (!enabled) {
+      return res.status(403).json({ ok: false, error: "dev_disabled" });
+    }
+
+    await clearOrders(req.user.id);
+
+    const now = new Date().toISOString();
+
+    await addOrder({
+      userId: req.user.id,
+      source: "domeme",
+      status: "paid",
+      order: {
+        kind: "mock",
+        paidAt: now,
+        marketplace: "coupang",
+        note: "mock paid order (domeme)",
+        items: [
+          {
+            source: "domeme",
+            sourceUrl: "https://domeme.domeggook.com/s/9541992",
+            title: "[MOCK] 도매매 테스트 상품",
+            qty: 1,
+          },
+        ],
+      },
+    });
+
+    await addOrder({
+      userId: req.user.id,
+      source: "domeggook",
+      status: "paid",
+      order: {
+        kind: "mock",
+        paidAt: now,
+        marketplace: "coupang",
+        note: "mock paid order (domeggook)",
+        items: [
+          {
+            source: "domeggook",
+            sourceUrl: "https://domeggook.com/44047997?from=lstBiz",
+            title: "[MOCK] 도매꾹 테스트 상품",
+            qty: 2,
+          },
+        ],
+      },
+    });
+
+    const orders = await listOrders(req.user.id, 50);
+    return res.json({ ok: true, seeded: orders.length, orders });
   } catch (e) {
     return res.status(500).json({ ok: false, error: String(e?.message || e) });
   }
