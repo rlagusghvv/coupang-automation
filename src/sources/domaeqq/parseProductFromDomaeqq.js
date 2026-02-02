@@ -15,6 +15,128 @@ function pickPriceFromText(allText) {
   return Number(m[1].replace(/,/g, ""));
 }
 
+async function extractDomeggookQuantityPriceTiers(page) {
+  // Returns tiers like: [{ minQty: 1, unitPrice: 96500 }, ...]
+  // Domeggook often shows range prices (e.g. 87,000원 ~ 96,500원) and a quantity table.
+  try {
+    const tiers = await page.evaluate(() => {
+      const parseNum = (t) => {
+        const m = String(t || "").match(/(\d[\d,]*)/);
+        return m ? Number(m[1].replace(/,/g, "")) : null;
+      };
+      const parsePrice = (t) => {
+        const m = String(t || "").match(/(\d[\d,]*)\s*원/);
+        return m ? Number(m[1].replace(/,/g, "")) : null;
+      };
+      const parseMinQty = (t) => {
+        const s = String(t || "");
+        // examples: "1개 이상", "50개 이상", "100개 이상"
+        const m = s.match(/(\d[\d,]*)\s*개/);
+        if (m) return Number(m[1].replace(/,/g, ""));
+        // sometimes only number
+        const n = parseNum(s);
+        return n;
+      };
+
+      const out = [];
+      const tables = Array.from(document.querySelectorAll("table"));
+      for (const tbl of tables) {
+        const rows = Array.from(tbl.querySelectorAll("tr"));
+        if (rows.length < 2) continue;
+
+        const headerText = rows
+          .slice(0, 2)
+          .map((r) => (r.innerText || "").replace(/\s+/g, " ").trim())
+          .join(" ");
+
+        // Heuristic: table likely contains quantity pricing
+        if (!/수량/.test(headerText) || !/(단가|가격)/.test(headerText)) continue;
+
+        for (const r of rows) {
+          const cells = Array.from(r.querySelectorAll("th,td"))
+            .map((c) => (c.innerText || "").replace(/\s+/g, " ").trim())
+            .filter(Boolean);
+          if (cells.length < 2) continue;
+
+          const minQty = parseMinQty(cells[0]);
+          const unitPrice = parsePrice(cells[1]);
+          if (!minQty || !unitPrice) continue;
+
+          out.push({ minQty, unitPrice });
+        }
+      }
+
+      // Fallback: some pages render quantity pricing as plain text blocks.
+      // Pattern A) "수량(개) 1~ 50~ 100~" + next line "단가(원) 96,500 91,500 87,000"
+      if (out.length === 0) {
+        const fullRaw = String(document.body?.innerText || "");
+        const full = fullRaw.replace(/\r/g, "");
+        const lines = full
+          .split("\n")
+          .map((l) => l.replace(/\s+/g, " ").trim())
+          .filter(Boolean);
+
+        const qtyLineIdx = lines.findIndex((l) => l.includes("수량(개)"));
+        const priceLineIdx = lines.findIndex((l) => l.includes("단가(원)"));
+
+        if (qtyLineIdx >= 0 && priceLineIdx >= 0) {
+          const qtyLine = lines[qtyLineIdx];
+          const priceLine = lines[priceLineIdx];
+
+          const qtyNums = (qtyLine.match(/(\d[\d,]*)/g) || []).map((x) =>
+            Number(String(x).replace(/,/g, "")),
+          );
+          const priceNums = (priceLine.match(/(\d[\d,]*)/g) || []).map((x) =>
+            Number(String(x).replace(/,/g, "")),
+          );
+
+          const n = Math.min(qtyNums.length, priceNums.length);
+          for (let i = 0; i < n; i += 1) {
+            const minQty = qtyNums[i];
+            const unitPrice = priceNums[i];
+            if (!Number.isFinite(minQty) || !Number.isFinite(unitPrice)) continue;
+            if (minQty <= 0 || unitPrice <= 0) continue;
+            out.push({ minQty, unitPrice });
+          }
+        }
+      }
+
+      // Pattern B) "N개 이상 ... 12,345원" style
+      if (out.length === 0) {
+        const full = (document.body?.innerText || "").replace(/\s+/g, " ");
+        const idx = full.indexOf("수량별가격");
+        const scope = idx >= 0 ? full.slice(idx, idx + 3000) : full;
+        const re = /(\d[\d,]*)\s*개\s*이상[^\d]{0,20}(\d[\d,]*)\s*원/g;
+        let m;
+        while ((m = re.exec(scope))) {
+          const minQty = Number(String(m[1]).replace(/,/g, ""));
+          const unitPrice = Number(String(m[2]).replace(/,/g, ""));
+          if (!Number.isFinite(minQty) || !Number.isFinite(unitPrice)) continue;
+          if (minQty <= 0 || unitPrice <= 0) continue;
+          out.push({ minQty, unitPrice });
+          if (out.length >= 20) break;
+        }
+      }
+
+      // de-dupe + sort
+      const seen = new Set();
+      const uniq = [];
+      for (const t of out) {
+        const k = `${t.minQty}:${t.unitPrice}`;
+        if (seen.has(k)) continue;
+        seen.add(k);
+        uniq.push(t);
+      }
+      uniq.sort((a, b) => a.minQty - b.minQty);
+      return uniq;
+    });
+
+    return Array.isArray(tiers) ? tiers : [];
+  } catch {
+    return [];
+  }
+}
+
 function normalizeUrl(u) {
   if (!u) return null;
   const s = String(u).trim();
@@ -743,8 +865,22 @@ export async function parseProductFromDomaeqq(url) {
       : [];
     const minVariantPrice = variantPrices.length > 0 ? Math.min(...variantPrices) : null;
 
+    // Domeggook quantity-tier pricing: prefer unit price for minQty=1 when available.
+    let qtyPriceTiers = [];
+    if (!is1688) {
+      qtyPriceTiers = await extractDomeggookQuantityPriceTiers(page);
+    }
+    const qtyPriceForOne = Array.isArray(qtyPriceTiers)
+      ? qtyPriceTiers.find((t) => Number(t.minQty) === 1)?.unitPrice
+      : null;
+    const qtyPriceMinQty = Array.isArray(qtyPriceTiers) && qtyPriceTiers.length > 0
+      ? qtyPriceTiers[0].unitPrice
+      : null;
+
     const priceRaw =
       (is1688 && Number.isFinite(minVariantPrice) ? minVariantPrice : null) ||
+      (Number.isFinite(Number(qtyPriceForOne)) ? Number(qtyPriceForOne) : null) ||
+      (Number.isFinite(Number(qtyPriceMinQty)) ? Number(qtyPriceMinQty) : null) ||
       Number(String(priceText || "").replace(/[^\d]/g, "")) ||
       pickPriceFromText(bodyText) ||
       9900;
@@ -1113,6 +1249,11 @@ export async function parseProductFromDomaeqq(url) {
       finalOptionNameSamples: Array.isArray(finalOptions)
         ? finalOptions.slice(0, 10).map((o) => String(o?.name || ""))
         : [],
+      price: {
+        picked: price,
+        raw: priceRaw,
+        qtyTiers: Array.isArray(qtyPriceTiers) ? qtyPriceTiers.slice(0, 10) : [],
+      },
     };
 
     return draft;
