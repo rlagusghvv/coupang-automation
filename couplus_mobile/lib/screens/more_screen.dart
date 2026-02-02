@@ -133,12 +133,11 @@ class _MoreScreenState extends State<MoreScreen> {
       _coupangVendorUserId.text = _coupangVendorUserId.text.isNotEmpty
           ? _coupangVendorUserId.text
           : (s[SensitiveSettingsStore.coupangVendorUserId]?.toString() ?? '');
-      _coupangDeliveryCompanyCode.text =
-          _coupangDeliveryCompanyCode.text.isNotEmpty
-              ? _coupangDeliveryCompanyCode.text
-              : (s[SensitiveSettingsStore.coupangDeliveryCompanyCode]
-                      ?.toString() ??
-                  '');
+      _coupangDeliveryCompanyCode.text = _coupangDeliveryCompanyCode
+              .text.isNotEmpty
+          ? _coupangDeliveryCompanyCode.text
+          : (s[SensitiveSettingsStore.coupangDeliveryCompanyCode]?.toString() ??
+              '');
       _pagesApiToken.text = _pagesApiToken.text.isNotEmpty
           ? _pagesApiToken.text
           : (s[SensitiveSettingsStore.pagesApiToken]?.toString() ?? '');
@@ -170,11 +169,13 @@ class _MoreScreenState extends State<MoreScreen> {
           SensitiveSettingsStore.coupangAccessKey, accessKey);
       await _sensitiveStore.write(
           SensitiveSettingsStore.coupangSecretKey, secretKey);
-      await _sensitiveStore.write(SensitiveSettingsStore.coupangVendorId, vendorId);
+      await _sensitiveStore.write(
+          SensitiveSettingsStore.coupangVendorId, vendorId);
       await _sensitiveStore.write(
           SensitiveSettingsStore.coupangVendorUserId, vendorUserId);
       await _sensitiveStore.write(
-          SensitiveSettingsStore.coupangDeliveryCompanyCode, deliveryCompanyCode);
+          SensitiveSettingsStore.coupangDeliveryCompanyCode,
+          deliveryCompanyCode);
       await _sensitiveStore.write(
           SensitiveSettingsStore.pagesApiToken, pagesToken);
 
@@ -452,8 +453,8 @@ class _MoreScreenState extends State<MoreScreen> {
                     helperText: '쿠팡 Wing의 판매자(Vendor) ID',
                     suffixIcon: IconButton(
                       onPressed: _sensitiveUnlocked
-                          ? () => setState(() => _revealCoupangVendorId =
-                              !_revealCoupangVendorId)
+                          ? () => setState(() =>
+                              _revealCoupangVendorId = !_revealCoupangVendorId)
                           : null,
                       icon: Icon(_revealCoupangVendorId
                           ? Icons.visibility_off
@@ -489,7 +490,8 @@ class _MoreScreenState extends State<MoreScreen> {
                   obscureText: !_revealCoupangDeliveryCompanyCode,
                   decoration: InputDecoration(
                     labelText: 'Coupang delivery company code',
-                    helperText: '쿠팡 배송사 코드 (기본값은 CJ대한통운=KOREA_POST 등 아님, 환경에 따라 다름)',
+                    helperText:
+                        '쿠팡 배송사 코드 (기본값은 CJ대한통운=KOREA_POST 등 아님, 환경에 따라 다름)',
                     suffixIcon: IconButton(
                       onPressed: _sensitiveUnlocked
                           ? () => setState(() =>
@@ -499,9 +501,8 @@ class _MoreScreenState extends State<MoreScreen> {
                       icon: Icon(_revealCoupangDeliveryCompanyCode
                           ? Icons.visibility_off
                           : Icons.visibility),
-                      tooltip: _revealCoupangDeliveryCompanyCode
-                          ? 'Hide'
-                          : 'Reveal',
+                      tooltip:
+                          _revealCoupangDeliveryCompanyCode ? 'Hide' : 'Reveal',
                     ),
                   ),
                 ),
