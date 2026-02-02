@@ -22,6 +22,79 @@ function normalizeUrl(u) {
   return s;
 }
 
+const OPTION_TEXT_IGNORE = [
+  // Global/nav/menu junk (user reports)
+  "로그인",
+  "회원가입",
+  "상품명",
+  "상품번호",
+  "1:1문의",
+  "1:1 문의",
+  "e-money",
+  "e money",
+  "포인트",
+  "회원정보수정",
+  "회원정보 수정",
+  "이미지 파일 업로드",
+  // Common site sections
+  "도매매",
+  "나까마",
+  "교육센터",
+  "에그돔",
+  "로그아웃",
+  "마이페이지",
+  "주문전체목록",
+  "관심상품",
+  "고객센터",
+  "공지사항",
+  "장바구니",
+  "더보기",
+];
+
+const OPTION_MARKER_RE = /[0-9]|\b(XXXL|XXL|XL|L|M|S|FREE|Free|F)\b|[:：\/\-\+\[\]\(\)]/;
+const OPTION_COLOR_WORDS = [
+  "블랙",
+  "화이트",
+  "레드",
+  "블루",
+  "그린",
+  "핑크",
+  "베이지",
+  "브라운",
+  "그레이",
+  "옐로",
+  "퍼플",
+  "네이비",
+  "실버",
+  "골드",
+  "투명",
+  "클리어",
+];
+
+function normalizeOptionText(s) {
+  return String(s || "")
+    .replace(/\s+/g, " ")
+    .replace(/\(.*?\)/g, "")
+    .replace(/[\[\]{}]/g, "")
+    .trim();
+}
+
+function isLikelyOptionText(s) {
+  const t = normalizeOptionText(s);
+  if (!t) return false;
+  if (t.length < 2 || t.length > 80) return false;
+  if (/^(선택|옵션|상품옵션|닫기)$/i.test(t)) return false;
+  if (/선택\s*하세요|옵션\s*선택|전체\s*옵션\s*보기/i.test(t)) return false;
+  if (OPTION_TEXT_IGNORE.some((w) => t.includes(w))) return false;
+
+  // Too generic / UI controls
+  if (/^(구매|바로구매|장바구니|주문|취소|확인|닫기|저장|검색)$/i.test(t)) return false;
+
+  // Must look like a real value: has digits/markers or known color words
+  if (OPTION_COLOR_WORDS.some((c) => t.includes(c))) return true;
+  return OPTION_MARKER_RE.test(t);
+}
+
 function parseOptionValuesFromLabel(label) {
   const text = String(label || "").trim();
   if (!text) return [];
@@ -217,19 +290,9 @@ function parseOptionPopupHtml(html) {
     if (t) optMatches.push(t);
   }
 
-  const blacklist = ["옵션", "상품옵션", "선택", "닫기"];
-
-  const normalize = (s) =>
-    String(s || "")
-      .replace(/\s+/g, " ")
-      .replace(/\(.*?\)/g, "")
-      .replace(/[\[\]{}]/g, "")
-      .trim();
-
   const cleanedOptions = Array.from(new Set(optMatches))
-    .map(normalize)
-    .filter((s) => s.length >= 2 && s.length < 60)
-    .filter((s) => !blacklist.some((b) => s.includes(b)));
+    .map(normalizeOptionText)
+    .filter((s) => isLikelyOptionText(s));
 
   if (cleanedOptions.length > 0) return cleanedOptions;
 
@@ -248,8 +311,8 @@ function parseOptionPopupHtml(html) {
 
   const cleaned = lines
     .map((s) => s.replace(/^\d+\s*[.)-]?\s*/g, "").trim())
-    .filter((s) => s.length >= 2 && s.length < 60)
-    .filter((s) => !blacklist.some((b) => s.includes(b)));
+    .map(normalizeOptionText)
+    .filter((s) => isLikelyOptionText(s));
 
   return Array.from(new Set(cleaned));
 }
@@ -435,10 +498,31 @@ export async function parseProductFromDomaeqq(url) {
 
   const page = await context.newPage();
   const is1688 = String(url || "").includes("1688.domeggook.com");
+  const isMobile = (() => {
+    try {
+      const h = new URL(String(url || "")).hostname || "";
+      return /^mobile\./i.test(h);
+    } catch {
+      return false;
+    }
+  })();
 
   try {
     await page.goto(url, { waitUntil: "domcontentloaded", timeout: 90000 });
     await page.waitForTimeout(2000);
+
+    // Best-effort: open option layer if the page hides options behind a button/layer.
+    if (!is1688) {
+      const openOptBtn = page
+        .locator("text=/전체\\s*옵션\\s*보기|옵션\\s*보기|옵션\\s*선택|옵션\\s*열기/i")
+        .first();
+      try {
+        if ((await openOptBtn.count()) > 0) {
+          await openOptBtn.click({ timeout: 2500 }).catch(() => {});
+          await page.waitForTimeout(800);
+        }
+      } catch {}
+    }
 
     const titleCandidate = page.locator("h1, h2").first();
     const titleText = (await titleCandidate.textContent().catch(() => null))?.trim();
@@ -694,65 +778,107 @@ export async function parseProductFromDomaeqq(url) {
       );
     });
 
-    const options = await page.evaluate(() => {
-      const normalize = (s) =>
-        String(s || "")
-          .replace(/\s+/g, " ")
-          .replace(/\(.*?\)/g, "")
-          .replace(/[\[\]{}]/g, "")
-          .trim();
-
-      const blacklist = [
-        "도매매",
-        "나까마",
-        "교육센터",
-        "에그돔",
-        "로그아웃",
-        "마이페이지",
-        "주문전체목록",
-        "관심상품",
-        "고객센터",
-        "공지사항",
-        "장바구니",
-        "더보기",
-      ];
-
-      const scoreContainer = (el) => {
-        const text = (el.textContent || "").length;
-        const hasSelect = el.querySelectorAll("select").length;
-        const hasOptionBtn = el.querySelectorAll("button, li").length;
-        return text + hasSelect * 500 + hasOptionBtn * 50;
+    const optionProbe = await page.evaluate(({ isMobile }) => {
+      const uniqPush = (arr, v) => {
+        const t = String(v || "").trim();
+        if (!t) return;
+        if (!arr.includes(t)) arr.push(t);
       };
 
-      const containers = Array.from(
-        document.querySelectorAll(
-          "[id*='option'], [class*='option'], [id*='opt'], [class*='opt']",
-        ),
-      )
+      const scoreContainer = (el) => {
+        const textLen = (el.textContent || "").length;
+        const hasSelect = el.querySelectorAll("select").length;
+        const hasOptionNodes = el.querySelectorAll("option, li, button").length;
+        return textLen + hasSelect * 10000 + hasOptionNodes * 50;
+      };
+
+      const rootSelectors = [
+        // common desktop containers
+        "#contents",
+        "#container",
+        "#wrap",
+        "#goods_view",
+        "#itemView",
+        "#itemInfo",
+        "form",
+        // mobile containers
+        ".m_wrap",
+        ".m_container",
+        ".goods_view",
+        ".item_view",
+        ".view_wrap",
+      ];
+
+      const roots = [];
+      for (const sel of rootSelectors) {
+        document.querySelectorAll(sel).forEach((el) => roots.push(el));
+      }
+
+      // bonus: anything that looks like an option box
+      document
+        .querySelectorAll("[id*='option'],[class*='option'],[id*='opt'],[class*='opt']")
+        .forEach((el) => roots.push(el));
+
+      const scored = Array.from(new Set(roots))
         .map((el) => ({ el, score: scoreContainer(el) }))
         .sort((a, b) => b.score - a.score);
 
-      const root = containers[0]?.el || document.body;
+      const root = scored[0]?.el || document.body;
+      const candidates = [];
 
-      const fromSelects = Array.from(root.querySelectorAll("select"))
-        .flatMap((sel) => Array.from(sel.options || []).map((o) => o.textContent))
-        .map(normalize);
+      // 1) SELECT options (most reliable)
+      root.querySelectorAll("select").forEach((sel) => {
+        const nameAttr = (sel.getAttribute("name") || "") + " " + (sel.id || "");
+        // Avoid capturing unrelated selects (category/search)
+        if (!/opt|option|item/i.test(nameAttr) && sel.options.length < 2) return;
 
-      const fromButtons = Array.from(root.querySelectorAll("button, li"))
-        .map((el) => normalize(el.textContent))
-        .filter((t) => t && t.length < 60);
+        Array.from(sel.options || []).forEach((o) => {
+          const txt = (o.textContent || "").trim();
+          uniqPush(candidates, txt);
+        });
+      });
 
-      const merged = Array.from(new Set([...fromSelects, ...fromButtons]));
-      const cleaned = merged
-        .filter((t) => t && t.length < 60)
-        .filter((t) => !/선택|옵션|구매|전체옵션보기/i.test(t))
-        .filter((t) => !blacklist.some((b) => t.includes(b)));
+      // 2) Option layer / list items under option-like containers
+      const optionRoots = Array.from(
+        root.querySelectorAll("[id*='option'],[class*='option'],[id*='opt'],[class*='opt']"),
+      );
+      for (const optRoot of optionRoots.slice(0, 8)) {
+        optRoot.querySelectorAll("li, button, a, span, div").forEach((el) => {
+          const cls = String(el.className || "");
+          const id = String(el.id || "");
+          // restrict to option-ish nodes to avoid nav
+          const ok = /opt|option/i.test(cls) || /opt|option/i.test(id) || el.tagName === "LI";
+          if (!ok) return;
+          const txt = (el.textContent || "").trim();
+          if (txt) uniqPush(candidates, txt);
+        });
+      }
 
-      return cleaned.slice(0, 20);
-    });
+      // 3) mobile pages often keep option labels in buttons
+      if (isMobile) {
+        root.querySelectorAll("button").forEach((btn) => {
+          const txt = (btn.textContent || "").trim();
+          if (txt) uniqPush(candidates, txt);
+        });
+      }
 
+      return {
+        rootTag: root.tagName,
+        rootId: root.id || "",
+        rootClass: String(root.className || ""),
+        candidates,
+      };
+    }, { isMobile });
+
+    const options = Array.from(new Set(optionProbe?.candidates || []))
+      .map(normalizeOptionText)
+      .filter((t) => isLikelyOptionText(t))
+      .slice(0, 40);
+
+    let optionStrategy = "none";
     let finalOptions = [];
     if (is1688 && Array.isArray(variantTable?.variants) && variantTable.variants.length > 0) {
+      optionStrategy = "1688.variantTable";
       finalOptions = variantTable.variants.map((v) => ({
         name: v.label,
         priceDelta: Number(v.price) - price,
@@ -772,7 +898,10 @@ export async function parseProductFromDomaeqq(url) {
             .join("\n"),
         );
         const inlineOptions = extractOptionVariantsFromItemOptionController(scriptText);
-        if (inlineOptions.length > 0) finalOptions = inlineOptions;
+        if (inlineOptions.length > 0) {
+          optionStrategy = "ItemOptionController";
+          finalOptions = inlineOptions;
+        }
       } catch {}
     }
 
@@ -788,35 +917,24 @@ export async function parseProductFromDomaeqq(url) {
         });
         if (res.ok()) {
           const html = await res.text();
-        const parsed = parseOptionPopupHtml(html);
-        if (parsed.length > 0) {
-          finalOptions = parsed.map((name) => ({
-            name,
-            priceDelta: 0,
-            stock: 0,
-            values: [],
-          }));
+          const parsed = parseOptionPopupHtml(html);
+          if (parsed.length > 0) {
+            optionStrategy = "optionPopup";
+            finalOptions = parsed.map((name) => ({
+              name,
+              priceDelta: 0,
+              stock: 0,
+              values: [],
+            }));
+          }
         }
-      }
-    } catch {}
+      } catch {}
     }
 
-    const garbageWords = [
-      "마이페이지",
-      "로그아웃",
-      "관심상품",
-      "공지사항",
-      "장바구니",
-      "상품문의",
-      "회원정보",
-      "고객센터",
-      "e-money",
-      "포인트",
-    ];
-
-    const looksGarbage = finalOptions.some((t) =>
-      garbageWords.some((g) => String(t?.name || t || "").includes(g)),
-    );
+    const looksGarbage = finalOptions.some((t) => {
+      const name = String(t?.name || t || "");
+      return OPTION_TEXT_IGNORE.some((g) => name.includes(g));
+    });
     if (finalOptions.length === 0 || looksGarbage) {
       // 팝업 실패/오염 시 옵션 비활성화
       finalOptions = [];
@@ -824,10 +942,11 @@ export async function parseProductFromDomaeqq(url) {
 
     // ✅ 마지막 fallback: 페이지에서 긁은 옵션 텍스트 사용
     if (finalOptions.length === 0 && Array.isArray(options) && options.length > 0) {
+      optionStrategy = "pageText";
       finalOptions = options.map((name) => ({ name, priceDelta: 0, stock: 0, values: [] }));
     }
 
-    return makeDraft({
+    const draft = makeDraft({
       sourceUrl: url,
       title: titleText || (await page.title().catch(() => "도매꾹 상품")),
       price,
@@ -836,6 +955,23 @@ export async function parseProductFromDomaeqq(url) {
       categoryText,
       options: finalOptions,
     });
+
+    // Debug payload for preview (safe: contains no secrets)
+    draft.__debug = {
+      source: "domeggook",
+      is1688,
+      isMobile,
+      optionStrategy,
+      optionProbe,
+      optionCandidatesCount: Array.isArray(optionProbe?.candidates) ? optionProbe.candidates.length : 0,
+      optionFilteredCount: Array.isArray(options) ? options.length : 0,
+      finalOptionsCount: Array.isArray(finalOptions) ? finalOptions.length : 0,
+      finalOptionNameSamples: Array.isArray(finalOptions)
+        ? finalOptions.slice(0, 10).map((o) => String(o?.name || ""))
+        : [],
+    };
+
+    return draft;
   } finally {
     await page.close().catch(() => {});
     await context.close().catch(() => {});

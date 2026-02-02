@@ -49,5 +49,6 @@ export async function previewUploadFromUrl(inputUrl, settings = {}) {
       optionsCount: options.length,
     },
     options,
+    debug: draft.__debug || null,
   };
 }
