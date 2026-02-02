@@ -1,4 +1,5 @@
 import 'package:couplus_mobile/api/api_client.dart';
+
 import 'package:couplus_mobile/screens/auth/webview_screen.dart';
 import 'package:couplus_mobile/ui/widgets.dart';
 import 'package:flutter/material.dart';
@@ -42,10 +43,18 @@ class _MoreScreenState extends State<MoreScreen> {
       final json = await widget.api.getJson('/api/me');
       setState(() => _me = json);
     } catch (e) {
-      setState(() {
-        _me = null;
-        _error = e.toString();
-      });
+      // 401은 에러 배너 대신 "로그인 필요" 상태로 처리
+      if (e is ApiException && e.isUnauthorized) {
+        setState(() {
+          _me = null;
+          _error = null;
+        });
+      } else {
+        setState(() {
+          _me = null;
+          _error = e.toString();
+        });
+      }
     } finally {
       if (mounted) setState(() => _loading = false);
     }

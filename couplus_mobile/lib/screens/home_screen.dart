@@ -136,7 +136,44 @@ class _HomeScreenState extends State<HomeScreen> {
                 const SectionHeader('Account'),
                 const SizedBox(height: 10),
                 KvRow(k: 'Authenticated', v: isAuthed ? 'Yes' : 'No'),
-                KvRow(k: 'User', v: (auth['user'] ?? '-').toString()),
+                if (isAuthed) ...[
+                  KvRow(
+                    k: 'Email',
+                    v: ((auth['user'] as Map?)?['email'] ?? '-').toString(),
+                  ),
+                  KvRow(
+                    k: 'User ID',
+                    v: ((auth['user'] as Map?)?['id'] ?? '-').toString(),
+                  ),
+                ] else
+                  Text(
+                    'More 탭에서 로그인하면 작업 탭의 모든 기능을 사용할 수 있어요.',
+                    style: TextStyle(color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.65)),
+                  ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+          AppCard(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const SectionHeader('Pay URLs'),
+                const SizedBox(height: 10),
+                if (!isAuthed)
+                  Text(
+                    '로그인 후 확인할 수 있어요.',
+                    style: TextStyle(color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.65)),
+                  )
+                else if (payUrls.isEmpty)
+                  Text(
+                    '아직 결제 URL이 없어요.',
+                    style: TextStyle(color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.65)),
+                  )
+                else
+                  ...payUrls.entries.map((e) {
+                    return KvRow(k: e.key.toString(), v: e.value.toString());
+                  }),
               ],
             ),
           ),
