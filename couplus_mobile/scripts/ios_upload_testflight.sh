@@ -37,8 +37,7 @@ fastlane sigh \
   --api_key_path "$API_KEY_JSON" \
   --output_path "$TMP_DIR" \
   --filename "appstore.mobileprovision" \
-  --skip_install true \
-  --quiet
+  --skip_install true
 
 if [[ ! -f "$PROFILE_PATH" ]]; then
   echo "Failed to download provisioning profile" >&2
