@@ -511,6 +511,10 @@ export async function parseProductFromDomaeqq(url) {
     await page.goto(url, { waitUntil: "domcontentloaded", timeout: 90000 });
     await page.waitForTimeout(2000);
 
+    // short link(예: domeggook.com/SeznkY)인 경우 실제 상품 URL로 리다이렉트됨
+    // 옵션 팝업/리퍼러/상품번호 추출은 최종 URL을 기준으로 해야 정확함
+    const refererUrl = page.url();
+
     // Best-effort: open option layer if the page hides options behind a button/layer.
     if (!is1688) {
       const openOptBtn = page
@@ -908,12 +912,12 @@ export async function parseProductFromDomaeqq(url) {
     // ✅ 옵션 팝업(전체보기) fallback
     if (!is1688 && finalOptions.length === 0) {
       try {
-        const productId = String(url).match(/\d+/)?.[0] || "";
+        const productId = String(refererUrl || url).match(/\d+/)?.[0] || "";
         const popupUrl = `https://domeggook.com/main/popup/item/popup_itemOptionView.php?no=${encodeURIComponent(
           productId,
         )}&market=dome`;
         const res = await page.request.get(popupUrl, {
-          headers: { Referer: url, "User-Agent": "Mozilla/5.0" },
+          headers: { Referer: refererUrl || url, "User-Agent": "Mozilla/5.0" },
         });
         if (res.ok()) {
           const html = await res.text();
@@ -931,13 +935,21 @@ export async function parseProductFromDomaeqq(url) {
       } catch {}
     }
 
-    const looksGarbage = finalOptions.some((t) => {
-      const name = String(t?.name || t || "");
-      return OPTION_TEXT_IGNORE.some((g) => name.includes(g));
-    });
-    if (finalOptions.length === 0 || looksGarbage) {
-      // 팝업 실패/오염 시 옵션 비활성화
-      finalOptions = [];
+    // ✅ 최종 옵션 정리: 메뉴/안내 텍스트 제거 + 진짜 옵션처럼 보이는 것만 남김
+    if (Array.isArray(finalOptions) && finalOptions.length > 0) {
+      finalOptions = finalOptions
+        .filter((t) => {
+          const name = String(t?.name || t || "");
+          return !OPTION_TEXT_IGNORE.some((g) => name.includes(g));
+        })
+        .filter((t) => {
+          const name = normalizeOptionText(String(t?.name || t || ""));
+          return isLikelyOptionText(name);
+        });
+
+      if (finalOptions.length === 0) {
+        optionStrategy = "none";
+      }
     }
 
     // ✅ 마지막 fallback: 페이지에서 긁은 옵션 텍스트 사용
