@@ -350,13 +350,35 @@ class _WorkScreenState extends State<WorkScreen> {
               children: [
                 const SectionHeader('URL → 미리보기 / 업로드'),
                 const SizedBox(height: 10),
-                TextField(
-                  controller: _url,
-                  enabled: isAuthed && !_loading,
-                  decoration: const InputDecoration(
-                    labelText: '상품 URL (도매매/도매꾹)',
-                    hintText: 'https://mobile.domeggook.com/...',
-                  ),
+                ValueListenableBuilder<TextEditingValue>(
+                  valueListenable: _url,
+                  builder: (context, value, _) {
+                    final hasText = value.text.trim().isNotEmpty;
+                    return TextField(
+                      controller: _url,
+                      enabled: isAuthed && !_loading,
+                      decoration: InputDecoration(
+                        labelText: '상품 URL (도매매/도매꾹)',
+                        hintText: 'https://mobile.domeggook.com/...',
+                        suffixIcon: hasText
+                            ? IconButton(
+                                tooltip: '지우기',
+                                onPressed: (!isAuthed || _loading)
+                                    ? null
+                                    : () {
+                                        _url.clear();
+                                        setState(() {
+                                          _preview = null;
+                                          _uploadResult = null;
+                                          _error = null;
+                                        });
+                                      },
+                                icon: const Icon(Icons.clear),
+                              )
+                            : null,
+                      ),
+                    );
+                  },
                 ),
                 const SizedBox(height: 12),
                 Row(

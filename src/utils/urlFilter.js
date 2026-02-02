@@ -2,8 +2,24 @@ export function normalizeUrl(u) {
   if (!u) return null;
   const s = String(u).trim();
   if (!s) return null;
+
   // 공백/따옴표 제거
-  return s.replace(/^["']|["']$/g, "");
+  const cleaned = s.replace(/^["']|["']$/g, "");
+
+  // Domeggook mobile 도메인은 옵션 파싱이 불안정한 케이스가 있어
+  // 가능한 경우 PC 도메인으로 정규화한다.
+  // (path/query 유지)
+  try {
+    const parsed = new URL(cleaned);
+    if (/^mobile\.domeggook\.com$/i.test(parsed.hostname)) {
+      parsed.hostname = "domeggook.com";
+      return parsed.toString();
+    }
+  } catch {
+    // ignore
+  }
+
+  return cleaned;
 }
 
 export function classifyUrl(u) {
