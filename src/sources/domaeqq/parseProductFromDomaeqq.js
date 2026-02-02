@@ -377,6 +377,123 @@ function extractJsonObjectAfterKey(text, key, startIndex = 0) {
   return null;
 }
 
+async function extractOptionVariantsFromRuntimeOptController(page) {
+  try {
+    const variants = await page.evaluate(() => {
+      const pick = (v, path = [], depth = 0, out = []) => {
+        if (!v || typeof v !== "object") return out;
+        if (depth > 5) return out;
+
+        // A "data" object that looks like the ItemOptionController option payload
+        // Shape: { type, set/orgSet, data: { key: {name, domPrice, qty, hid} } }
+        const d = v.data && v.data.data && (v.data.set || v.data.orgSet) ? v.data : null;
+        if (d && typeof d === "object") {
+          out.push({ path, data: d });
+        }
+
+        // Traverse plain objects/arrays
+        if (Array.isArray(v)) {
+          for (let i = 0; i < v.length; i += 1) pick(v[i], path.concat([String(i)]), depth + 1, out);
+          return out;
+        }
+
+        const keys = Object.keys(v);
+        for (const k of keys) {
+          // avoid huge recursion
+          if (k === "parent" || k === "ownerDocument" || k === "document") continue;
+          try {
+            pick(v[k], path.concat([k]), depth + 1, out);
+          } catch {}
+        }
+        return out;
+      };
+
+      const roots = [];
+      try {
+        // Common global used by Domeggook
+        if (window.lItem && window.lItem.optController) roots.push(window.lItem.optController);
+      } catch {}
+      try {
+        if (window.optController) roots.push(window.optController);
+      } catch {}
+
+      const hits = [];
+      for (const r of roots) pick(r, ["root"], 0, hits);
+
+      // Choose the richest dataset
+      hits.sort((a, b) => {
+        const aLen = a?.data?.data ? Object.keys(a.data.data).length : 0;
+        const bLen = b?.data?.data ? Object.keys(b.data.data).length : 0;
+        return bLen - aLen;
+      });
+
+      const best = hits[0]?.data;
+      if (!best || !best.data || typeof best.data !== "object") return [];
+
+      const setMap = best.set || best.orgSet || {};
+      const setKeys = Object.keys(setMap)
+        .map((k) => Number(k))
+        .filter((n) => Number.isFinite(n))
+        .sort((a, b) => a - b)
+        .map((n) => String(n));
+
+      const variants = [];
+      for (const key of Object.keys(best.data)) {
+        const item = best.data[key];
+        const name = String(item?.name || "").trim();
+        if (!name) continue;
+        const hidden = Number(item?.hid ?? 0);
+        if (hidden === 1) continue;
+
+        const priceDelta = Number(item?.domPrice ?? 0);
+        const stock = Number(item?.qty ?? 0);
+
+        const values = [];
+        if (setKeys.length > 0) {
+          const idxParts = String(key || "").split("_");
+          for (let i = 0; i < setKeys.length; i += 1) {
+            const setKey = setKeys[i];
+            const setInfo = setMap[setKey] || {};
+            const optionName = String(setInfo.name || `옵션${i + 1}`).trim();
+            const rawIdx = idxParts[i];
+            const optIdx = Number.isFinite(Number(rawIdx)) ? String(Number(rawIdx)) : rawIdx;
+            const optionValue =
+              (setInfo.opts && setInfo.opts[optIdx] != null ? String(setInfo.opts[optIdx]) : "") || "";
+            if (optionValue) values.push({ optionName, optionValue });
+          }
+        }
+
+        variants.push({
+          name,
+          priceDelta: Number.isNaN(priceDelta) ? 0 : priceDelta,
+          stock: Number.isNaN(stock) ? 0 : stock,
+          values,
+        });
+      }
+
+      return variants;
+    });
+
+    if (!Array.isArray(variants) || variants.length === 0) return [];
+
+    // de-dupe
+    const seen = new Set();
+    const uniq = [];
+    for (const v of variants) {
+      const valKey = Array.isArray(v.values)
+        ? v.values.map((x) => `${x.optionName}:${x.optionValue}`).join("|")
+        : "";
+      const k = `${v.name}::${v.priceDelta}::${valKey}`;
+      if (seen.has(k)) continue;
+      seen.add(k);
+      uniq.push(v);
+    }
+    return uniq;
+  } catch {
+    return [];
+  }
+}
+
 function extractOptionVariantsFromItemOptionController(scriptText) {
   const text = String(scriptText || "");
   if (!text.includes("ItemOptionController")) return [];
@@ -893,20 +1010,31 @@ export async function parseProductFromDomaeqq(url) {
             : parseOptionValuesFromLabel(v.label),
       }));
     } else {
-      // ✅ 옵션: JS에 박힌 ItemOptionController 데이터 우선 사용
-      // 아이가 보듯이 생각하면, "진짜 옵션 상자"를 먼저 연다고 보면 됨.
+      // ✅ 옵션: 런타임에 생성된 ItemOptionController 데이터를 직접 읽기(가장 안정적)
+      // (mobile 페이지는 inline script가 JSON이 아니거나 분리되어 있어 text 파싱이 실패할 수 있음)
       try {
-        const scriptText = await page.evaluate(() =>
-          Array.from(document.scripts)
-            .map((s) => s.textContent || "")
-            .join("\n"),
-        );
-        const inlineOptions = extractOptionVariantsFromItemOptionController(scriptText);
-        if (inlineOptions.length > 0) {
-          optionStrategy = "ItemOptionController";
-          finalOptions = inlineOptions;
+        const runtimeOptions = await extractOptionVariantsFromRuntimeOptController(page);
+        if (runtimeOptions.length > 0) {
+          optionStrategy = "runtimeOptController";
+          finalOptions = runtimeOptions;
         }
       } catch {}
+
+      // ✅ 옵션: inline script 텍스트 파싱 fallback
+      if (finalOptions.length === 0) {
+        try {
+          const scriptText = await page.evaluate(() =>
+            Array.from(document.scripts)
+              .map((s) => s.textContent || "")
+              .join("\n"),
+          );
+          const inlineOptions = extractOptionVariantsFromItemOptionController(scriptText);
+          if (inlineOptions.length > 0) {
+            optionStrategy = "ItemOptionController";
+            finalOptions = inlineOptions;
+          }
+        } catch {}
+      }
     }
 
     // ✅ 옵션 팝업(전체보기) fallback
@@ -917,7 +1045,11 @@ export async function parseProductFromDomaeqq(url) {
           productId,
         )}&market=dome`;
         const res = await page.request.get(popupUrl, {
-          headers: { Referer: refererUrl || url, "User-Agent": "Mozilla/5.0" },
+          headers: {
+            // mobile referer가 차단되는 케이스가 있어 도매꾹 도메인 기준으로 고정
+            Referer: "https://domeggook.com/",
+            "User-Agent": "Mozilla/5.0",
+          },
         });
         if (res.ok()) {
           const html = await res.text();
