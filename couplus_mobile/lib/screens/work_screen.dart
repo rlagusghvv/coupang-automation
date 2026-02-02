@@ -875,12 +875,18 @@ class _Thumb extends StatelessWidget {
         width: 48,
         height: 48,
         fit: BoxFit.cover,
+        headers: const {
+          'Referer': 'https://domeggook.com',
+          'User-Agent': 'Mozilla/5.0',
+        },
         errorBuilder: (_, __, ___) => Container(
           width: 48,
           height: 48,
           color: cs.primary.withValues(alpha: 0.08),
-          child: Icon(Icons.broken_image_outlined,
-              color: cs.primary.withValues(alpha: 0.65)),
+          child: Icon(
+            Icons.broken_image_outlined,
+            color: cs.primary.withValues(alpha: 0.65),
+          ),
         ),
       ),
     );

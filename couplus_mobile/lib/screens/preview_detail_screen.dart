@@ -30,6 +30,7 @@ class PreviewDetailScreen extends StatelessWidget {
 
     // 상세정보/고시/안내 같은 항목은 구매옵션에서 제외
     const denyKeywords = [
+      // 고시/상세/약관류
       '상세정보',
       '고시',
       '상품정보',
@@ -39,6 +40,33 @@ class PreviewDetailScreen extends StatelessWidget {
       '반품',
       '주의사항',
       '안내',
+      '약관',
+      '개인정보',
+      '계약',
+      '해제',
+      '청약',
+      'A/S',
+      'AS',
+      // 정보성 필드(구매옵션 아님)
+      '원산지',
+      '수입',
+      '제조',
+      '제조국',
+      '공급사',
+      '관심공급사',
+      '상품설명',
+      '상품문의',
+      '문의하기',
+      '재고수량',
+      '품질보증',
+      '취급',
+      '소재',
+      '치수',
+      '종류',
+      '색상',
+      '모델',
+      '인증',
+      'KC',
     ];
     for (final kw in denyKeywords) {
       if (lowered.contains(kw)) return false;
@@ -52,10 +80,24 @@ class PreviewDetailScreen extends StatelessWidget {
     if (!_isBlank(stock)) return true;
 
     // 스키마 힌트
-    if (o.containsKey('optionName') || o.containsKey('optionValue')) {
-      return true;
-    }
     if (o.containsKey('values') || o.containsKey('items')) return true;
+
+    // optionName/optionValue만 있는 경우는 "정보성"도 많이 섞여서,
+    // 이름이 옵션/색상/사이즈 류일 때만 구매옵션으로 취급
+    if (o.containsKey('optionName') || o.containsKey('optionValue')) {
+      const allowKeywords = [
+        '옵션',
+        '색상',
+        '사이즈',
+        '크기',
+        '사이즈',
+        '타입',
+        '선택',
+      ];
+      for (final kw in allowKeywords) {
+        if (lowered.contains(kw)) return true;
+      }
+    }
 
     return false;
   }
@@ -170,9 +212,20 @@ class PreviewDetailScreen extends StatelessWidget {
           final stock =
               _s(o['stock'] ?? o['inventory'] ?? o['qty'] ?? o['quantity']);
 
-          final subtitle = purchaseStyle
-              ? '가격: ${price.isEmpty ? '-' : price} · 재고: ${stock.isEmpty ? '-' : stock}'
-              : (value.isEmpty ? '' : value);
+          String subtitle = '';
+          if (purchaseStyle) {
+            final priceText = _isBlank(price) ? '' : price;
+            final stockText = _isBlank(stock) ? '' : stock;
+            if (priceText.isNotEmpty && stockText.isNotEmpty) {
+              subtitle = '가격: $priceText · 재고: $stockText';
+            } else if (priceText.isNotEmpty) {
+              subtitle = '가격: $priceText';
+            } else if (stockText.isNotEmpty) {
+              subtitle = '재고: $stockText';
+            }
+          } else {
+            subtitle = value.isEmpty ? '' : value;
+          }
 
           return Padding(
             padding: const EdgeInsets.symmetric(vertical: 6),
@@ -256,6 +309,11 @@ class PreviewDetailScreen extends StatelessWidget {
                       child: Image.network(
                         imageUrl,
                         fit: BoxFit.cover,
+                        headers: const {
+                          // 일부 도매꾹 CDN은 referer 없으면 이미지가 깨지는 케이스가 있음
+                          'Referer': 'https://domeggook.com',
+                          'User-Agent': 'Mozilla/5.0',
+                        },
                         errorBuilder: (_, __, ___) => Container(
                           color: Theme.of(context)
                               .colorScheme
