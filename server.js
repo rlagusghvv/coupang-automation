@@ -391,6 +391,8 @@ app.post("/api/upload/preview", authRequired, async (req, res) => {
         imageUrl: preview.draft?.imageUrl || "",
         images: preview.computed?.images || [],
         options: preview.options || [],
+        retentionDays: 7,
+        maxRows: 30,
       });
     } catch {}
 

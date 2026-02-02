@@ -1,4 +1,5 @@
 import 'package:couplus_mobile/api/api_client.dart';
+import 'package:couplus_mobile/screens/preview_detail_screen.dart';
 import 'package:couplus_mobile/ui/widgets.dart';
 import 'package:flutter/material.dart';
 
@@ -188,25 +189,153 @@ class _HomeScreenState extends State<HomeScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const SectionHeader('Pay URLs'),
+                const SectionHeader('최근 미리보기'),
                 const SizedBox(height: 10),
                 if (!isAuthed)
                   Text(
                     '로그인 후 확인할 수 있어요.',
                     style: TextStyle(
-                        color: Theme.of(context)
-                            .colorScheme
-                            .onSurface
-                            .withValues(alpha: 0.65)),
+                      color: Theme.of(context)
+                          .colorScheme
+                          .onSurface
+                          .withValues(alpha: 0.65),
+                    ),
+                  )
+                else if (previewHistory.isEmpty)
+                  Text(
+                    '아직 미리보기 내역이 없어요.',
+                    style: TextStyle(
+                      color: Theme.of(context)
+                          .colorScheme
+                          .onSurface
+                          .withValues(alpha: 0.65),
+                    ),
+                  )
+                else
+                  ...previewHistory.take(10).map((it) {
+                    final row = (it as Map?)?.cast<String, dynamic>() ?? {};
+                    final url = (row['url'] ?? '').toString();
+                    final title = (row['title'] ?? '').toString();
+                    final imageUrl = (row['imageUrl'] ?? '').toString();
+                    final finalPrice = row['finalPrice'];
+                    final options = (row['options'] as List?) ?? const [];
+
+                    final preview = {
+                      'draft': {
+                        'title': title,
+                        'imageUrl': imageUrl,
+                      },
+                      'computed': {
+                        'finalPrice': finalPrice,
+                      },
+                      'options': options,
+                    };
+
+                    return Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 6),
+                      child: InkWell(
+                        borderRadius: BorderRadius.circular(14),
+                        onTap: () {
+                          Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (_) => PreviewDetailScreen(
+                                url: url,
+                                preview: preview,
+                              ),
+                            ),
+                          );
+                        },
+                        child: Row(
+                          children: [
+                            ClipRRect(
+                              borderRadius: BorderRadius.circular(12),
+                              child: Image.network(
+                                imageUrl,
+                                width: 48,
+                                height: 48,
+                                fit: BoxFit.cover,
+                                headers: const {
+                                  'Referer': 'https://domeggook.com',
+                                  'User-Agent': 'Mozilla/5.0',
+                                },
+                                errorBuilder: (_, __, ___) => Container(
+                                  width: 48,
+                                  height: 48,
+                                  color: Theme.of(context)
+                                      .colorScheme
+                                      .primary
+                                      .withValues(alpha: 0.08),
+                                  child: Icon(
+                                    Icons.broken_image_outlined,
+                                    color: Theme.of(context)
+                                        .colorScheme
+                                        .primary
+                                        .withValues(alpha: 0.65),
+                                  ),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    title.isEmpty ? '(제목 없음)' : title,
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.w900,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 6),
+                                  Text(
+                                    '최종가: ${finalPrice ?? '-'} · 옵션: ${options.length}개',
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      color: Theme.of(context)
+                                          .colorScheme
+                                          .onSurface
+                                          .withValues(alpha: 0.65),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  }),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+          AppCard(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const SectionHeader('결제 링크'),
+                const SizedBox(height: 10),
+                if (!isAuthed)
+                  Text(
+                    '로그인 후 확인할 수 있어요.',
+                    style: TextStyle(
+                      color: Theme.of(context)
+                          .colorScheme
+                          .onSurface
+                          .withValues(alpha: 0.65),
+                    ),
                   )
                 else if (payUrls.isEmpty)
                   Text(
-                    '아직 결제 URL이 없어요.',
+                    '아직 결제 링크가 없어요.',
                     style: TextStyle(
-                        color: Theme.of(context)
-                            .colorScheme
-                            .onSurface
-                            .withValues(alpha: 0.65)),
+                      color: Theme.of(context)
+                          .colorScheme
+                          .onSurface
+                          .withValues(alpha: 0.65),
+                    ),
                   )
                 else
                   ...payUrls.entries.map((e) {

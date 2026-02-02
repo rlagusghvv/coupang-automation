@@ -198,11 +198,16 @@ export async function addPreviewHistory({
   imageUrl = "",
   images = [],
   options = [],
+  // Retention policy (default): keep last 7 days + max 30 rows
+  retentionDays = 7,
+  maxRows = 30,
 }) {
   if (!userId) throw new Error("userId required");
   if (!url) throw new Error("url required");
 
   const db = openDb();
+  const nowIso = new Date().toISOString();
+
   await dbRun(
     db,
     `INSERT INTO preview_history (
@@ -217,9 +222,38 @@ export async function addPreviewHistory({
       String(imageUrl || ""),
       JSON.stringify(Array.isArray(images) ? images : []),
       JSON.stringify(Array.isArray(options) ? options : []),
-      new Date().toISOString(),
+      nowIso,
     ],
   );
+
+  // retention: delete old rows
+  const days = Math.max(1, Math.min(365, Number(retentionDays) || 7));
+  const max = Math.max(1, Math.min(500, Number(maxRows) || 30));
+  try {
+    await dbRun(
+      db,
+      `DELETE FROM preview_history
+       WHERE user_id = ?
+         AND datetime(created_at) < datetime('now', ?)`,
+      [userId, `-${days} days`],
+    );
+
+    // retention: keep only latest N rows
+    await dbRun(
+      db,
+      `DELETE FROM preview_history
+       WHERE user_id = ?
+         AND id NOT IN (
+           SELECT id
+           FROM preview_history
+           WHERE user_id = ?
+           ORDER BY id DESC
+           LIMIT ?
+         )`,
+      [userId, userId, max],
+    );
+  } catch {}
+
   db.close();
 }
 
