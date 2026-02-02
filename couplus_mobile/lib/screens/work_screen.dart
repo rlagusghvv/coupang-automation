@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:couplus_mobile/api/api_client.dart';
+import 'package:couplus_mobile/screens/preview_detail_screen.dart';
 import 'package:couplus_mobile/ui/widgets.dart';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -306,7 +307,7 @@ class _WorkScreenState extends State<WorkScreen> {
     final previewOptions = (preview?['options'] as List?) ?? const [];
 
     return AppScaffold(
-      title: 'Work',
+      title: '작업',
       onRefresh: _refresh,
       actions: [
         IconButton(
@@ -332,7 +333,11 @@ class _WorkScreenState extends State<WorkScreen> {
                   const SizedBox(height: 10),
                   Text(
                     'Work 탭은 로그인 후 사용할 수 있어요. More 탭에서 로그인해 주세요.',
-                    style: TextStyle(color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.65)),
+                    style: TextStyle(
+                        color: Theme.of(context)
+                            .colorScheme
+                            .onSurface
+                            .withValues(alpha: 0.65)),
                   ),
                 ],
               ),
@@ -343,14 +348,14 @@ class _WorkScreenState extends State<WorkScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const SectionHeader('URL → Preview / Upload'),
+                const SectionHeader('URL → 미리보기 / 업로드'),
                 const SizedBox(height: 10),
                 TextField(
                   controller: _url,
                   enabled: isAuthed && !_loading,
                   decoration: const InputDecoration(
-                    labelText: 'Product URL (domeme / domeggook)',
-                    hintText: 'https://domeme.domeggook.com/...',
+                    labelText: '상품 URL (도매매/도매꾹)',
+                    hintText: 'https://mobile.domeggook.com/...',
                   ),
                 ),
                 const SizedBox(height: 12),
@@ -358,56 +363,100 @@ class _WorkScreenState extends State<WorkScreen> {
                   children: [
                     Expanded(
                       child: OutlinedButton(
-                        onPressed: (!isAuthed || _loading) ? null : _previewFromUrl,
-                        child: const Text('Preview'),
+                        onPressed:
+                            (!isAuthed || _loading) ? null : _previewFromUrl,
+                        child: const Text('미리보기'),
                       ),
                     ),
                     const SizedBox(width: 10),
                     Expanded(
                       child: FilledButton(
-                        onPressed: (!isAuthed || _loading) ? null : _executeUpload,
-                        child: const Text('Run upload'),
+                        onPressed:
+                            (!isAuthed || _loading) ? null : _executeUpload,
+                        child: const Text('업로드 실행'),
                       ),
                     ),
                   ],
                 ),
                 if (preview != null) ...[
                   const Divider(height: 28),
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      _Thumb(url: previewImage),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              previewTitle.isEmpty ? '(no title)' : previewTitle,
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(fontWeight: FontWeight.w900),
-                            ),
-                            const SizedBox(height: 6),
-                            Text(
-                              'finalPrice: ${previewFinalPrice ?? '-'} · options: ${previewOptions.length}',
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.65),
-                              ),
-                            ),
-                          ],
+                  InkWell(
+                    borderRadius: BorderRadius.circular(14),
+                    onTap: () {
+                      Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) => PreviewDetailScreen(
+                            url: _url.text.trim(),
+                            preview: preview,
+                          ),
                         ),
+                      );
+                    },
+                    child: Padding(
+                      padding: const EdgeInsets.all(6),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          _Thumb(url: previewImage),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  previewTitle.isEmpty
+                                      ? '(제목 없음)'
+                                      : previewTitle,
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                      fontWeight: FontWeight.w900),
+                                ),
+                                const SizedBox(height: 6),
+                                Text(
+                                  '최종가: ${previewFinalPrice ?? '-'} · 옵션: ${previewOptions.length}개',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: Theme.of(context)
+                                        .colorScheme
+                                        .onSurface
+                                        .withValues(alpha: 0.65),
+                                  ),
+                                ),
+                                const SizedBox(height: 10),
+                                Text(
+                                  '탭해서 상세 미리보기 보기',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w700,
+                                    color: Theme.of(context)
+                                        .colorScheme
+                                        .primary
+                                        .withValues(alpha: 0.95),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
                       ),
-                    ],
+                    ),
                   ),
                 ],
                 if (_uploadResult != null) ...[
                   const Divider(height: 28),
-                  KvRow(k: 'Upload OK', v: (_uploadResult?['ok'] == true) ? 'Yes' : 'No'),
-                  KvRow(k: 'SellerProductId', v: (_uploadResult?['create'] as Map?)?['sellerProductId']?.toString() ?? '-'),
+                  KvRow(
+                      k: 'Upload OK',
+                      v: (_uploadResult?['ok'] == true) ? 'Yes' : 'No'),
+                  KvRow(
+                      k: 'SellerProductId',
+                      v: (_uploadResult?['create'] as Map?)?['sellerProductId']
+                              ?.toString() ??
+                          '-'),
                   if ((_uploadResult?['error'] ?? '').toString().isNotEmpty)
-                    KvRow(k: 'Error', v: (_uploadResult?['error'] ?? '').toString()),
+                    KvRow(
+                        k: 'Error',
+                        v: (_uploadResult?['error'] ?? '').toString()),
                 ],
               ],
             ),
@@ -425,7 +474,8 @@ class _WorkScreenState extends State<WorkScreen> {
                       child: TextField(
                         controller: _dateFrom,
                         enabled: isAuthed && !_loading,
-                        decoration: const InputDecoration(labelText: 'dateFrom (YYYY-MM-DD)'),
+                        decoration: const InputDecoration(
+                            labelText: 'dateFrom (YYYY-MM-DD)'),
                       ),
                     ),
                     const SizedBox(width: 10),
@@ -433,7 +483,8 @@ class _WorkScreenState extends State<WorkScreen> {
                       child: TextField(
                         controller: _dateTo,
                         enabled: isAuthed && !_loading,
-                        decoration: const InputDecoration(labelText: 'dateTo (YYYY-MM-DD)'),
+                        decoration: const InputDecoration(
+                            labelText: 'dateTo (YYYY-MM-DD)'),
                       ),
                     ),
                   ],
@@ -443,14 +494,16 @@ class _WorkScreenState extends State<WorkScreen> {
                   children: [
                     Expanded(
                       child: OutlinedButton(
-                        onPressed: (!isAuthed || _loading) ? null : _ordersExport,
+                        onPressed:
+                            (!isAuthed || _loading) ? null : _ordersExport,
                         child: const Text('Generate excel'),
                       ),
                     ),
                     const SizedBox(width: 10),
                     Expanded(
                       child: FilledButton(
-                        onPressed: (!isAuthed || _loading) ? null : _ordersUpload,
+                        onPressed:
+                            (!isAuthed || _loading) ? null : _ordersUpload,
                         child: const Text('Upload to Domeme'),
                       ),
                     ),
@@ -458,14 +511,24 @@ class _WorkScreenState extends State<WorkScreen> {
                 ),
                 if (_ordersExportResult != null) ...[
                   const Divider(height: 28),
-                  KvRow(k: 'filePath', v: (_ordersExportResult?['filePath'] ?? '-').toString()),
-                  KvRow(k: 'ok', v: (_ordersExportResult?['ok'] == true) ? 'Yes' : 'No'),
+                  KvRow(
+                      k: 'filePath',
+                      v: (_ordersExportResult?['filePath'] ?? '-').toString()),
+                  KvRow(
+                      k: 'ok',
+                      v: (_ordersExportResult?['ok'] == true) ? 'Yes' : 'No'),
                 ],
                 if (_ordersUploadResult != null) ...[
                   const Divider(height: 28),
-                  KvRow(k: 'upload ok', v: (_ordersUploadResult?['ok'] == true) ? 'Yes' : 'No'),
-                  if ((_ordersUploadResult?['error'] ?? '').toString().isNotEmpty)
-                    KvRow(k: 'error', v: (_ordersUploadResult?['error'] ?? '').toString()),
+                  KvRow(
+                      k: 'upload ok',
+                      v: (_ordersUploadResult?['ok'] == true) ? 'Yes' : 'No'),
+                  if ((_ordersUploadResult?['error'] ?? '')
+                      .toString()
+                      .isNotEmpty)
+                    KvRow(
+                        k: 'error',
+                        v: (_ordersUploadResult?['error'] ?? '').toString()),
                 ],
               ],
             ),
@@ -481,14 +544,16 @@ class _WorkScreenState extends State<WorkScreen> {
                   children: [
                     Expanded(
                       child: OutlinedButton(
-                        onPressed: (!isAuthed || _loading) ? null : _purchaseDraft,
+                        onPressed:
+                            (!isAuthed || _loading) ? null : _purchaseDraft,
                         child: const Text('Build drafts'),
                       ),
                     ),
                     const SizedBox(width: 10),
                     Expanded(
                       child: FilledButton(
-                        onPressed: (!isAuthed || _loading) ? null : _purchaseUpload,
+                        onPressed:
+                            (!isAuthed || _loading) ? null : _purchaseUpload,
                         child: const Text('Upload to vendors'),
                       ),
                     ),
@@ -496,18 +561,23 @@ class _WorkScreenState extends State<WorkScreen> {
                 ),
                 if (_purchaseDraftResult != null) ...[
                   const Divider(height: 28),
-                  KvRow(k: 'paidOrderCount', v: (_purchaseDraftResult?['paidOrderCount'] ?? '-').toString()),
+                  KvRow(
+                      k: 'paidOrderCount',
+                      v: (_purchaseDraftResult?['paidOrderCount'] ?? '-')
+                          .toString()),
                 ],
                 if (_purchaseUploadResult != null) ...[
                   const Divider(height: 28),
                   Text(
                     'Upload results',
-                    style: TextStyle(fontWeight: FontWeight.w900, color: Theme.of(context).colorScheme.onSurface),
+                    style: TextStyle(
+                        fontWeight: FontWeight.w900,
+                        color: Theme.of(context).colorScheme.onSurface),
                   ),
                   const SizedBox(height: 8),
-                  ...(((
-                    _purchaseUploadResult?['results'] as List?
-                  ) ?? const [])).map((it) {
+                  ...(((_purchaseUploadResult?['results'] as List?) ??
+                          const []))
+                      .map((it) {
                     final row = (it as Map?) ?? {};
                     final vendor = (row['vendor'] ?? '').toString();
                     final ok = row['ok'] == true;
@@ -518,7 +588,9 @@ class _WorkScreenState extends State<WorkScreen> {
                         children: [
                           InfoChip(
                             label: vendor.isEmpty ? '-' : vendor,
-                            color: ok ? const Color(0xFF2F9E44) : const Color(0xFFE03131),
+                            color: ok
+                                ? const Color(0xFF2F9E44)
+                                : const Color(0xFFE03131),
                           ),
                           const SizedBox(width: 10),
                           Expanded(
@@ -552,12 +624,20 @@ class _WorkScreenState extends State<WorkScreen> {
                 if (!isAuthed)
                   Text(
                     '로그인 후 확인할 수 있어요.',
-                    style: TextStyle(color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.65)),
+                    style: TextStyle(
+                        color: Theme.of(context)
+                            .colorScheme
+                            .onSurface
+                            .withValues(alpha: 0.65)),
                   )
                 else if (payUrls.isEmpty)
                   Text(
                     '아직 결제 URL이 없어요.',
-                    style: TextStyle(color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.65)),
+                    style: TextStyle(
+                        color: Theme.of(context)
+                            .colorScheme
+                            .onSurface
+                            .withValues(alpha: 0.65)),
                   )
                 else
                   ...payUrls.entries.map((e) {
@@ -567,7 +647,10 @@ class _WorkScreenState extends State<WorkScreen> {
                       padding: const EdgeInsets.symmetric(vertical: 6),
                       child: Row(
                         children: [
-                          Expanded(child: Text(vendor, style: const TextStyle(fontWeight: FontWeight.w800))),
+                          Expanded(
+                              child: Text(vendor,
+                                  style: const TextStyle(
+                                      fontWeight: FontWeight.w800))),
                           TextButton.icon(
                             onPressed: () => _openExternal(url),
                             icon: const Icon(Icons.open_in_new, size: 18),
@@ -585,17 +668,26 @@ class _WorkScreenState extends State<WorkScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                SectionHeader('Recent previews', trailing: InfoChip(label: '${previewHistory.length}')),
+                SectionHeader('Recent previews',
+                    trailing: InfoChip(label: '${previewHistory.length}')),
                 const SizedBox(height: 10),
                 if (!isAuthed)
                   Text(
                     '로그인 후 확인할 수 있어요.',
-                    style: TextStyle(color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.65)),
+                    style: TextStyle(
+                        color: Theme.of(context)
+                            .colorScheme
+                            .onSurface
+                            .withValues(alpha: 0.65)),
                   )
                 else if (previewHistory.isEmpty)
                   Text(
                     '아직 히스토리가 없어요. Preview를 실행한 뒤 다시 확인해보세요.',
-                    style: TextStyle(color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.65)),
+                    style: TextStyle(
+                        color: Theme.of(context)
+                            .colorScheme
+                            .onSurface
+                            .withValues(alpha: 0.65)),
                   )
                 else
                   ListView.separated(
@@ -623,14 +715,20 @@ class _WorkScreenState extends State<WorkScreen> {
                                   title.isEmpty ? '(no title)' : title,
                                   maxLines: 2,
                                   overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(fontWeight: FontWeight.w800),
+                                  style: const TextStyle(
+                                      fontWeight: FontWeight.w800),
                                 ),
                                 const SizedBox(height: 6),
                                 Text(
                                   url,
                                   maxLines: 2,
                                   overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.60)),
+                                  style: TextStyle(
+                                      fontSize: 12,
+                                      color: Theme.of(context)
+                                          .colorScheme
+                                          .onSurface
+                                          .withValues(alpha: 0.60)),
                                 ),
                               ],
                             ),
@@ -652,17 +750,26 @@ class _WorkScreenState extends State<WorkScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                SectionHeader('Recent purchase logs', trailing: InfoChip(label: '${purchaseLogs.length}')),
+                SectionHeader('Recent purchase logs',
+                    trailing: InfoChip(label: '${purchaseLogs.length}')),
                 const SizedBox(height: 10),
                 if (!isAuthed)
                   Text(
                     '로그인 후 확인할 수 있어요.',
-                    style: TextStyle(color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.65)),
+                    style: TextStyle(
+                        color: Theme.of(context)
+                            .colorScheme
+                            .onSurface
+                            .withValues(alpha: 0.65)),
                   )
                 else if (purchaseLogs.isEmpty)
                   Text(
                     '아직 로그가 없어요.',
-                    style: TextStyle(color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.65)),
+                    style: TextStyle(
+                        color: Theme.of(context)
+                            .colorScheme
+                            .onSurface
+                            .withValues(alpha: 0.65)),
                   )
                 else
                   ListView.separated(
@@ -683,25 +790,38 @@ class _WorkScreenState extends State<WorkScreen> {
                         children: [
                           InfoChip(
                             label: ok ? 'OK' : 'FAIL',
-                            color: ok ? const Color(0xFF2F9E44) : const Color(0xFFE03131),
+                            color: ok
+                                ? const Color(0xFF2F9E44)
+                                : const Color(0xFFE03131),
                           ),
                           const SizedBox(width: 10),
                           Expanded(
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                Text('$type · $vendor', style: const TextStyle(fontWeight: FontWeight.w900)),
+                                Text('$type · $vendor',
+                                    style: const TextStyle(
+                                        fontWeight: FontWeight.w900)),
                                 const SizedBox(height: 6),
                                 Text(
                                   at,
-                                  style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.60)),
+                                  style: TextStyle(
+                                      fontSize: 12,
+                                      color: Theme.of(context)
+                                          .colorScheme
+                                          .onSurface
+                                          .withValues(alpha: 0.60)),
                                 ),
                                 if ((it['error'] ?? '').toString().isNotEmpty)
                                   Padding(
                                     padding: const EdgeInsets.only(top: 6),
                                     child: Text(
                                       (it['error'] ?? '').toString(),
-                                      style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.error),
+                                      style: TextStyle(
+                                          fontSize: 12,
+                                          color: Theme.of(context)
+                                              .colorScheme
+                                              .error),
                                     ),
                                   ),
                               ],
@@ -744,7 +864,8 @@ class _Thumb extends StatelessWidget {
           color: cs.primary.withValues(alpha: 0.08),
           borderRadius: border,
         ),
-        child: Icon(Icons.image_outlined, color: cs.primary.withValues(alpha: 0.65)),
+        child: Icon(Icons.image_outlined,
+            color: cs.primary.withValues(alpha: 0.65)),
       );
     }
 
@@ -759,7 +880,8 @@ class _Thumb extends StatelessWidget {
           width: 48,
           height: 48,
           color: cs.primary.withValues(alpha: 0.08),
-          child: Icon(Icons.broken_image_outlined, color: cs.primary.withValues(alpha: 0.65)),
+          child: Icon(Icons.broken_image_outlined,
+              color: cs.primary.withValues(alpha: 0.65)),
         ),
       ),
     );

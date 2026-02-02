@@ -131,7 +131,7 @@ class ErrorBanner extends StatelessWidget {
           ),
           if (onRetry != null) ...[
             const SizedBox(width: 8),
-            TextButton(onPressed: onRetry, child: const Text('Retry')),
+            TextButton(onPressed: onRetry, child: const Text('재시도')),
           ],
         ],
       ),
@@ -157,12 +157,17 @@ class KvRow extends StatelessWidget {
               k,
               style: TextStyle(
                 fontSize: 13,
-                color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.65),
+                color: Theme.of(context)
+                    .colorScheme
+                    .onSurface
+                    .withValues(alpha: 0.65),
               ),
             ),
           ),
           const SizedBox(width: 12),
-          Text(v, style: vStyle ?? const TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
+          Text(v,
+              style: vStyle ??
+                  const TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
         ],
       ),
     );

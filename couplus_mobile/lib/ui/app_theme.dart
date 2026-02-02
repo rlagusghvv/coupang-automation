@@ -7,12 +7,34 @@ class AppTheme {
   static const card = Colors.white;
 
   static ThemeData light() {
-    final cs = ColorScheme.fromSeed(seedColor: seed, brightness: Brightness.light);
+    final cs =
+        ColorScheme.fromSeed(seedColor: seed, brightness: Brightness.light);
 
     return ThemeData(
       useMaterial3: true,
       colorScheme: cs,
       scaffoldBackgroundColor: bg,
+      navigationBarTheme: NavigationBarThemeData(
+        height: 64,
+        backgroundColor: Colors.white.withValues(alpha: 0.86),
+        indicatorColor: cs.primary.withValues(alpha: 0.14),
+        labelTextStyle: WidgetStateProperty.resolveWith((states) {
+          final selected = states.contains(WidgetState.selected);
+          return TextStyle(
+            fontSize: 12,
+            fontWeight: selected ? FontWeight.w800 : FontWeight.w700,
+            color:
+                selected ? cs.onSurface : cs.onSurface.withValues(alpha: 0.60),
+          );
+        }),
+        iconTheme: WidgetStateProperty.resolveWith((states) {
+          final selected = states.contains(WidgetState.selected);
+          return IconThemeData(
+            size: 22,
+            color: selected ? cs.primary : cs.onSurface.withValues(alpha: 0.55),
+          );
+        }),
+      ),
       appBarTheme: const AppBarTheme(
         backgroundColor: bg,
         surfaceTintColor: Colors.transparent,
@@ -46,11 +68,33 @@ class AppTheme {
   }
 
   static ThemeData dark() {
-    final cs = ColorScheme.fromSeed(seedColor: seed, brightness: Brightness.dark);
+    final cs =
+        ColorScheme.fromSeed(seedColor: seed, brightness: Brightness.dark);
     return ThemeData(
       useMaterial3: true,
       colorScheme: cs,
       scaffoldBackgroundColor: const Color(0xFF0D1117),
+      navigationBarTheme: NavigationBarThemeData(
+        height: 64,
+        backgroundColor: const Color(0xFF111827).withValues(alpha: 0.86),
+        indicatorColor: cs.primary.withValues(alpha: 0.22),
+        labelTextStyle: WidgetStateProperty.resolveWith((states) {
+          final selected = states.contains(WidgetState.selected);
+          return TextStyle(
+            fontSize: 12,
+            fontWeight: selected ? FontWeight.w800 : FontWeight.w700,
+            color:
+                selected ? cs.onSurface : cs.onSurface.withValues(alpha: 0.60),
+          );
+        }),
+        iconTheme: WidgetStateProperty.resolveWith((states) {
+          final selected = states.contains(WidgetState.selected);
+          return IconThemeData(
+            size: 22,
+            color: selected ? cs.primary : cs.onSurface.withValues(alpha: 0.55),
+          );
+        }),
+      ),
       cardTheme: CardThemeData(
         color: const Color(0xFF111827),
         surfaceTintColor: Colors.transparent,

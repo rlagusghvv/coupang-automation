@@ -52,14 +52,37 @@ class _RootTabsState extends State<RootTabs> {
 
     return Scaffold(
       body: SafeArea(child: pages[_index]),
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: _index,
-        onDestinationSelected: (i) => setState(() => _index = i),
-        destinations: const [
-          NavigationDestination(icon: Icon(Icons.home_outlined), selectedIcon: Icon(Icons.home), label: 'Home'),
-          NavigationDestination(icon: Icon(Icons.work_outline), selectedIcon: Icon(Icons.work), label: 'Work'),
-          NavigationDestination(icon: Icon(Icons.more_horiz), selectedIcon: Icon(Icons.more_horiz), label: 'More'),
-        ],
+      bottomNavigationBar: Padding(
+        padding: EdgeInsets.fromLTRB(
+          12,
+          0,
+          12,
+          12 + MediaQuery.of(context).padding.bottom,
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(18),
+          child: NavigationBar(
+            selectedIndex: _index,
+            onDestinationSelected: (i) => setState(() => _index = i),
+            destinations: const [
+              NavigationDestination(
+                icon: Icon(Icons.home_outlined),
+                selectedIcon: Icon(Icons.home),
+                label: '홈',
+              ),
+              NavigationDestination(
+                icon: Icon(Icons.work_outline),
+                selectedIcon: Icon(Icons.work),
+                label: '작업',
+              ),
+              NavigationDestination(
+                icon: Icon(Icons.more_horiz),
+                selectedIcon: Icon(Icons.more_horiz),
+                label: '더보기',
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

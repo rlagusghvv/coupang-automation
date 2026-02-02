@@ -53,7 +53,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final isAuthed = auth['authenticated'] == true;
 
     return AppScaffold(
-      title: 'CoupElephant',
+      title: '쿠팡코끼리',
       onRefresh: _refresh,
       actions: [
         IconButton(
@@ -67,11 +67,17 @@ class _HomeScreenState extends State<HomeScreen> {
           Row(
             children: [
               InfoChip(
-                label: isAuthed ? 'Logged in' : 'Login required',
-                color: isAuthed ? const Color(0xFF2F9E44) : const Color(0xFFE03131),
+                label: isAuthed ? '로그인됨' : '로그인 필요',
+                color: isAuthed
+                    ? const Color(0xFF2F9E44)
+                    : const Color(0xFFE03131),
               ),
               const SizedBox(width: 10),
-              if (_loading) const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)),
+              if (_loading)
+                const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2)),
             ],
           ),
           if (_error != null) ...[
@@ -83,28 +89,42 @@ class _HomeScreenState extends State<HomeScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const SectionHeader('Session'),
+                const SectionHeader('세션 상태'),
                 const SizedBox(height: 10),
                 KvRow(
                   k: '도매매',
-                  v: domeme['valid'] == true ? 'Connected' : 'Not connected',
+                  v: domeme['valid'] == true ? '연결됨' : '미연결',
                   vStyle: TextStyle(
                     fontWeight: FontWeight.w800,
-                    color: domeme['valid'] == true ? const Color(0xFF2F9E44) : Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.65),
+                    color: domeme['valid'] == true
+                        ? const Color(0xFF2F9E44)
+                        : Theme.of(context)
+                            .colorScheme
+                            .onSurface
+                            .withValues(alpha: 0.65),
                   ),
                 ),
                 KvRow(
                   k: '도매꾹',
-                  v: domeggook['valid'] == true ? 'Connected' : 'Not connected',
+                  v: domeggook['valid'] == true ? '연결됨' : '미연결',
                   vStyle: TextStyle(
                     fontWeight: FontWeight.w800,
-                    color: domeggook['valid'] == true ? const Color(0xFF2F9E44) : Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.65),
+                    color: domeggook['valid'] == true
+                        ? const Color(0xFF2F9E44)
+                        : Theme.of(context)
+                            .colorScheme
+                            .onSurface
+                            .withValues(alpha: 0.65),
                   ),
                 ),
                 const Divider(height: 24),
                 Text(
                   '로그인/세션 관리는 More 탭에서 할 수 있어요.',
-                  style: TextStyle(color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.65)),
+                  style: TextStyle(
+                      color: Theme.of(context)
+                          .colorScheme
+                          .onSurface
+                          .withValues(alpha: 0.65)),
                 ),
               ],
             ),
@@ -114,15 +134,21 @@ class _HomeScreenState extends State<HomeScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const SectionHeader('Activity'),
+                const SectionHeader('최근 활동'),
                 const SizedBox(height: 10),
                 Row(
                   children: [
-                    Expanded(child: _Metric(title: 'Preview', value: '${previewHistory.length}')),
+                    Expanded(
+                        child: _Metric(
+                            title: '미리보기', value: '${previewHistory.length}')),
                     const SizedBox(width: 10),
-                    Expanded(child: _Metric(title: 'Purchase logs', value: '${purchaseLogs.length}')),
+                    Expanded(
+                        child: _Metric(
+                            title: '구매 로그', value: '${purchaseLogs.length}')),
                     const SizedBox(width: 10),
-                    Expanded(child: _Metric(title: 'Pay URLs', value: '${payUrls.keys.length}')),
+                    Expanded(
+                        child: _Metric(
+                            title: '결제 링크', value: '${payUrls.keys.length}')),
                   ],
                 ),
               ],
@@ -133,9 +159,9 @@ class _HomeScreenState extends State<HomeScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const SectionHeader('Account'),
+                const SectionHeader('계정'),
                 const SizedBox(height: 10),
-                KvRow(k: 'Authenticated', v: isAuthed ? 'Yes' : 'No'),
+                KvRow(k: '로그인', v: isAuthed ? '예' : '아니오'),
                 if (isAuthed) ...[
                   KvRow(
                     k: 'Email',
@@ -148,7 +174,11 @@ class _HomeScreenState extends State<HomeScreen> {
                 ] else
                   Text(
                     'More 탭에서 로그인하면 작업 탭의 모든 기능을 사용할 수 있어요.',
-                    style: TextStyle(color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.65)),
+                    style: TextStyle(
+                        color: Theme.of(context)
+                            .colorScheme
+                            .onSurface
+                            .withValues(alpha: 0.65)),
                   ),
               ],
             ),
@@ -163,12 +193,20 @@ class _HomeScreenState extends State<HomeScreen> {
                 if (!isAuthed)
                   Text(
                     '로그인 후 확인할 수 있어요.',
-                    style: TextStyle(color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.65)),
+                    style: TextStyle(
+                        color: Theme.of(context)
+                            .colorScheme
+                            .onSurface
+                            .withValues(alpha: 0.65)),
                   )
                 else if (payUrls.isEmpty)
                   Text(
                     '아직 결제 URL이 없어요.',
-                    style: TextStyle(color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.65)),
+                    style: TextStyle(
+                        color: Theme.of(context)
+                            .colorScheme
+                            .onSurface
+                            .withValues(alpha: 0.65)),
                   )
                 else
                   ...payUrls.entries.map((e) {
@@ -203,10 +241,15 @@ class _Metric extends StatelessWidget {
         children: [
           Text(
             title,
-            style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: cs.onSurface.withValues(alpha: 0.65)),
+            style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+                color: cs.onSurface.withValues(alpha: 0.65)),
           ),
           const SizedBox(height: 6),
-          Text(value, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w900)),
+          Text(value,
+              style:
+                  const TextStyle(fontSize: 18, fontWeight: FontWeight.w900)),
         ],
       ),
     );
