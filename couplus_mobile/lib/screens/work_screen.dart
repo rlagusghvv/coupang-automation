@@ -408,7 +408,8 @@ class _WorkScreenState extends State<WorkScreen> {
                       Navigator.of(context).push(
                         MaterialPageRoute(
                           builder: (_) => PreviewDetailScreen(
-                            url: _url.text.trim(),
+                            url:
+                                (preview['url'] ?? _url.text).toString().trim(),
                             preview: preview,
                           ),
                         ),
@@ -723,43 +724,95 @@ class _WorkScreenState extends State<WorkScreen> {
                       final finalPrice = item['finalPrice'];
                       final imageUrl = (item['imageUrl'] ?? '').toString();
 
-                      return Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          _Thumb(url: imageUrl),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  title.isEmpty ? '(no title)' : title,
-                                  maxLines: 2,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
-                                      fontWeight: FontWeight.w800),
-                                ),
-                                const SizedBox(height: 6),
-                                Text(
-                                  url,
-                                  maxLines: 2,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                      fontSize: 12,
-                                      color: Theme.of(context)
-                                          .colorScheme
-                                          .onSurface
-                                          .withValues(alpha: 0.60)),
-                                ),
-                              ],
+                      final options = (item['options'] as List?) ?? const [];
+                      final images = (item['images'] as List?) ?? const [];
+                      final sourcePrice = item['sourcePrice'];
+
+                      // Build a minimal preview payload for PreviewDetailScreen.
+                      final previewPayload = <String, dynamic>{
+                        'draft': {
+                          'title': title,
+                          'price': sourcePrice,
+                          'imageUrl': imageUrl,
+                          'sourceUrl': url,
+                        },
+                        'computed': {
+                          'finalPrice': finalPrice,
+                          'images': images,
+                          'optionsCount': options.length,
+                        },
+                        'options': options,
+                        'url': url,
+                        'ok': true,
+                      };
+
+                      return InkWell(
+                        borderRadius: BorderRadius.circular(12),
+                        onTap: () {
+                          if (url.trim().isEmpty) return;
+                          Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (_) => PreviewDetailScreen(
+                                url: url.trim(),
+                                preview: previewPayload,
+                              ),
                             ),
+                          );
+                        },
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 4),
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              _Thumb(url: imageUrl),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      title.isEmpty ? '(제목 없음)' : title,
+                                      maxLines: 2,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(
+                                          fontWeight: FontWeight.w800),
+                                    ),
+                                    const SizedBox(height: 6),
+                                    Text(
+                                      url,
+                                      maxLines: 2,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                          fontSize: 12,
+                                          color: Theme.of(context)
+                                              .colorScheme
+                                              .onSurface
+                                              .withValues(alpha: 0.60)),
+                                    ),
+                                    const SizedBox(height: 6),
+                                    Text(
+                                      '옵션: ${options.length}개',
+                                      style: TextStyle(
+                                          fontSize: 12,
+                                          color: Theme.of(context)
+                                              .colorScheme
+                                              .onSurface
+                                              .withValues(alpha: 0.60)),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              const SizedBox(width: 10),
+                              Text(
+                                finalPrice == null
+                                    ? '-'
+                                    : finalPrice.toString(),
+                                style: const TextStyle(
+                                    fontWeight: FontWeight.w900),
+                              ),
+                            ],
                           ),
-                          const SizedBox(width: 10),
-                          Text(
-                            finalPrice == null ? '-' : finalPrice.toString(),
-                            style: const TextStyle(fontWeight: FontWeight.w900),
-                          ),
-                        ],
+                        ),
                       );
                     },
                   ),
