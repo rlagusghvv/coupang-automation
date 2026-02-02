@@ -227,54 +227,83 @@ class _HomeScreenState extends State<HomeScreen> {
                       },
                       'computed': {
                         'finalPrice': finalPrice,
+                        'images': (row['images'] as List?) ?? const [],
                       },
                       'options': options,
                     };
+
+                    Future<void> open() async {
+                      if (url.trim().isEmpty) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('URL이 비어있어서 열 수 없어요.')),
+                        );
+                        return;
+                      }
+                      try {
+                        await Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) => PreviewDetailScreen(
+                              url: url,
+                              preview: preview,
+                            ),
+                          ),
+                        );
+                      } catch (e) {
+                        if (!context.mounted) return;
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text('열기 실패: $e')),
+                        );
+                      }
+                    }
+
+                    Widget thumb() {
+                      final cs = Theme.of(context).colorScheme;
+                      if (imageUrl.trim().isEmpty) {
+                        return Container(
+                          width: 48,
+                          height: 48,
+                          decoration: BoxDecoration(
+                            color: cs.primary.withValues(alpha: 0.08),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Icon(
+                            Icons.image_outlined,
+                            color: cs.primary.withValues(alpha: 0.65),
+                          ),
+                        );
+                      }
+                      return ClipRRect(
+                        borderRadius: BorderRadius.circular(12),
+                        child: Image.network(
+                          imageUrl,
+                          width: 48,
+                          height: 48,
+                          fit: BoxFit.cover,
+                          headers: const {
+                            'Referer': 'https://domeggook.com',
+                            'User-Agent': 'Mozilla/5.0',
+                          },
+                          errorBuilder: (_, __, ___) => Container(
+                            width: 48,
+                            height: 48,
+                            color: cs.primary.withValues(alpha: 0.08),
+                            child: Icon(
+                              Icons.broken_image_outlined,
+                              color: cs.primary.withValues(alpha: 0.65),
+                            ),
+                          ),
+                        ),
+                      );
+                    }
 
                     return Padding(
                       padding: const EdgeInsets.symmetric(vertical: 6),
                       child: InkWell(
                         borderRadius: BorderRadius.circular(14),
-                        onTap: () {
-                          Navigator.of(context).push(
-                            MaterialPageRoute(
-                              builder: (_) => PreviewDetailScreen(
-                                url: url,
-                                preview: preview,
-                              ),
-                            ),
-                          );
-                        },
+                        onTap: open,
                         child: Row(
                           children: [
-                            ClipRRect(
-                              borderRadius: BorderRadius.circular(12),
-                              child: Image.network(
-                                imageUrl,
-                                width: 48,
-                                height: 48,
-                                fit: BoxFit.cover,
-                                headers: const {
-                                  'Referer': 'https://domeggook.com',
-                                  'User-Agent': 'Mozilla/5.0',
-                                },
-                                errorBuilder: (_, __, ___) => Container(
-                                  width: 48,
-                                  height: 48,
-                                  color: Theme.of(context)
-                                      .colorScheme
-                                      .primary
-                                      .withValues(alpha: 0.08),
-                                  child: Icon(
-                                    Icons.broken_image_outlined,
-                                    color: Theme.of(context)
-                                        .colorScheme
-                                        .primary
-                                        .withValues(alpha: 0.65),
-                                  ),
-                                ),
-                              ),
-                            ),
+                            thumb(),
                             const SizedBox(width: 12),
                             Expanded(
                               child: Column(
