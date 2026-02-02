@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 class AppScaffold extends StatelessWidget {
   const AppScaffold({
@@ -165,9 +166,84 @@ class KvRow extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 12),
-          Text(v,
-              style: vStyle ??
-                  const TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
+          Text(
+            v,
+            style: vStyle ??
+                const TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class CopyableSingleLineRow extends StatelessWidget {
+  const CopyableSingleLineRow({
+    super.key,
+    required this.k,
+    required this.value,
+    this.onCopiedMessage = '복사했어요.',
+  });
+
+  final String k;
+  final String value;
+  final String onCopiedMessage;
+
+  @override
+  Widget build(BuildContext context) {
+    final canCopy = value.trim().isNotEmpty;
+    final cs = Theme.of(context).colorScheme;
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            flex: 3,
+            child: Text(
+              k,
+              style: TextStyle(
+                fontSize: 13,
+                color: cs.onSurface.withValues(alpha: 0.65),
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            flex: 7,
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    value,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 6),
+                IconButton(
+                  tooltip: '복사',
+                  onPressed: canCopy
+                      ? () async {
+                          await Clipboard.setData(ClipboardData(text: value));
+                          if (!context.mounted) return;
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(content: Text(onCopiedMessage)),
+                          );
+                        }
+                      : null,
+                  iconSize: 18,
+                  visualDensity: VisualDensity.compact,
+                  icon: const Icon(Icons.copy_rounded),
+                ),
+              ],
+            ),
+          ),
         ],
       ),
     );

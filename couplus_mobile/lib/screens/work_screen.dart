@@ -329,10 +329,10 @@ class _WorkScreenState extends State<WorkScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const SectionHeader('Login required'),
+                  const SectionHeader('로그인이 필요해요'),
                   const SizedBox(height: 10),
                   Text(
-                    'Work 탭은 로그인 후 사용할 수 있어요. More 탭에서 로그인해 주세요.',
+                    'Work 탭은 로그인 후 사용할 수 있어요. 더보기 탭에서 로그인해 주세요.',
                     style: TextStyle(
                         color: Theme.of(context)
                             .colorScheme
@@ -446,8 +446,8 @@ class _WorkScreenState extends State<WorkScreen> {
                 if (_uploadResult != null) ...[
                   const Divider(height: 28),
                   KvRow(
-                      k: 'Upload OK',
-                      v: (_uploadResult?['ok'] == true) ? 'Yes' : 'No'),
+                      k: '업로드 성공',
+                      v: (_uploadResult?['ok'] == true) ? '예' : '아니오'),
                   KvRow(
                       k: 'SellerProductId',
                       v: (_uploadResult?['create'] as Map?)?['sellerProductId']
@@ -455,8 +455,7 @@ class _WorkScreenState extends State<WorkScreen> {
                           '-'),
                   if ((_uploadResult?['error'] ?? '').toString().isNotEmpty)
                     KvRow(
-                        k: 'Error',
-                        v: (_uploadResult?['error'] ?? '').toString()),
+                        k: '오류', v: (_uploadResult?['error'] ?? '').toString()),
                 ],
               ],
             ),
@@ -466,7 +465,7 @@ class _WorkScreenState extends State<WorkScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const SectionHeader('Orders (Coupang → Domeme excel)'),
+                const SectionHeader('주문 (쿠팡 → 도매매 엑셀)'),
                 const SizedBox(height: 10),
                 Row(
                   children: [
@@ -475,7 +474,7 @@ class _WorkScreenState extends State<WorkScreen> {
                         controller: _dateFrom,
                         enabled: isAuthed && !_loading,
                         decoration: const InputDecoration(
-                            labelText: 'dateFrom (YYYY-MM-DD)'),
+                            labelText: '시작일 (YYYY-MM-DD)'),
                       ),
                     ),
                     const SizedBox(width: 10),
@@ -484,7 +483,7 @@ class _WorkScreenState extends State<WorkScreen> {
                         controller: _dateTo,
                         enabled: isAuthed && !_loading,
                         decoration: const InputDecoration(
-                            labelText: 'dateTo (YYYY-MM-DD)'),
+                            labelText: '종료일 (YYYY-MM-DD)'),
                       ),
                     ),
                   ],
@@ -496,7 +495,7 @@ class _WorkScreenState extends State<WorkScreen> {
                       child: OutlinedButton(
                         onPressed:
                             (!isAuthed || _loading) ? null : _ordersExport,
-                        child: const Text('Generate excel'),
+                        child: const Text('엑셀 생성'),
                       ),
                     ),
                     const SizedBox(width: 10),
@@ -504,7 +503,7 @@ class _WorkScreenState extends State<WorkScreen> {
                       child: FilledButton(
                         onPressed:
                             (!isAuthed || _loading) ? null : _ordersUpload,
-                        child: const Text('Upload to Domeme'),
+                        child: const Text('도매매 업로드'),
                       ),
                     ),
                   ],
@@ -512,22 +511,22 @@ class _WorkScreenState extends State<WorkScreen> {
                 if (_ordersExportResult != null) ...[
                   const Divider(height: 28),
                   KvRow(
-                      k: 'filePath',
+                      k: '파일 경로',
                       v: (_ordersExportResult?['filePath'] ?? '-').toString()),
                   KvRow(
-                      k: 'ok',
-                      v: (_ordersExportResult?['ok'] == true) ? 'Yes' : 'No'),
+                      k: '내보내기 성공',
+                      v: (_ordersExportResult?['ok'] == true) ? '예' : '아니오'),
                 ],
                 if (_ordersUploadResult != null) ...[
                   const Divider(height: 28),
                   KvRow(
-                      k: 'upload ok',
-                      v: (_ordersUploadResult?['ok'] == true) ? 'Yes' : 'No'),
+                      k: '업로드 성공',
+                      v: (_ordersUploadResult?['ok'] == true) ? '예' : '아니오'),
                   if ((_ordersUploadResult?['error'] ?? '')
                       .toString()
                       .isNotEmpty)
                     KvRow(
-                        k: 'error',
+                        k: '오류',
                         v: (_ordersUploadResult?['error'] ?? '').toString()),
                 ],
               ],
@@ -538,7 +537,7 @@ class _WorkScreenState extends State<WorkScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const SectionHeader('Vendor purchase (paid → vendor upload)'),
+                const SectionHeader('매입(결제 완료 → 벤더 업로드)'),
                 const SizedBox(height: 10),
                 Row(
                   children: [
@@ -546,7 +545,7 @@ class _WorkScreenState extends State<WorkScreen> {
                       child: OutlinedButton(
                         onPressed:
                             (!isAuthed || _loading) ? null : _purchaseDraft,
-                        child: const Text('Build drafts'),
+                        child: const Text('초안 생성'),
                       ),
                     ),
                     const SizedBox(width: 10),
@@ -554,7 +553,7 @@ class _WorkScreenState extends State<WorkScreen> {
                       child: FilledButton(
                         onPressed:
                             (!isAuthed || _loading) ? null : _purchaseUpload,
-                        child: const Text('Upload to vendors'),
+                        child: const Text('벤더 업로드'),
                       ),
                     ),
                   ],
@@ -562,14 +561,14 @@ class _WorkScreenState extends State<WorkScreen> {
                 if (_purchaseDraftResult != null) ...[
                   const Divider(height: 28),
                   KvRow(
-                      k: 'paidOrderCount',
+                      k: '결제완료 주문 수',
                       v: (_purchaseDraftResult?['paidOrderCount'] ?? '-')
                           .toString()),
                 ],
                 if (_purchaseUploadResult != null) ...[
                   const Divider(height: 28),
                   Text(
-                    'Upload results',
+                    '업로드 결과',
                     style: TextStyle(
                         fontWeight: FontWeight.w900,
                         color: Theme.of(context).colorScheme.onSurface),
@@ -595,7 +594,7 @@ class _WorkScreenState extends State<WorkScreen> {
                           const SizedBox(width: 10),
                           Expanded(
                             child: Text(
-                              ok ? 'OK' : (row['error'] ?? 'failed').toString(),
+                              ok ? '성공' : (row['error'] ?? '실패').toString(),
                               maxLines: 2,
                               overflow: TextOverflow.ellipsis,
                             ),
@@ -604,7 +603,7 @@ class _WorkScreenState extends State<WorkScreen> {
                             TextButton.icon(
                               onPressed: () => _openExternal(payUrl),
                               icon: const Icon(Icons.open_in_new, size: 18),
-                              label: const Text('Pay'),
+                              label: const Text('결제'),
                             ),
                         ],
                       ),
@@ -619,7 +618,7 @@ class _WorkScreenState extends State<WorkScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const SectionHeader('Pay URLs (latest by vendor)'),
+                const SectionHeader('결제 URL(벤더별 최신)'),
                 const SizedBox(height: 10),
                 if (!isAuthed)
                   Text(
@@ -654,7 +653,7 @@ class _WorkScreenState extends State<WorkScreen> {
                           TextButton.icon(
                             onPressed: () => _openExternal(url),
                             icon: const Icon(Icons.open_in_new, size: 18),
-                            label: const Text('Open'),
+                            label: const Text('열기'),
                           ),
                         ],
                       ),
@@ -668,7 +667,7 @@ class _WorkScreenState extends State<WorkScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                SectionHeader('Recent previews',
+                SectionHeader('최근 미리보기',
                     trailing: InfoChip(label: '${previewHistory.length}')),
                 const SizedBox(height: 10),
                 if (!isAuthed)
@@ -682,7 +681,7 @@ class _WorkScreenState extends State<WorkScreen> {
                   )
                 else if (previewHistory.isEmpty)
                   Text(
-                    '아직 히스토리가 없어요. Preview를 실행한 뒤 다시 확인해보세요.',
+                    '아직 히스토리가 없어요. 미리보기를 실행한 뒤 다시 확인해보세요.',
                     style: TextStyle(
                         color: Theme.of(context)
                             .colorScheme
@@ -831,7 +830,7 @@ class _WorkScreenState extends State<WorkScreen> {
                             TextButton.icon(
                               onPressed: () => _openExternal(payUrl),
                               icon: const Icon(Icons.open_in_new, size: 18),
-                              label: const Text('Pay'),
+                              label: const Text('결제'),
                             ),
                         ],
                       );
