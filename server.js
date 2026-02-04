@@ -24,6 +24,9 @@ import {
   upsertApnsToken,
   deleteApnsToken,
   listApnsTokens,
+  createJob,
+  updateJob,
+  getJob,
 } from "./src/server/storage_sqlite.js";
 import { addOrder, clearOrders, listOrders } from "./src/server/orders_sqlite.js";
 import { exportOrdersToDomeme } from "./src/pipeline/exportOrdersToDomeme.js";
@@ -526,6 +529,110 @@ app.post("/api/apns/unregister", authRequired, async (req, res) => {
     return res.json({ ok: true });
   } catch (e) {
     return res.status(400).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+// ✅ Jobs: start + status
+app.post("/api/jobs/start", authRequired, async (req, res) => {
+  try {
+    const kind = String(req.body?.kind || "").trim();
+    const url = String(req.body?.url || "").trim();
+    const force = String(req.body?.force || "0").trim() === "1" ? "1" : "0";
+    if (!kind || (kind !== "preview" && kind !== "upload")) {
+      return res.status(400).json({ ok: false, error: "invalid_kind" });
+    }
+    if (!url) return res.status(400).json({ ok: false, error: "missing url" });
+
+    const c = classifyUrl(url);
+    if (!c.ok) return res.status(400).json({ ok: false, error: c.reason, url: c.url });
+
+    const job = await createJob({ userId: req.user.id, kind, inputUrl: c.url, force });
+
+    // Run in background
+    setTimeout(async () => {
+      try {
+        await updateJob({ id: job.id, patch: { status: "running" } });
+
+        if (kind === "preview") {
+          const preview = await previewUploadFromUrl(c.url, req.user.settings || {});
+          if (!preview.ok) {
+            await updateJob({
+              id: job.id,
+              patch: {
+                status: "failed",
+                errorCode: "preview_failed",
+                errorMessage: "미리보기에 실패했습니다.",
+                resultJson: { preview },
+              },
+            });
+            await notifyUser(req.user.id, {
+              title: "미리보기 실패",
+              body: `미리보기 실패: ${String(preview?.draft?.title || "상품").slice(0, 40)}`,
+              tag: "job-preview",
+              url: "/",
+            });
+            return;
+          }
+
+          await updateJob({ id: job.id, patch: { status: "success", resultJson: { preview } } });
+          await notifyUser(req.user.id, {
+            title: "미리보기 완료",
+            body: `미리보기 완료: ${String(preview?.draft?.title || "상품").slice(0, 40)}`,
+            tag: "job-preview",
+            url: "/",
+          });
+          return;
+        }
+
+        // upload
+        const settings = req.user.settings || {};
+        const result = await runUploadFromUrl(c.url, { ...settings, force });
+        const ok = Boolean(result?.ok);
+        await updateJob({
+          id: job.id,
+          patch: {
+            status: ok ? "success" : "failed",
+            errorCode: ok ? null : String(result?.error || "upload_failed"),
+            errorMessage: ok ? null : "업로드에 실패했습니다.",
+            resultJson: { result },
+          },
+        });
+
+        await notifyUser(req.user.id, {
+          title: ok ? "업로드 완료" : "업로드 실패",
+          body: `${ok ? "업로드 완료" : "업로드 실패"}: ${String(result?.draft?.title || "상품").slice(0, 40)}`,
+          tag: "job-upload",
+          url: "/",
+          sellerProductId: result?.create?.sellerProductId || null,
+        });
+      } catch {
+        try {
+          await updateJob({
+            id: job.id,
+            patch: {
+              status: "failed",
+              errorCode: "job_exception",
+              errorMessage: "작업 처리 중 오류가 발생했습니다.",
+            },
+          });
+        } catch {}
+      }
+    }, 0);
+
+    return res.json({ ok: true, job });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+app.get("/api/jobs/:id", authRequired, async (req, res) => {
+  try {
+    const id = String(req.params.id || "").trim();
+    const job = await getJob(req.user.id, id);
+    if (!job) return res.status(404).json({ ok: false, error: "not_found" });
+    return res.json({ ok: true, job });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
   }
 });
 

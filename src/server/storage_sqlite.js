@@ -135,6 +135,24 @@ export async function initDb() {
     )`,
   );
 
+  // Background jobs (upload/preview)
+  await dbRun(
+    db,
+    `CREATE TABLE IF NOT EXISTS jobs (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      kind TEXT NOT NULL,               -- preview | upload
+      status TEXT NOT NULL,             -- queued | running | success | failed
+      input_url TEXT NOT NULL,
+      force TEXT NOT NULL DEFAULT '0',
+      result_json TEXT NOT NULL DEFAULT '{}',
+      error_code TEXT,
+      error_message TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )`,
+  );
+
   db.close();
 }
 
@@ -391,6 +409,81 @@ export async function deleteApnsToken({ userId, deviceToken }) {
   const db = openDb();
   await dbRun(db, "DELETE FROM apns_tokens WHERE user_id = ? AND device_token = ?", [userId, token]);
   db.close();
+}
+
+export async function createJob({ userId, kind, inputUrl, force = '0' }) {
+  if (!userId) throw new Error('userId required');
+  if (!kind) throw new Error('kind required');
+  if (!inputUrl) throw new Error('inputUrl required');
+  const db = openDb();
+  const id = crypto.randomUUID();
+  const nowIso = new Date().toISOString();
+  await dbRun(
+    db,
+    `INSERT INTO jobs (id, user_id, kind, status, input_url, force, result_json, created_at, updated_at)
+     VALUES (?, ?, ?, 'queued', ?, ?, '{}', ?, ?)`,
+    [id, userId, String(kind), String(inputUrl), String(force), nowIso, nowIso],
+  );
+  db.close();
+  return { id, status: 'queued', kind, inputUrl, force };
+}
+
+export async function updateJob({ id, patch = {} }) {
+  if (!id) throw new Error('id required');
+  const db = openDb();
+  const nowIso = new Date().toISOString();
+
+  const fields = [];
+  const params = [];
+
+  const allowed = {
+    status: 'status',
+    resultJson: 'result_json',
+    errorCode: 'error_code',
+    errorMessage: 'error_message',
+  };
+
+  for (const [k, col] of Object.entries(allowed)) {
+    if (patch[k] === undefined) continue;
+    fields.push(`${col} = ?`);
+    params.push(
+      k === 'resultJson' ? JSON.stringify(patch[k] ?? {}) : (patch[k] ?? null),
+    );
+  }
+
+  fields.push('updated_at = ?');
+  params.push(nowIso);
+  params.push(String(id));
+
+  await dbRun(db, `UPDATE jobs SET ${fields.join(', ')} WHERE id = ?`, params);
+  db.close();
+}
+
+export async function getJob(userId, id) {
+  if (!userId) throw new Error('userId required');
+  if (!id) throw new Error('id required');
+  const db = openDb();
+  const row = await dbGet(
+    db,
+    'SELECT id, user_id, kind, status, input_url, force, result_json, error_code, error_message, created_at, updated_at FROM jobs WHERE user_id = ? AND id = ?',
+    [userId, String(id)],
+  );
+  db.close();
+  if (!row) return null;
+  let result = {};
+  try { result = JSON.parse(row.result_json || '{}'); } catch {}
+  return {
+    id: row.id,
+    kind: row.kind,
+    status: row.status,
+    inputUrl: row.input_url,
+    force: row.force,
+    result,
+    errorCode: row.error_code,
+    errorMessage: row.error_message,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
 }
 
 export async function listApnsTokens(userId) {
