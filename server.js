@@ -546,6 +546,26 @@ app.post("/api/jobs/start", authRequired, async (req, res) => {
     const c = classifyUrl(url);
     if (!c.ok) return res.status(400).json({ ok: false, error: c.reason, url: c.url });
 
+    // Dedupe for upload jobs (unless force)
+    if (kind === "upload" && force !== "1") {
+      const existing = await getUploadedProductByUrl(req.user.id, c.url);
+      if (existing?.seller_product_id) {
+        const pid = String(existing.seller_product_id);
+        return res.status(409).json({
+          ok: false,
+          error: "duplicate_product",
+          existing: {
+            sourceUrl: existing.source_url,
+            title: existing.title,
+            finalPrice: existing.final_price,
+            sellerProductId: pid,
+            productUrl: `https://www.coupang.com/vp/products/${pid}`,
+            createdAt: existing.created_at,
+          },
+        });
+      }
+    }
+
     const job = await createJob({ userId: req.user.id, kind, inputUrl: c.url, force });
 
     // Run in background
