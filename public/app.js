@@ -793,7 +793,38 @@ async function previewUpload() {
   }
 }
 
-async function run() {
+function renderDuplicate(existing) {
+  const title = existing?.title || "";
+  const pid = existing?.sellerProductId || "";
+  const productUrl = existing?.productUrl || "";
+
+  setStatus("중복 상품", "bad");
+  log({ error: "duplicate_product", existing });
+
+  summaryEl.classList.remove("hidden");
+  summaryEl.innerHTML = `
+    <div class="sum-title">중복 상품이 이미 등록되어 있어요</div>
+    <div class="sum-grid">
+      <div><span class="k">상품명</span><span class="v">${escapeHtml(title || "-")}</span></div>
+      <div><span class="k">SellerProductId</span><span class="v">${escapeHtml(pid || "-")}</span></div>
+    </div>
+    <div class="btn-row" style="margin-top: 10px;">
+      ${productUrl ? `<a class="btn-link" href="${productUrl}" target="_blank" rel="noreferrer">기존 상품 열기</a>` : ""}
+      <button id="forceReuploadBtn" type="button" class="ghost">강제 재업로드</button>
+    </div>
+    <p class="hint" style="margin-top: 8px;">강제 재업로드는 같은 URL로 새 상품을 다시 등록합니다.</p>
+  `;
+
+  const btn = document.getElementById("forceReuploadBtn");
+  if (btn) {
+    btn.addEventListener("click", () => {
+      if (forceUploadEl) forceUploadEl.checked = true;
+      run(true);
+    });
+  }
+}
+
+async function run(forceOverride = null) {
   const url = urlInput.value.trim();
   if (!url) {
     setStatus("URL을 입력하세요", "bad");
@@ -807,13 +838,20 @@ async function run() {
   renderSummary(null);
 
   try {
-    const force = Boolean(forceUploadEl?.checked);
+    const force = forceOverride == null ? Boolean(forceUploadEl?.checked) : Boolean(forceOverride);
     const res = await fetch("/api/upload", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ url, force: force ? "1" : "0" }),
     });
-    const json = await res.json();
+    const json = await res.json().catch(() => ({}));
+
+    // Convenience: show buttons when duplicate
+    if (!res.ok && json?.error === "duplicate_product" && json?.existing) {
+      renderDuplicate(json.existing);
+      return;
+    }
+
     if (!res.ok || !json.ok) {
       setStatus("실패", "bad");
       log(json);

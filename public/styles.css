@@ -686,6 +686,19 @@ button:disabled {
   cursor: not-allowed;
 }
 
+.btn-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 14px 18px;
+  border-radius: 16px;
+  border: 1px solid rgba(15, 23, 42, 0.10);
+  background: transparent;
+  color: var(--accent);
+  text-decoration: none;
+  font-weight: 700;
+}
+
 button.ghost {
   color: var(--text);
   background: #ffffff;
