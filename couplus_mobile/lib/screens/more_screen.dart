@@ -26,6 +26,16 @@ class _MoreScreenState extends State<MoreScreen> {
   final _coupangDeliveryCompanyCode = TextEditingController();
   final _pagesApiToken = TextEditingController();
 
+  // Pricing / shipping / category settings
+  final _marginRate = TextEditingController();
+  final _marginAdd = TextEditingController();
+  final _priceMin = TextEditingController();
+  final _roundUnit = TextEditingController();
+  String _shippingPolicy = 'actual';
+  final _shippingFixedAmount = TextEditingController(text: '2500');
+  final _categoryOverrideCode = TextEditingController();
+  bool _autoCategoryPredict = true;
+
   bool _loading = false;
   bool _savingSensitive = false;
   bool _sensitiveUnlocked = false;
@@ -57,6 +67,12 @@ class _MoreScreenState extends State<MoreScreen> {
     _coupangVendorUserId.dispose();
     _coupangDeliveryCompanyCode.dispose();
     _pagesApiToken.dispose();
+    _marginRate.dispose();
+    _marginAdd.dispose();
+    _priceMin.dispose();
+    _roundUnit.dispose();
+    _shippingFixedAmount.dispose();
+    _categoryOverrideCode.dispose();
     super.dispose();
   }
 
@@ -141,6 +157,18 @@ class _MoreScreenState extends State<MoreScreen> {
       _pagesApiToken.text = _pagesApiToken.text.isNotEmpty
           ? _pagesApiToken.text
           : (s[SensitiveSettingsStore.pagesApiToken]?.toString() ?? '');
+
+      // General settings
+      _marginRate.text = (s['marginRate'] ?? '').toString();
+      _marginAdd.text = (s['marginAdd'] ?? '').toString();
+      _priceMin.text = (s['priceMin'] ?? '').toString();
+      _roundUnit.text = (s['roundUnit'] ?? '').toString();
+      _shippingPolicy = (s['shippingPolicy'] ?? _shippingPolicy).toString();
+      _shippingFixedAmount.text =
+          (s['shippingFixedAmount'] ?? _shippingFixedAmount.text).toString();
+      _categoryOverrideCode.text = (s['categoryOverrideCode'] ?? '').toString();
+      _autoCategoryPredict = (s['autoCategoryPredict'] ?? true) == true;
+      if (mounted) setState(() {});
     } catch (e) {
       // 401이면 로그인 상태로 자연스럽게 유도.
       if (e is ApiException && e.isUnauthorized) return;
@@ -187,6 +215,18 @@ class _MoreScreenState extends State<MoreScreen> {
         SensitiveSettingsStore.coupangVendorUserId: vendorUserId,
         SensitiveSettingsStore.coupangDeliveryCompanyCode: deliveryCompanyCode,
         SensitiveSettingsStore.pagesApiToken: pagesToken,
+
+        // General settings
+        'marginRate': double.tryParse(_marginRate.text.trim()) ?? 0,
+        'marginAdd': double.tryParse(_marginAdd.text.trim()) ?? 0,
+        'priceMin': double.tryParse(_priceMin.text.trim()) ?? 0,
+        'roundUnit': double.tryParse(_roundUnit.text.trim()) ?? 0,
+        'shippingPolicy': _shippingPolicy,
+        'shippingFixedAmount':
+            double.tryParse(_shippingFixedAmount.text.trim()) ?? 2500,
+        'categoryOverrideCode':
+            int.tryParse(_categoryOverrideCode.text.trim()) ?? 0,
+        'autoCategoryPredict': _autoCategoryPredict ? '1' : '0',
       });
 
       if (mounted) {
@@ -541,6 +581,99 @@ class _MoreScreenState extends State<MoreScreen> {
                             child: CircularProgressIndicator(strokeWidth: 2))
                         : Text(
                             authedEmail.isEmpty ? 'Sign in to save' : 'Save'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+          AppCard(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const SectionHeader('가격/배송비/카테고리'),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: _marginRate,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(
+                    labelText: '마진율 (예: 0.5 = 50%)',
+                  ),
+                ),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: _marginAdd,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(
+                    labelText: '마진 고정금액 (원)',
+                  ),
+                ),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: _priceMin,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(
+                    labelText: '최소 판매가 (원)',
+                  ),
+                ),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: _roundUnit,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(
+                    labelText: '반올림 단위 (예: 10)',
+                  ),
+                ),
+                const Divider(height: 24),
+                DropdownButtonFormField<String>(
+                  key: ValueKey(_shippingPolicy),
+                  initialValue: _shippingPolicy,
+                  items: const [
+                    DropdownMenuItem(value: 'none', child: Text('배송비 반영 안함')),
+                    DropdownMenuItem(
+                        value: 'actual', child: Text('실제 배송비만큼 가산')),
+                    DropdownMenuItem(
+                        value: 'fixed', child: Text('유료면 고정금액 가산')),
+                    DropdownMenuItem(
+                        value: 'error_unknown', child: Text('유료(금액없음)면 에러')),
+                  ],
+                  onChanged: (v) =>
+                      setState(() => _shippingPolicy = v ?? 'actual'),
+                  decoration: const InputDecoration(labelText: '배송비 가격 정책'),
+                ),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: _shippingFixedAmount,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(
+                    labelText: '고정 배송비 가산액 (원) - 정책이 유료면 고정일 때',
+                  ),
+                ),
+                const Divider(height: 24),
+                TextField(
+                  controller: _categoryOverrideCode,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(
+                    labelText: '카테고리 코드 고정(선택) - 0이면 자동',
+                  ),
+                ),
+                const SizedBox(height: 10),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('쿠팡 카테고리 예측 사용(추천)'),
+                  subtitle: const Text('도매처 카테고리 정보가 없을 때 오분류(19세 등) 방지'),
+                  value: _autoCategoryPredict,
+                  onChanged: (v) => setState(() => _autoCategoryPredict = v),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  '저장은 위의 Save 버튼을 누르면 함께 반영돼요.',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Theme.of(context)
+                        .colorScheme
+                        .onSurface
+                        .withValues(alpha: 0.65),
                   ),
                 ),
               ],
