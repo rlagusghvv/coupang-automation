@@ -23,6 +23,8 @@ import { computePrice } from "../utils/price.js";
 import { resolveLocalImageBase } from "../utils/localImageHost.js";
 import { downloadImagesWithPlaywright } from "../utils/playwrightImageDownload.js";
 import { deployPagesAssets } from "../utils/pagesDeploy.js";
+import { downloadImageBufferWithPlaywright } from "../utils/downloadImage.js";
+import { uploadMarketplaceImage } from "../coupang/api/uploadMarketplaceImage.js";
 
 const OUTBOUND_SHIPPING_PLACE_CODE = "24093380";
 const DISPLAY_CATEGORY_CODE = 77723;
@@ -133,70 +135,151 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
   }
 
   const draft = await parseProductFromDomaeqq(c.url);
-  const localImageBase = resolveLocalImageBase(settings);
 
-  const outDir = path.join(process.cwd(), "out");
   const rawMax = Number(settings.maxContentImages);
-  const maxContentImages = Number.isFinite(rawMax) ? rawMax : 30;
-  const contentImages = extractImageUrls(draft.contentText).slice(0, Math.max(0, maxContentImages));
-  const downloadList = Array.from(new Set([draft.imageUrl, ...contentImages])).filter(Boolean);
+  const maxContentImages = Number.isFinite(rawMax) ? rawMax : 20;
+  const contentImages = extractImageUrls(draft.contentText)
+    .slice(0, Math.max(0, maxContentImages))
+    .filter(Boolean);
 
-  const { DOMEGGOOK_STORAGE_STATE_PATH } = await import("../config/paths.js");
-  const storageStatePath = DOMEGGOOK_STORAGE_STATE_PATH;
-  const downloaded = await downloadImagesWithPlaywright({
-    pageUrl: draft.sourceUrl,
-    imageUrls: downloadList,
-    outDir,
-    baseUrl: localImageBase,
-    storageStatePath,
-  });
+  function stripImgTags(html) {
+    return String(html || "").replace(/<img\b[^>]*>/gi, "");
+  }
 
-  if (String(settings.pagesAutoDeploy || "").trim() === "1") {
-    const deployRes = await deployPagesAssets({
-      directory: outDir,
-      subDirName: "couplus-out",
-      projectName: String(settings.pagesProjectName || "").trim(),
-      apiToken: String(settings.pagesApiToken || "").trim(),
-      accountId: String(settings.pagesAccountId || "").trim(),
+  // Default outputs
+  let imageUrl = draft.imageUrl;
+  let contentHtml = stripImgTags(draft.contentText || "");
+
+  // ✅ Best-effort: Upload images to Coupang first (prevents image_host_unreachable)
+  // If disabled, falls back to the previous "public hosting" approach.
+  const useCoupangImageUpload = String(settings.useCoupangImageUpload ?? "1").trim() !== "0";
+
+  if (!payloadOnly && useCoupangImageUpload) {
+    // 1) Main image
+    const mainDl = await downloadImageBufferWithPlaywright({
+      pageUrl: draft.sourceUrl,
+      imageUrl: draft.imageUrl,
     });
-    if (!deployRes.ok) {
+
+    if (!mainDl?.ok) {
       return {
         ok: false,
         skipped: false,
-        error: "pages_deploy_failed",
-        detail: deployRes.error,
-        deploy: {
-          code: deployRes.code ?? null,
-          stdout: deployRes.stdout || "",
-          stderr: deployRes.stderr || "",
-        },
+        error: "main_image_download_failed",
+        detail: mainDl,
       };
     }
-    await new Promise((r) => setTimeout(r, 3000));
-  }
 
-  const imageUrl = downloaded.urlMap[draft.imageUrl];
-  if (!imageUrl) {
-    return { ok: false, skipped: false, error: "main image download failed" };
-  }
+    const mainUp = await uploadMarketplaceImage({
+      vendorId,
+      buffer: mainDl.buffer,
+      fileName: `main${mainDl.ext || ".jpg"}`,
+      mimeType: mainDl.mimeType || "image/jpeg",
+      accessKey,
+      secretKey,
+    });
 
-  const imageReachable = await isUrlReachable(imageUrl, IMAGE_CHECK_TIMEOUT_MS);
-  if (!imageReachable) {
-    return {
-      ok: false,
-      skipped: false,
-      error: "image_host_unreachable",
-      imageUrl,
-    };
-  }
+    if (!mainUp.ok || !(mainUp.vendorPath || mainUp.cdnPath)) {
+      return {
+        ok: false,
+        skipped: false,
+        error: "coupang_image_upload_failed",
+        detail: mainUp,
+      };
+    }
 
-  const contentLocalUrls = contentImages
-    .map((u) => downloaded.urlMap[u])
-    .filter(Boolean);
-  const contentHtml =
-    contentLocalUrls.length > 0
-      ? buildImageOnlyHtmlFromUrls(contentLocalUrls)
-      : draft.contentText || "";
+    imageUrl = mainUp.vendorPath || mainUp.cdnPath;
+
+    // 2) Content images (optional)
+    const uploadedContentUrls = [];
+    for (const u of contentImages) {
+      try {
+        const dl = await downloadImageBufferWithPlaywright({
+          pageUrl: draft.sourceUrl,
+          imageUrl: u,
+        });
+        if (!dl?.ok) continue;
+
+        const up = await uploadMarketplaceImage({
+          vendorId,
+          buffer: dl.buffer,
+          fileName: `content${dl.ext || ".jpg"}`,
+          mimeType: dl.mimeType || "image/jpeg",
+          accessKey,
+          secretKey,
+        });
+        const src = up?.cdnPath || up?.vendorPath;
+        if (src) uploadedContentUrls.push(src);
+      } catch {
+        // ignore single image failure
+      }
+    }
+
+    // Build clean HTML with only Coupang-hosted images
+    if (uploadedContentUrls.length > 0) {
+      contentHtml = buildImageOnlyHtmlFromUrls(uploadedContentUrls);
+    }
+  } else {
+    // Fallback: download images and expose via local/public base URL
+    const localImageBase = resolveLocalImageBase(settings);
+    const outDir = path.join(process.cwd(), "out");
+    const downloadList = Array.from(new Set([draft.imageUrl, ...contentImages])).filter(Boolean);
+
+    const { DOMEGGOOK_STORAGE_STATE_PATH } = await import("../config/paths.js");
+    const storageStatePath = DOMEGGOOK_STORAGE_STATE_PATH;
+    const downloaded = await downloadImagesWithPlaywright({
+      pageUrl: draft.sourceUrl,
+      imageUrls: downloadList,
+      outDir,
+      baseUrl: localImageBase,
+      storageStatePath,
+    });
+
+    if (String(settings.pagesAutoDeploy || "").trim() === "1") {
+      const deployRes = await deployPagesAssets({
+        directory: outDir,
+        subDirName: "couplus-out",
+        projectName: String(settings.pagesProjectName || "").trim(),
+        apiToken: String(settings.pagesApiToken || "").trim(),
+        accountId: String(settings.pagesAccountId || "").trim(),
+      });
+      if (!deployRes.ok) {
+        return {
+          ok: false,
+          skipped: false,
+          error: "pages_deploy_failed",
+          detail: deployRes.error,
+          deploy: {
+            code: deployRes.code ?? null,
+            stdout: deployRes.stdout || "",
+            stderr: deployRes.stderr || "",
+          },
+        };
+      }
+      await new Promise((r) => setTimeout(r, 3000));
+    }
+
+    const mappedMain = downloaded.urlMap[draft.imageUrl];
+    if (!mappedMain) {
+      return { ok: false, skipped: false, error: "main image download failed" };
+    }
+
+    const imageReachable = await isUrlReachable(mappedMain, IMAGE_CHECK_TIMEOUT_MS);
+    if (!imageReachable) {
+      return {
+        ok: false,
+        skipped: false,
+        error: "image_host_unreachable",
+        imageUrl: mappedMain,
+      };
+    }
+
+    imageUrl = mappedMain;
+
+    const contentLocalUrls = contentImages.map((u) => downloaded.urlMap[u]).filter(Boolean);
+    contentHtml =
+      contentLocalUrls.length > 0 ? buildImageOnlyHtmlFromUrls(contentLocalUrls) : stripImgTags(draft.contentText || "");
+  }
 
   const displayCategoryCode = resolveDisplayCategoryCode({
     title: draft.title,
