@@ -71,11 +71,14 @@ export async function previewUploadFromUrl(inputUrl, settings = {}) {
   });
 
   const shippingFee = Number(draft.shippingFee);
-  const shippingSurcharge = Number.isFinite(Number(settings.shippingSurcharge))
-    ? Number(settings.shippingSurcharge)
+  const shippingFeeFallback = Number.isFinite(Number(settings.shippingFeeFallback))
+    ? Number(settings.shippingFeeFallback)
     : 2500;
-  const shouldAddShipping = Number.isFinite(shippingFee) ? shippingFee > 0 : false;
-  if (shouldAddShipping && Number.isFinite(shippingSurcharge) && shippingSurcharge > 0) {
+  const shippingSurcharge = shippingFee > 0
+    ? shippingFee
+    : (shippingFee === -1 ? shippingFeeFallback : 0);
+  const shouldAddShipping = shippingSurcharge > 0;
+  if (shouldAddShipping) {
     finalPrice += shippingSurcharge;
     const roundUnit = Number.isFinite(Number(settings.roundUnit)) ? Number(settings.roundUnit) : 10;
     if (roundUnit > 1) finalPrice = Math.floor(finalPrice / roundUnit) * roundUnit;
@@ -102,6 +105,7 @@ export async function previewUploadFromUrl(inputUrl, settings = {}) {
       finalPrice,
       shippingSurchargeApplied: Boolean(shouldAddShipping),
       shippingSurcharge,
+      shippingFeeFallback,
       images,
       contentImageCount: contentImages.length,
       optionsCount: options.length,

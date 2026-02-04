@@ -31,7 +31,8 @@ function parseShippingFeeFromText(allText) {
   if (m2) return Number(m2[2].replace(/,/g, ""));
 
   // If it mentions shipping is charged but no number (e.g. 착불/배송비별도)
-  if (/착불|배송비\s*별도|배송비\s*유료|유료\s*배송/.test(t)) return 1;
+  // Use -1 as "paid_shipping_unknown"
+  if (/착불|배송비\s*별도|배송비\s*유료|유료\s*배송/.test(t)) return -1;
 
   return null;
 }
