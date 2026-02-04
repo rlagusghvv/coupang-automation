@@ -1,11 +1,12 @@
 import { COUPANG_DELIVERY_COMPANY_CODE } from "../../config/env.js";
 
-export function deliveryFree() {
+export function deliveryFree({ deliveryCompanyCode } = {}) {
+  const code = String(deliveryCompanyCode || COUPANG_DELIVERY_COMPANY_CODE || "").trim();
   return {
     deliveryMethod: "SEQUENCIAL",
 
     // ✅ 출고지에 등록된 택배사 코드만 사용해야 함
-    deliveryCompanyCode: COUPANG_DELIVERY_COMPANY_CODE,
+    deliveryCompanyCode: code,
 
     deliveryChargeType: "FREE",
     deliveryCharge: 0,

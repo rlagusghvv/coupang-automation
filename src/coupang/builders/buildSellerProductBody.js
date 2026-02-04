@@ -19,6 +19,7 @@ export function buildSellerProductBody({
   allowAutoCategory = false,
   requested = false,
   items,
+  deliveryCompanyCode,
 } = {}) {
   if (!vendorId) throw new Error("vendorId required");
   if (!vendorUserId) throw new Error("vendorUserId required");
@@ -44,7 +45,7 @@ export function buildSellerProductBody({
 
     outboundShippingPlaceCode: Number(outboundShippingPlaceCode),
 
-    ...deliveryFree(),
+    ...deliveryFree({ deliveryCompanyCode }),
     ...returnNoCenter(),
 
     images: buildTopImages({ url: imageUrl }),

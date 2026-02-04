@@ -351,6 +351,7 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
     vendorId,
     vendorUserId,
     outboundShippingPlaceCode: OUTBOUND_SHIPPING_PLACE_CODE,
+    deliveryCompanyCode: settings.coupangDeliveryCompanyCode,
     displayCategoryCode: finalCategoryCode,
     allowAutoCategory,
     sellerProductName: draft.title,
