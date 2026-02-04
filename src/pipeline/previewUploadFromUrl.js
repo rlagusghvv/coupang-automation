@@ -2,6 +2,7 @@ import { classifyUrl } from "../utils/urlFilter.js";
 import { parseProductFromDomaeqq } from "../sources/domaeqq/parseProductFromDomaeqq.js";
 import { extractImageUrls } from "../utils/contentImages.js";
 import { computePrice } from "../utils/price.js";
+import { recommendCategory } from "../coupang/api/recommendCategory.js";
 
 function uniq(list) {
   return Array.from(new Set((Array.isArray(list) ? list : []).filter(Boolean)));
@@ -85,6 +86,30 @@ export async function previewUploadFromUrl(inputUrl, settings = {}) {
   const images = uniq([mainImageUrl, ...contentImages]);
   const options = Array.isArray(draft.options) ? draft.options : [];
 
+  // Category prediction (best-effort, requires Coupang keys)
+  let predictedCategory = null;
+  try {
+    const accessKey = String(settings.coupangAccessKey || "").trim();
+    const secretKey = String(settings.coupangSecretKey || "").trim();
+    const usePredict = String(settings.autoCategoryPredict ?? "1").trim() !== "0";
+    if (usePredict && accessKey && secretKey) {
+      const pred = await recommendCategory({
+        productName: draft.title,
+        productDescription: String(draft.contentText || "").replace(/<[^>]+>/g, " ").slice(0, 500),
+        productImageUrl: mainImageUrl,
+        accessKey,
+        secretKey,
+      });
+      if (pred.status === 200) {
+        const bodyObj = typeof pred.body === "string" ? JSON.parse(pred.body) : pred.body;
+        predictedCategory = {
+          id: bodyObj?.data?.predictedCategoryId ?? null,
+          name: bodyObj?.data?.predictedCategoryName ?? null,
+        };
+      }
+    }
+  } catch {}
+
   return {
     ok: true,
     url: c.url,
@@ -104,6 +129,10 @@ export async function previewUploadFromUrl(inputUrl, settings = {}) {
       images,
       contentImageCount: contentImages.length,
       optionsCount: options.length,
+    },
+    category: {
+      overrideCode: settings.categoryOverrideCode ?? null,
+      predicted: predictedCategory,
     },
     options,
     debug: draft.__debug || null,

@@ -344,8 +344,61 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
     }
   }
 
-  let finalCategoryCode = displayCategoryCode;
+  // Allow manual override
+  const overrideCategoryCode = Number(settings.categoryOverrideCode);
+  let finalCategoryCode = Number.isFinite(overrideCategoryCode) && overrideCategoryCode > 0
+    ? overrideCategoryCode
+    : displayCategoryCode;
   let notices = undefined;
+
+  // If vendor category text is missing, try Coupang category prediction API for better accuracy.
+  // This prevents bad defaults (e.g. adult-only categories).
+  const canPredictCategory = accessKey && secretKey;
+  const usePredict = String(settings.autoCategoryPredict ?? "1").trim() !== "0";
+  if (
+    canPredictCategory &&
+    usePredict &&
+    (!draft.categoryText || String(draft.categoryText).trim() === "") &&
+    (finalCategoryCode === DISPLAY_CATEGORY_CODE)
+  ) {
+    try {
+      const pred = await recommendCategory({
+        productName: draft.title,
+        productDescription: String(draft.contentText || "").replace(/<[^>]+>/g, " ").slice(0, 500),
+        productImageUrl: imageUrl,
+        accessKey,
+        secretKey,
+      });
+      if (pred.status === 200) {
+        const bodyObj = typeof pred.body === "string" ? JSON.parse(pred.body) : pred.body;
+        const predicted = Number(bodyObj?.data?.predictedCategoryId);
+        const predictedName = String(bodyObj?.data?.predictedCategoryName || "");
+        const looksAdult = /성인|19\s*세|청소년\s*이용\s*불가|미성년\s*불가/i.test(predictedName);
+        if (looksAdult) {
+          return {
+            ok: false,
+            skipped: false,
+            error: "adult_category_blocked",
+            detail: { predictedCategoryId: predicted, predictedCategoryName: predictedName },
+            draft: { title: draft.title, price: draft.price, imageUrl: draft.imageUrl },
+          };
+        }
+        if (Number.isFinite(predicted) && predicted > 0) {
+          // validate predicted category
+          try {
+            const meta = await getCategoryMetas({
+              displayCategoryCode: predicted,
+              accessKey,
+              secretKey,
+            });
+            if (meta.status === 200) {
+              finalCategoryCode = predicted;
+            }
+          } catch {}
+        }
+      }
+    } catch {}
+  }
 
   if (allowAutoCategory) {
     finalCategoryCode = null;
