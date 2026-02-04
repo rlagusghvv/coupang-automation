@@ -95,6 +95,21 @@ export async function initDb() {
     )`,
   );
 
+  // Uploaded products (dedupe)
+  await dbRun(
+    db,
+    `CREATE TABLE IF NOT EXISTS uploaded_products (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id TEXT NOT NULL,
+      source_url TEXT NOT NULL,
+      seller_product_id TEXT,
+      title TEXT NOT NULL DEFAULT '',
+      final_price REAL,
+      created_at TEXT NOT NULL,
+      UNIQUE(user_id, source_url)
+    )`,
+  );
+
   db.close();
 }
 
@@ -254,6 +269,50 @@ export async function addPreviewHistory({
     );
   } catch {}
 
+  db.close();
+}
+
+export async function getUploadedProductByUrl(userId, sourceUrl) {
+  if (!userId) throw new Error("userId required");
+  if (!sourceUrl) throw new Error("sourceUrl required");
+  const db = openDb();
+  const row = await dbGet(
+    db,
+    "SELECT id, user_id, source_url, seller_product_id, title, final_price, created_at FROM uploaded_products WHERE user_id = ? AND source_url = ?",
+    [userId, String(sourceUrl)],
+  );
+  db.close();
+  return row || null;
+}
+
+export async function upsertUploadedProduct({
+  userId,
+  sourceUrl,
+  sellerProductId = null,
+  title = "",
+  finalPrice = null,
+}) {
+  if (!userId) throw new Error("userId required");
+  if (!sourceUrl) throw new Error("sourceUrl required");
+  const db = openDb();
+  const nowIso = new Date().toISOString();
+  await dbRun(
+    db,
+    `INSERT INTO uploaded_products (user_id, source_url, seller_product_id, title, final_price, created_at)
+     VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT(user_id, source_url) DO UPDATE SET
+       seller_product_id = excluded.seller_product_id,
+       title = excluded.title,
+       final_price = excluded.final_price`,
+    [
+      userId,
+      String(sourceUrl),
+      sellerProductId != null ? String(sellerProductId) : null,
+      String(title || ""),
+      Number.isFinite(Number(finalPrice)) ? Number(finalPrice) : null,
+      nowIso,
+    ],
+  );
   db.close();
 }
 

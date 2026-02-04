@@ -16,6 +16,8 @@ import {
   updateSettings,
   addPreviewHistory,
   listPreviewHistory,
+  getUploadedProductByUrl,
+  upsertUploadedProduct,
 } from "./src/server/storage_sqlite.js";
 import { addOrder, clearOrders, listOrders } from "./src/server/orders_sqlite.js";
 import { exportOrdersToDomeme } from "./src/pipeline/exportOrdersToDomeme.js";
@@ -616,6 +618,24 @@ app.post("/api/upload/execute", authRequired, async (req, res) => {
     const c = classifyUrl(url);
     if (!c.ok) return res.status(400).json({ ok: false, error: c.reason, url: c.url });
 
+    // Dedupe: block duplicate uploads of the same source URL
+    const existing = await getUploadedProductByUrl(req.user.id, c.url);
+    if (existing?.seller_product_id) {
+      const pid = String(existing.seller_product_id);
+      return res.status(409).json({
+        ok: false,
+        error: "duplicate_product",
+        existing: {
+          sourceUrl: existing.source_url,
+          title: existing.title,
+          finalPrice: existing.final_price,
+          sellerProductId: pid,
+          productUrl: `https://www.coupang.com/vp/products/${pid}`,
+          createdAt: existing.created_at,
+        },
+      });
+    }
+
     // NOTE: For now we simply reuse the existing pipeline.
     if (uploadInProgress) {
       return res.status(409).json({ ok: false, error: "upload in progress" });
@@ -623,6 +643,21 @@ app.post("/api/upload/execute", authRequired, async (req, res) => {
     uploadInProgress = true;
 
     const result = await runUploadFromUrl(c.url, settings);
+
+    // Store upload record for dedupe (only when created)
+    try {
+      const sellerProductId = result?.create?.sellerProductId ?? null;
+      if (sellerProductId) {
+        await upsertUploadedProduct({
+          userId: req.user.id,
+          sourceUrl: c.url,
+          sellerProductId,
+          title: result?.draft?.title || "",
+          finalPrice: result?.finalPrice ?? null,
+        });
+      }
+    } catch {}
+
     appendUploadHistory({
       at: new Date().toISOString(),
       url: c.url,
@@ -656,12 +691,45 @@ app.post("/api/upload", authRequired, async (req, res) => {
     const c = classifyUrl(url);
     if (!c.ok) return res.status(400).json({ ok: false, error: c.reason, url: c.url });
 
+    // Dedupe: block duplicate uploads of the same source URL
+    const existing = await getUploadedProductByUrl(req.user.id, c.url);
+    if (existing?.seller_product_id) {
+      const pid = String(existing.seller_product_id);
+      return res.status(409).json({
+        ok: false,
+        error: "duplicate_product",
+        existing: {
+          sourceUrl: existing.source_url,
+          title: existing.title,
+          finalPrice: existing.final_price,
+          sellerProductId: pid,
+          productUrl: `https://www.coupang.com/vp/products/${pid}`,
+          createdAt: existing.created_at,
+        },
+      });
+    }
+
     if (uploadInProgress) {
       return res.status(409).json({ ok: false, error: "upload in progress" });
     }
     uploadInProgress = true;
 
     const result = await runUploadFromUrl(c.url, req.user.settings || {});
+
+    // Store upload record for dedupe (only when created)
+    try {
+      const sellerProductId = result?.create?.sellerProductId ?? null;
+      if (sellerProductId) {
+        await upsertUploadedProduct({
+          userId: req.user.id,
+          sourceUrl: c.url,
+          sellerProductId,
+          title: result?.draft?.title || "",
+          finalPrice: result?.finalPrice ?? null,
+        });
+      }
+    } catch {}
+
     appendUploadHistory({
       at: new Date().toISOString(),
       url: c.url,
@@ -675,7 +743,9 @@ app.post("/api/upload", authRequired, async (req, res) => {
       error: result?.error || null,
     });
     uploadInProgress = false;
-    return res.json({ ok: true, result });
+
+    const ok = Boolean(result?.ok);
+    return res.status(ok ? 200 : 400).json({ ok, result });
   } catch (e) {
     uploadInProgress = false;
     return res.status(500).json({ ok: false, error: String(e?.message || e) });
