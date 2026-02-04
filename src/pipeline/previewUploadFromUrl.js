@@ -72,7 +72,17 @@ export async function previewUploadFromUrl(inputUrl, settings = {}) {
   });
 
   const shippingFee = Number(draft.shippingFee);
-  const shippingSurcharge = shippingFee > 0 ? shippingFee : 0;
+  const shippingPolicy = String(settings.shippingPolicy || "actual").trim();
+  const shippingFixed = Number.isFinite(Number(settings.shippingFixedAmount))
+    ? Number(settings.shippingFixedAmount)
+    : 2500;
+
+  let shippingSurcharge = 0;
+  if (shippingPolicy === "none") shippingSurcharge = 0;
+  else if (shippingPolicy === "fixed") shippingSurcharge = shippingFee > 0 || shippingFee === -1 ? shippingFixed : 0;
+  else if (shippingPolicy === "actual") shippingSurcharge = shippingFee > 0 ? shippingFee : 0;
+  else if (shippingPolicy === "error_unknown") shippingSurcharge = shippingFee > 0 ? shippingFee : 0;
+
   const shouldAddShipping = shippingSurcharge > 0;
   if (shouldAddShipping) {
     finalPrice += shippingSurcharge;
@@ -123,6 +133,8 @@ export async function previewUploadFromUrl(inputUrl, settings = {}) {
     },
     computed: {
       finalPrice,
+      shippingPolicy,
+      shippingFixedAmount: shippingFixed,
       shippingSurchargeApplied: Boolean(shouldAddShipping),
       shippingSurcharge,
       shippingFeeUnknown: shippingFee === -1,

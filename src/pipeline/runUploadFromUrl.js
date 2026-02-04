@@ -149,7 +149,32 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
 
   const rawMax = Number(settings.maxContentImages);
   const maxContentImages = Number.isFinite(rawMax) ? rawMax : 20;
+
+  function isLikelyProductImage(url) {
+    try {
+      const u = new URL(url);
+      const host = u.hostname;
+      const p = u.pathname;
+
+      const isDomeggookCdn = host === "cdn1.domeggook.com" || host.endsWith(".domeggook.com");
+      const isUploadPath = p.includes("/upload/");
+      const isProductUpload = p.includes("/upload/item/") || p.includes("/upload/editor/") || p.includes("/upload/contents/");
+      const isStampOrBadge = p.includes("_stt_") || p.includes("_bnr_") || p.includes("_ico_");
+      const isUiAsset = p.includes("/image/") || p.includes("/images/");
+      const isShareIcon = p.includes("/sns/") || p.includes("kakaolink") || p.includes("facebook") || p.includes("twitter");
+      const isEventAsset = p.includes("/upload/event/") || p.includes("/upload/banner/");
+
+      if (isDomeggookCdn && isUploadPath && isProductUpload && !isStampOrBadge && !isUiAsset && !isShareIcon && !isEventAsset) {
+        return true;
+      }
+      return false;
+    } catch {
+      return false;
+    }
+  }
+
   const contentImages = extractImageUrls(draft.contentText)
+    .filter(isLikelyProductImage)
     .slice(0, Math.max(0, maxContentImages))
     .filter(Boolean);
 
@@ -310,20 +335,36 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
   // 배송비가 유료면 "실제 배송비"만큼 판매가에 가산
   // shippingFee: 0=무료, >0=유료(금액), -1=유료(금액 표기 없음)
   const shippingFee = Number(draft.shippingFee);
-  if (shippingFee === -1) {
+
+  // 배송비 가격정책
+  // - none: 반영 안함
+  // - actual: 실제 배송비만큼 가산
+  // - fixed: 유료면 고정 금액 가산
+  // - error_unknown: 유료인데 금액 못 읽으면 에러
+  const shippingPolicy = String(settings.shippingPolicy || "actual").trim();
+  const shippingFixed = Number.isFinite(Number(settings.shippingFixedAmount))
+    ? Number(settings.shippingFixedAmount)
+    : 2500;
+
+  if (shippingFee === -1 && shippingPolicy === "error_unknown") {
     return {
       ok: false,
       skipped: false,
       error: "shipping_fee_unknown",
       detail: {
-        message: "배송비가 유료(착불/배송비별도)로 표시되지만 금액을 파싱하지 못했습니다.",
+        message: "배송비가 유료(착불/배송비별도)로 표시되지만 금액을 확인할 수 없어 업로드를 중단했습니다.",
         sourceUrl: draft.sourceUrl,
       },
       draft: { title: draft.title, price: draft.price, imageUrl: draft.imageUrl, shippingFee: draft.shippingFee },
     };
   }
 
-  const shippingSurcharge = shippingFee > 0 ? shippingFee : 0;
+  let shippingSurcharge = 0;
+  if (shippingPolicy === "none") shippingSurcharge = 0;
+  else if (shippingPolicy === "fixed") shippingSurcharge = shippingFee > 0 || shippingFee === -1 ? shippingFixed : 0;
+  else if (shippingPolicy === "actual") shippingSurcharge = shippingFee > 0 ? shippingFee : 0;
+  else if (shippingPolicy === "error_unknown") shippingSurcharge = shippingFee > 0 ? shippingFee : 0;
+
   const shouldAddShipping = shippingSurcharge > 0;
   if (shouldAddShipping) {
     finalPrice += shippingSurcharge;
