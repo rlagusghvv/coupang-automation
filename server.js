@@ -38,12 +38,9 @@ app.use(express.json({ limit: "2mb" }));
 await initDb();
 
 // ✅ out 폴더(이미지 파일) 정적 서빙
-app.use(
-  "/couplus-out",
-  express.static(
-    "/Users/kimhyeonho/Desktop/2025.01.26_new project/couplus-clone/out",
-  ),
-);
+// 쿠팡이 접근 가능한 공개 URL(imageProxyBase/localImageBaseUrl)의 /couplus-out/<file> 로 매핑된다.
+app.use("/couplus-out", express.static(path.join(process.cwd(), "out")));
+// 레거시 경로도 유지
 app.use("/tmp", express.static(path.join(process.cwd(), "out"))); // /tmp/tmp_main.jpg 같은 형태로도 접근 가능
 app.use(express.static(path.join(process.cwd(), "public")));
 
