@@ -15,6 +15,27 @@ function pickPriceFromText(allText) {
   return Number(m[1].replace(/,/g, ""));
 }
 
+function parseShippingFeeFromText(allText) {
+  const t = String(allText || "").replace(/\s+/g, " ");
+  if (!t) return null;
+
+  // Free shipping
+  if (/무료\s*배송/.test(t)) return 0;
+
+  // Explicit fee
+  const m1 = t.match(/배송비\s*[:\-]?\s*(\d[\d,]*)\s*원/);
+  if (m1) return Number(m1[1].replace(/,/g, ""));
+
+  // Some listings show patterns like "택배비 3,000원" or "기본배송비 3,000원"
+  const m2 = t.match(/(택배비|기본\s*배송비|배송\s*비용)\s*[:\-]?\s*(\d[\d,]*)\s*원/);
+  if (m2) return Number(m2[2].replace(/,/g, ""));
+
+  // If it mentions shipping is charged but no number (e.g. 착불/배송비별도)
+  if (/착불|배송비\s*별도|배송비\s*유료|유료\s*배송/.test(t)) return 1;
+
+  return null;
+}
+
 async function extractDomeggookQuantityPriceTiers(page) {
   // Returns tiers like: [{ minQty: 1, unitPrice: 96500 }, ...]
   // Domeggook often shows range prices (e.g. 87,000원 ~ 96,500원) and a quantity table.
@@ -859,6 +880,7 @@ export async function parseProductFromDomaeqq(url) {
       (await page.locator(".lItemPrice").first().textContent().catch(() => null))?.trim() ||
       (await page.locator("text=/\\d[\\d,]*\\s*원/").first().textContent().catch(() => null))?.trim();
     const bodyText = await page.locator("body").innerText().catch(() => "");
+    const shippingFee = parseShippingFeeFromText(bodyText);
 
     const variantPrices = Array.isArray(variantTable?.variants)
       ? variantTable.variants.map((v) => Number(v.price)).filter((n) => Number.isFinite(n))
@@ -1234,6 +1256,7 @@ export async function parseProductFromDomaeqq(url) {
       contentText: finalContentHtml || titleText || "",
       categoryText,
       options: finalOptions,
+      shippingFee,
     });
 
     // Debug payload for preview (safe: contains no secrets)

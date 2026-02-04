@@ -28,6 +28,7 @@ export function makeDraft({
   contentText = "",
   categoryText = "",
   options = [],
+  shippingFee = null,
 }) {
   return validateDraft({
     sourceUrl: String(sourceUrl).trim(),
@@ -37,5 +38,6 @@ export function makeDraft({
     contentText: String(contentText || "").trim(),
     categoryText: String(categoryText || "").trim(),
     options: Array.isArray(options) ? options : [],
+    shippingFee: Number.isFinite(Number(shippingFee)) ? Number(shippingFee) : null,
   });
 }

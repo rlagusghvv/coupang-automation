@@ -63,12 +63,25 @@ export async function previewUploadFromUrl(inputUrl, settings = {}) {
     .slice(0, Math.max(0, maxContentImages))
     .filter(Boolean);
 
-  const finalPrice = computePrice(draft.price, {
+  let finalPrice = computePrice(draft.price, {
     rate: settings.marginRate,
     add: settings.marginAdd,
     min: settings.priceMin,
     roundUnit: settings.roundUnit,
   });
+
+  const shippingFee = Number(draft.shippingFee);
+  const shippingSurcharge = Number.isFinite(Number(settings.shippingSurcharge))
+    ? Number(settings.shippingSurcharge)
+    : 2500;
+  const shouldAddShipping = Number.isFinite(shippingFee) ? shippingFee > 0 : false;
+  if (shouldAddShipping && Number.isFinite(shippingSurcharge) && shippingSurcharge > 0) {
+    finalPrice += shippingSurcharge;
+    const roundUnit = Number.isFinite(Number(settings.roundUnit)) ? Number(settings.roundUnit) : 10;
+    if (roundUnit > 1) finalPrice = Math.floor(finalPrice / roundUnit) * roundUnit;
+    const min = Number.isFinite(Number(settings.priceMin)) ? Number(settings.priceMin) : 1000;
+    if (Number.isFinite(min)) finalPrice = Math.max(min, finalPrice);
+  }
 
   const mainImageUrl = draft.imageUrl || "";
   const images = uniq([mainImageUrl, ...contentImages]);
@@ -81,11 +94,14 @@ export async function previewUploadFromUrl(inputUrl, settings = {}) {
       title: draft.title || "",
       categoryText: draft.categoryText || "",
       price: draft.price ?? null,
+      shippingFee: Number.isFinite(Number(draft.shippingFee)) ? Number(draft.shippingFee) : null,
       imageUrl: mainImageUrl,
       sourceUrl: draft.sourceUrl || c.url,
     },
     computed: {
       finalPrice,
+      shippingSurchargeApplied: Boolean(shouldAddShipping),
+      shippingSurcharge,
       images,
       contentImageCount: contentImages.length,
       optionsCount: options.length,

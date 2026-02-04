@@ -300,12 +300,26 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
     fallback: DISPLAY_CATEGORY_CODE,
   });
 
-  const finalPrice = computePrice(draft.price, {
+  let finalPrice = computePrice(draft.price, {
     rate: settings.marginRate,
     add: settings.marginAdd,
     min: settings.priceMin,
     roundUnit: settings.roundUnit,
   });
+
+  // 배송비가 붙는 상품이면 판매가에 2,500원 가산 (요청사항)
+  const shippingFee = Number(draft.shippingFee);
+  const shippingSurcharge = Number.isFinite(Number(settings.shippingSurcharge))
+    ? Number(settings.shippingSurcharge)
+    : 2500;
+  const shouldAddShipping = Number.isFinite(shippingFee) ? shippingFee > 0 : false;
+  if (shouldAddShipping && Number.isFinite(shippingSurcharge) && shippingSurcharge > 0) {
+    finalPrice += shippingSurcharge;
+    const roundUnit = Number.isFinite(Number(settings.roundUnit)) ? Number(settings.roundUnit) : 10;
+    if (roundUnit > 1) finalPrice = Math.floor(finalPrice / roundUnit) * roundUnit;
+    const min = Number.isFinite(Number(settings.priceMin)) ? Number(settings.priceMin) : 1000;
+    if (Number.isFinite(min)) finalPrice = Math.max(min, finalPrice);
+  }
 
   const useAutoCategory = String(settings.autoCategoryMatch || process.env.AUTO_CATEGORY_MATCH || "").trim() === "1";
   let allowAutoCategory = false;
