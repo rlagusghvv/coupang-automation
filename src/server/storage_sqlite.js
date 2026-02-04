@@ -123,6 +123,18 @@ export async function initDb() {
     )`,
   );
 
+  // APNs device tokens (native app)
+  await dbRun(
+    db,
+    `CREATE TABLE IF NOT EXISTS apns_tokens (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id TEXT NOT NULL,
+      device_token TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      UNIQUE(user_id, device_token)
+    )`,
+  );
+
   db.close();
 }
 
@@ -354,6 +366,43 @@ export async function deletePushSubscription({ userId, endpoint }) {
   const db = openDb();
   await dbRun(db, "DELETE FROM push_subscriptions WHERE user_id = ? AND endpoint = ?", [userId, ep]);
   db.close();
+}
+
+export async function upsertApnsToken({ userId, deviceToken }) {
+  if (!userId) throw new Error("userId required");
+  const token = String(deviceToken || "").trim();
+  if (!token) throw new Error("deviceToken required");
+  const db = openDb();
+  const nowIso = new Date().toISOString();
+  await dbRun(
+    db,
+    `INSERT INTO apns_tokens (user_id, device_token, created_at)
+     VALUES (?, ?, ?)
+     ON CONFLICT(user_id, device_token) DO UPDATE SET created_at = excluded.created_at`,
+    [userId, token, nowIso],
+  );
+  db.close();
+}
+
+export async function deleteApnsToken({ userId, deviceToken }) {
+  if (!userId) throw new Error("userId required");
+  const token = String(deviceToken || "").trim();
+  if (!token) throw new Error("deviceToken required");
+  const db = openDb();
+  await dbRun(db, "DELETE FROM apns_tokens WHERE user_id = ? AND device_token = ?", [userId, token]);
+  db.close();
+}
+
+export async function listApnsTokens(userId) {
+  if (!userId) throw new Error("userId required");
+  const db = openDb();
+  const rows = await dbAll(
+    db,
+    "SELECT device_token FROM apns_tokens WHERE user_id = ? ORDER BY id DESC LIMIT 20",
+    [userId],
+  );
+  db.close();
+  return (rows || []).map((r) => String(r.device_token || "")).filter(Boolean);
 }
 
 export async function listPushSubscriptions(userId) {

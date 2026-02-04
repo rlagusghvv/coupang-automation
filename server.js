@@ -21,6 +21,9 @@ import {
   upsertPushSubscription,
   deletePushSubscription,
   listPushSubscriptions,
+  upsertApnsToken,
+  deleteApnsToken,
+  listApnsTokens,
 } from "./src/server/storage_sqlite.js";
 import { addOrder, clearOrders, listOrders } from "./src/server/orders_sqlite.js";
 import { exportOrdersToDomeme } from "./src/pipeline/exportOrdersToDomeme.js";
@@ -29,6 +32,7 @@ import { exportPaidOrdersToVendors } from "./src/pipeline/exportPaidOrdersToVend
 import { uploadVendorPurchaseExcel } from "./src/pipeline/uploadVendorPurchaseExcel.js";
 import { spawn } from "node:child_process";
 import webpush from "web-push";
+import apn from "apn";
 import { newSessionFlag, touchFlag } from "./src/server/session_control.js";
 import {
   DOMEME_STORAGE_STATE_PATH,
@@ -85,7 +89,8 @@ function loadOrCreateVapidKeys() {
 const VAPID = loadOrCreateVapidKeys();
 webpush.setVapidDetails("mailto:admin@couplus.local", VAPID.publicKey, VAPID.privateKey);
 
-async function sendPushToUser(userId, payload) {
+// Web Push (PWA)
+async function sendWebPushToUser(userId, payload) {
   try {
     const subs = await listPushSubscriptions(userId);
     if (!subs || subs.length === 0) return;
@@ -109,6 +114,71 @@ async function sendPushToUser(userId, payload) {
       }
     }
   } catch {}
+}
+
+// Native APNs (TestFlight app)
+const APNS_KEY_ID = String(process.env.APNS_KEY_ID || "").trim();
+const APNS_TEAM_ID = String(process.env.APNS_TEAM_ID || "").trim();
+const APNS_BUNDLE_ID = String(process.env.APNS_BUNDLE_ID || "com.hyunho.coupelephant.app").trim();
+const APNS_P8_PATH = String(process.env.APNS_P8_PATH || path.join(process.cwd(), "data", "apns_auth_key.p8")).trim();
+
+let apnProvider = null;
+function getApnProvider() {
+  if (apnProvider) return apnProvider;
+  if (!APNS_KEY_ID || !APNS_TEAM_ID || !APNS_P8_PATH) return null;
+  if (!fs.existsSync(APNS_P8_PATH)) return null;
+  apnProvider = new apn.Provider({
+    token: {
+      key: fs.readFileSync(APNS_P8_PATH),
+      keyId: APNS_KEY_ID,
+      teamId: APNS_TEAM_ID,
+    },
+    production: true, // TestFlight uses production APNs
+  });
+  return apnProvider;
+}
+
+async function sendApnsToUser(userId, payload) {
+  const provider = getApnProvider();
+  if (!provider) return;
+  const tokens = await listApnsTokens(userId);
+  if (!tokens || tokens.length === 0) return;
+
+  const note = new apn.Notification();
+  note.topic = APNS_BUNDLE_ID;
+  note.alert = {
+    title: String(payload?.title || "Couplus"),
+    body: String(payload?.body || "작업이 완료되었습니다."),
+  };
+  note.sound = "default";
+  note.payload = payload || {};
+
+  try {
+    const result = await provider.send(note, tokens);
+    // Clean up invalid tokens
+    const failed = Array.isArray(result?.failed) ? result.failed : [];
+    for (const f of failed) {
+      const t = String(f?.device || "");
+      const status = f?.status;
+      const reason = f?.response?.reason || "";
+      if (!t) continue;
+      if (status === 410 || reason === "Unregistered" || reason === "BadDeviceToken") {
+        try {
+          // eslint-disable-next-line no-await-in-loop
+          await deleteApnsToken({ userId, deviceToken: t });
+        } catch {}
+      }
+    }
+  } catch {}
+}
+
+// Unified notify
+async function notifyUser(userId, payload) {
+  // Best-effort parallel
+  await Promise.all([
+    sendWebPushToUser(userId, payload),
+    sendApnsToUser(userId, payload),
+  ]).catch(() => {});
 }
 
 function log(...args) {
@@ -436,6 +506,29 @@ app.post("/api/push/unsubscribe", authRequired, async (req, res) => {
   }
 });
 
+// ✅ Native APNs: register/unregister device token
+app.post("/api/apns/register", authRequired, async (req, res) => {
+  try {
+    const deviceToken = String(req.body?.deviceToken || "").trim();
+    if (!deviceToken) return res.status(400).json({ ok: false, error: "missing deviceToken" });
+    await upsertApnsToken({ userId: req.user.id, deviceToken });
+    return res.json({ ok: true });
+  } catch (e) {
+    return res.status(400).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+app.post("/api/apns/unregister", authRequired, async (req, res) => {
+  try {
+    const deviceToken = String(req.body?.deviceToken || "").trim();
+    if (!deviceToken) return res.status(400).json({ ok: false, error: "missing deviceToken" });
+    await deleteApnsToken({ userId: req.user.id, deviceToken });
+    return res.json({ ok: true });
+  } catch (e) {
+    return res.status(400).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
 app.post("/api/settings", authRequired, async (req, res) => {
   try {
     const next = req.body || {};
@@ -459,7 +552,7 @@ app.post("/api/upload/preview", authRequired, async (req, res) => {
     if (!preview.ok) {
       // push (best-effort)
       setTimeout(() => {
-        sendPushToUser(req.user.id, {
+        notifyUser(req.user.id, {
           title: "미리보기 실패",
           body: `미리보기 실패: ${(preview?.draft?.title || "").slice(0, 40)}`,
           tag: "preview",
@@ -487,7 +580,7 @@ app.post("/api/upload/preview", authRequired, async (req, res) => {
 
     // push (best-effort)
     setTimeout(() => {
-      sendPushToUser(req.user.id, {
+      notifyUser(req.user.id, {
         title: "미리보기 완료",
         body: `미리보기 완료: ${String(preview?.draft?.title || "상품").slice(0, 40)}`,
         tag: "preview",
@@ -785,7 +878,7 @@ app.post("/api/upload/execute", authRequired, async (req, res) => {
       const body = ok
         ? `업로드 완료: ${title.slice(0, 40)}`
         : `업로드 실패: ${title.slice(0, 40)}`;
-      sendPushToUser(req.user.id, {
+      notifyUser(req.user.id, {
         title: ok ? "업로드 완료" : "업로드 실패",
         body,
         tag: "upload",
@@ -874,7 +967,7 @@ app.post("/api/upload", authRequired, async (req, res) => {
       const body = ok
         ? `업로드 완료: ${title.slice(0, 40)}`
         : `업로드 실패: ${title.slice(0, 40)}`;
-      sendPushToUser(req.user.id, {
+      notifyUser(req.user.id, {
         title: ok ? "업로드 완료" : "업로드 실패",
         body,
         tag: "upload",
