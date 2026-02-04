@@ -31,6 +31,13 @@ const DISPLAY_CATEGORY_CODE = 77723;
 const IP_CHECK_URLS = ["https://ifconfig.me/ip", "https://api.ipify.org"];
 const IMAGE_CHECK_TIMEOUT_MS = 8000;
 
+function limitLen(s, max = 30) {
+  const str = String(s || "").replace(/\s+/g, " ").trim();
+  if (!str) return "";
+  if (str.length <= max) return str;
+  return str.slice(0, Math.max(0, max - 1)).trimEnd() + "…";
+}
+
 function makeUniqueOptions(list) {
   const seen = new Map();
   const out = [];
@@ -56,11 +63,12 @@ function makeUniqueOptions(list) {
     const key = `${base.toLowerCase()}::${priceDelta}::${valueKey}`;
     const count = (seen.get(key) || 0) + 1;
     seen.set(key, count);
-    const uniqName = count === 1 ? base : `${base} (${count})`;
+    const uniqNameRaw = count === 1 ? base : `${base} (${count})`;
+    const uniqName = limitLen(uniqNameRaw, 30);
     const hasValues = Array.isArray(values) && values.length > 0;
     idx += 1;
     out.push({
-      label: hasValues ? `${uniqName}` : `${idx}. ${uniqName}`,
+      label: hasValues ? `${uniqName}` : limitLen(`${idx}. ${uniqName}`, 30),
       priceDelta,
       stock,
       values,
@@ -74,10 +82,13 @@ function buildItemAttributesFromOptionValues(values) {
   const attrs = values
     .map((v) => {
       const rawName = String(v?.optionName || "").trim();
-      const attributeTypeName = rawName
-        .replace(/색깔/g, "색상")
-        .replace(/크기|사이즈/g, "사이즈");
-      const attributeValueName = String(v?.optionValue || "").trim();
+      const attributeTypeName = limitLen(
+        rawName
+          .replace(/색깔/g, "색상")
+          .replace(/크기|사이즈/g, "사이즈"),
+        30,
+      );
+      const attributeValueName = limitLen(String(v?.optionValue || "").trim(), 30);
       if (!attributeTypeName || !attributeValueName) return null;
       return { attributeTypeName, attributeValueName };
     })
@@ -413,9 +424,23 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
 
   let createdId = null;
   let createBody = res.body;
+  let createBodyObj = null;
   try {
-    const bodyObj = typeof res.body === "string" ? JSON.parse(res.body) : res.body;
-    createdId = bodyObj?.data ?? null;
+    createBodyObj = typeof res.body === "string" ? JSON.parse(res.body) : res.body;
+    if (createBodyObj?.code && String(createBodyObj.code).toUpperCase() !== "SUCCESS") {
+      return {
+        ok: false,
+        error: "coupang_create_failed",
+        detail: createBodyObj,
+        draft: { title: draft.title, price: draft.price, imageUrl: draft.imageUrl },
+        finalPrice,
+        category: { requested: displayCategoryCode, used: finalCategoryCode, auto: allowAutoCategory },
+        optionsUsed: optionsUsed.map((opt) => opt.label),
+        payloadCheck,
+        create: { status: res.status, body: createBody, sellerProductId: null },
+      };
+    }
+    createdId = createBodyObj?.data ?? null;
   } catch {}
 
   let approval = null;
