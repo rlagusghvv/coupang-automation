@@ -2,6 +2,7 @@ import 'package:couplus_mobile/api/api_client.dart';
 import 'package:couplus_mobile/screens/home_screen.dart';
 import 'package:couplus_mobile/screens/more_screen.dart';
 import 'package:couplus_mobile/screens/work_screen.dart';
+import 'package:couplus_mobile/services/push_token_service.dart';
 import 'package:couplus_mobile/ui/app_theme.dart';
 import 'package:flutter/material.dart';
 
@@ -40,6 +41,8 @@ class _RootTabsState extends State<RootTabs> {
   void initState() {
     super.initState();
     _api.init();
+    // Native APNs token -> server registration (best-effort)
+    PushTokenService.instance.bind(_api);
   }
 
   @override
