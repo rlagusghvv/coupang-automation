@@ -27,6 +27,53 @@ self.addEventListener("activate", (event) => {
   self.clients.claim();
 });
 
+self.addEventListener("push", (event) => {
+  const data = (() => {
+    try {
+      return event.data ? event.data.json() : {};
+    } catch {
+      try {
+        return { title: "Couplus", body: event.data?.text?.() || "" };
+      } catch {
+        return {};
+      }
+    }
+  })();
+
+  const title = data.title || "Couplus";
+  const body = data.body || "작업이 완료되었습니다.";
+  const url = data.url || "/";
+  const tag = data.tag || "couplus";
+
+  event.waitUntil(
+    self.registration.showNotification(title, {
+      body,
+      tag,
+      data: { url },
+      renotify: false,
+    }),
+  );
+});
+
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const url = event.notification?.data?.url || "/";
+  event.waitUntil(
+    (async () => {
+      const allClients = await clients.matchAll({ type: "window", includeUncontrolled: true });
+      for (const c of allClients) {
+        try {
+          if (c.url && c.url.includes(url)) {
+            await c.focus();
+            return;
+          }
+        } catch {}
+      }
+      await clients.openWindow(url);
+    })(),
+  );
+});
+
 self.addEventListener("fetch", (event) => {
   const req = event.request;
   const url = new URL(req.url);

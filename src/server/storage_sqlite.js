@@ -110,6 +110,19 @@ export async function initDb() {
     )`,
   );
 
+  // Web Push subscriptions
+  await dbRun(
+    db,
+    `CREATE TABLE IF NOT EXISTS push_subscriptions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id TEXT NOT NULL,
+      endpoint TEXT NOT NULL,
+      subscription_json TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      UNIQUE(user_id, endpoint)
+    )`,
+  );
+
   db.close();
 }
 
@@ -314,6 +327,52 @@ export async function upsertUploadedProduct({
     ],
   );
   db.close();
+}
+
+export async function upsertPushSubscription({ userId, subscription }) {
+  if (!userId) throw new Error("userId required");
+  const sub = subscription || null;
+  const endpoint = String(sub?.endpoint || "").trim();
+  if (!endpoint) throw new Error("subscription.endpoint required");
+  const db = openDb();
+  const nowIso = new Date().toISOString();
+  await dbRun(
+    db,
+    `INSERT INTO push_subscriptions (user_id, endpoint, subscription_json, created_at)
+     VALUES (?, ?, ?, ?)
+     ON CONFLICT(user_id, endpoint) DO UPDATE SET
+       subscription_json = excluded.subscription_json`,
+    [userId, endpoint, JSON.stringify(sub), nowIso],
+  );
+  db.close();
+}
+
+export async function deletePushSubscription({ userId, endpoint }) {
+  if (!userId) throw new Error("userId required");
+  const ep = String(endpoint || "").trim();
+  if (!ep) throw new Error("endpoint required");
+  const db = openDb();
+  await dbRun(db, "DELETE FROM push_subscriptions WHERE user_id = ? AND endpoint = ?", [userId, ep]);
+  db.close();
+}
+
+export async function listPushSubscriptions(userId) {
+  if (!userId) throw new Error("userId required");
+  const db = openDb();
+  const rows = await dbAll(
+    db,
+    "SELECT subscription_json FROM push_subscriptions WHERE user_id = ? ORDER BY id DESC LIMIT 10",
+    [userId],
+  );
+  db.close();
+  const out = [];
+  for (const r of rows || []) {
+    try {
+      const sub = JSON.parse(r.subscription_json || "{}");
+      if (sub?.endpoint) out.push(sub);
+    } catch {}
+  }
+  return out;
 }
 
 export async function listPreviewHistory(userId, limit = 50) {

@@ -18,6 +18,9 @@ import {
   listPreviewHistory,
   getUploadedProductByUrl,
   upsertUploadedProduct,
+  upsertPushSubscription,
+  deletePushSubscription,
+  listPushSubscriptions,
 } from "./src/server/storage_sqlite.js";
 import { addOrder, clearOrders, listOrders } from "./src/server/orders_sqlite.js";
 import { exportOrdersToDomeme } from "./src/pipeline/exportOrdersToDomeme.js";
@@ -25,6 +28,7 @@ import { uploadDomemeExcel } from "./src/pipeline/uploadDomemeExcel.js";
 import { exportPaidOrdersToVendors } from "./src/pipeline/exportPaidOrdersToVendor.js";
 import { uploadVendorPurchaseExcel } from "./src/pipeline/uploadVendorPurchaseExcel.js";
 import { spawn } from "node:child_process";
+import webpush from "web-push";
 import { newSessionFlag, touchFlag } from "./src/server/session_control.js";
 import {
   DOMEME_STORAGE_STATE_PATH,
@@ -58,6 +62,54 @@ const GIT_DIR = path.join(process.cwd(), ".git");
 const IP_CHECK_URLS = ["https://ifconfig.me/ip", "https://api.ipify.org"];
 const UPLOAD_HISTORY_PATH = path.join(process.cwd(), "data", "upload_history.json");
 const UPLOAD_HISTORY_LIMIT = 200;
+
+// Web Push (PWA)
+const PUSH_VAPID_PATH = path.join(process.cwd(), "data", "push_vapid.json");
+function loadOrCreateVapidKeys() {
+  try {
+    if (fs.existsSync(PUSH_VAPID_PATH)) {
+      const raw = fs.readFileSync(PUSH_VAPID_PATH, "utf-8");
+      const json = JSON.parse(raw || "{}");
+      if (json?.publicKey && json?.privateKey) return json;
+    }
+  } catch {}
+
+  const keys = webpush.generateVAPIDKeys();
+  try {
+    fs.mkdirSync(path.dirname(PUSH_VAPID_PATH), { recursive: true });
+    fs.writeFileSync(PUSH_VAPID_PATH, JSON.stringify(keys, null, 2));
+  } catch {}
+  return keys;
+}
+
+const VAPID = loadOrCreateVapidKeys();
+webpush.setVapidDetails("mailto:admin@couplus.local", VAPID.publicKey, VAPID.privateKey);
+
+async function sendPushToUser(userId, payload) {
+  try {
+    const subs = await listPushSubscriptions(userId);
+    if (!subs || subs.length === 0) return;
+    const msg = JSON.stringify(payload || {});
+    for (const sub of subs) {
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        await webpush.sendNotification(sub, msg, {
+          TTL: 60 * 60,
+          urgency: "normal",
+        });
+      } catch (e) {
+        // Remove dead subscriptions
+        const code = e?.statusCode || e?.status || null;
+        if (code === 404 || code === 410) {
+          try {
+            // eslint-disable-next-line no-await-in-loop
+            await deletePushSubscription({ userId, endpoint: sub?.endpoint });
+          } catch {}
+        }
+      }
+    }
+  } catch {}
+}
 
 function log(...args) {
   console.log("[server]", new Date().toISOString(), ...args);
@@ -357,6 +409,33 @@ app.get("/api/settings", authRequired, (req, res) => {
   return res.json({ ok: true, settings: req.user.settings || {} });
 });
 
+// ✅ PWA Push: VAPID public key
+app.get("/api/push/public-key", authRequired, (req, res) => {
+  return res.json({ ok: true, publicKey: VAPID.publicKey });
+});
+
+// ✅ PWA Push: subscribe/unsubscribe
+app.post("/api/push/subscribe", authRequired, async (req, res) => {
+  try {
+    const subscription = req.body?.subscription || null;
+    await upsertPushSubscription({ userId: req.user.id, subscription });
+    return res.json({ ok: true });
+  } catch (e) {
+    return res.status(400).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+app.post("/api/push/unsubscribe", authRequired, async (req, res) => {
+  try {
+    const endpoint = String(req.body?.endpoint || "").trim();
+    if (!endpoint) return res.status(400).json({ ok: false, error: "missing endpoint" });
+    await deletePushSubscription({ userId: req.user.id, endpoint });
+    return res.json({ ok: true });
+  } catch (e) {
+    return res.status(400).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
 app.post("/api/settings", authRequired, async (req, res) => {
   try {
     const next = req.body || {};
@@ -377,7 +456,18 @@ app.post("/api/upload/preview", authRequired, async (req, res) => {
     if (!c.ok) return res.status(400).json({ ok: false, error: c.reason, url: c.url });
 
     const preview = await previewUploadFromUrl(c.url, req.user.settings || {});
-    if (!preview.ok) return res.status(400).json({ ok: false, preview });
+    if (!preview.ok) {
+      // push (best-effort)
+      setTimeout(() => {
+        sendPushToUser(req.user.id, {
+          title: "미리보기 실패",
+          body: `미리보기 실패: ${(preview?.draft?.title || "").slice(0, 40)}`,
+          tag: "preview",
+          url: "/",
+        });
+      }, 0);
+      return res.status(400).json({ ok: false, preview });
+    }
 
     // Store preview history in sqlite
     try {
@@ -394,6 +484,16 @@ app.post("/api/upload/preview", authRequired, async (req, res) => {
         maxRows: 30,
       });
     } catch {}
+
+    // push (best-effort)
+    setTimeout(() => {
+      sendPushToUser(req.user.id, {
+        title: "미리보기 완료",
+        body: `미리보기 완료: ${String(preview?.draft?.title || "상품").slice(0, 40)}`,
+        tag: "preview",
+        url: "/",
+      });
+    }, 0);
 
     return res.json({ ok: true, preview });
   } catch (e) {
@@ -677,6 +777,23 @@ app.post("/api/upload/execute", authRequired, async (req, res) => {
     // IMPORTANT: the client UI uses top-level ok to show "업로드 성공".
     // If the pipeline failed (e.g. image_host_unreachable), propagate it.
     const ok = Boolean(result?.ok);
+
+    // push (best-effort)
+    setTimeout(() => {
+      const title = String(result?.draft?.title || "상품");
+      const sellerProductId = result?.create?.sellerProductId || null;
+      const body = ok
+        ? `업로드 완료: ${title.slice(0, 40)}`
+        : `업로드 실패: ${title.slice(0, 40)}`;
+      sendPushToUser(req.user.id, {
+        title: ok ? "업로드 완료" : "업로드 실패",
+        body,
+        tag: "upload",
+        url: "/",
+        sellerProductId,
+      });
+    }, 0);
+
     return res.status(ok ? 200 : 400).json({ ok, result });
   } catch (e) {
     uploadInProgress = false;
@@ -749,6 +866,23 @@ app.post("/api/upload", authRequired, async (req, res) => {
     uploadInProgress = false;
 
     const ok = Boolean(result?.ok);
+
+    // push (best-effort)
+    setTimeout(() => {
+      const title = String(result?.draft?.title || "상품");
+      const sellerProductId = result?.create?.sellerProductId || null;
+      const body = ok
+        ? `업로드 완료: ${title.slice(0, 40)}`
+        : `업로드 실패: ${title.slice(0, 40)}`;
+      sendPushToUser(req.user.id, {
+        title: ok ? "업로드 완료" : "업로드 실패",
+        body,
+        tag: "upload",
+        url: "/",
+        sellerProductId,
+      });
+    }, 0);
+
     return res.status(ok ? 200 : 400).json({ ok, result });
   } catch (e) {
     uploadInProgress = false;

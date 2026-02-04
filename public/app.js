@@ -13,6 +13,7 @@ const urlInput = $("url");
 const submitBtn = $("submit");
 const previewBtn = $("previewUpload");
 const forceUploadEl = $("forceUpload");
+const enablePushBtn = $("enablePush");
 const exportOrdersBtn = $("exportOrders");
 const orderFromInput = $("orderFrom");
 const orderToInput = $("orderTo");
@@ -122,6 +123,71 @@ try {
     });
   }
 } catch {}
+
+try {
+  enablePushBtn?.addEventListener("click", () => enablePush());
+} catch {}
+
+// Push (PWA)
+function urlBase64ToUint8Array(base64String) {
+  const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const rawData = atob(base64);
+  const outputArray = new Uint8Array(rawData.length);
+  for (let i = 0; i < rawData.length; ++i) outputArray[i] = rawData.charCodeAt(i);
+  return outputArray;
+}
+
+async function enablePush() {
+  try {
+    if (!("serviceWorker" in navigator)) {
+      setStatus("푸시 미지원 브라우저", "bad");
+      return;
+    }
+    if (!("PushManager" in window)) {
+      setStatus("푸시 미지원", "bad");
+      return;
+    }
+
+    const perm = await Notification.requestPermission();
+    if (perm !== "granted") {
+      setStatus("알림 권한이 필요합니다", "bad");
+      return;
+    }
+
+    const reg = await navigator.serviceWorker.ready;
+    const keyRes = await fetch("/api/push/public-key");
+    const keyJson = await keyRes.json().catch(() => ({}));
+    const publicKey = keyJson?.publicKey || "";
+    if (!publicKey) {
+      setStatus("푸시 키 오류", "bad");
+      log(keyJson);
+      return;
+    }
+
+    const sub = await reg.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlBase64ToUint8Array(publicKey),
+    });
+
+    const res = await fetch("/api/push/subscribe", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ subscription: sub }),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok || !json.ok) {
+      setStatus("푸시 등록 실패", "bad");
+      log(json);
+      return;
+    }
+
+    setStatus("푸시 알림 ON", "ok");
+  } catch (e) {
+    setStatus("푸시 등록 에러", "bad");
+    log(String(e?.message || e));
+  }
+}
 
 // Theme: auto | light | dark
 const THEME_KEY = "couplus.theme";
