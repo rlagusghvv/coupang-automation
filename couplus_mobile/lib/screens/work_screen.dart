@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:couplus_mobile/api/api_client.dart';
 import 'package:couplus_mobile/screens/preview_detail_screen.dart';
@@ -23,6 +24,8 @@ class _WorkScreenState extends State<WorkScreen> {
   bool _loading = false;
   String? _error;
   bool _loginRequired = false;
+
+  bool _forceUpload = false;
 
   Map<String, dynamic>? _dashboard;
 
@@ -119,7 +122,29 @@ class _WorkScreenState extends State<WorkScreen> {
     }
   }
 
-  Future<void> _executeUpload() async {
+  String _humanizeUploadError(Map<String, dynamic>? r) {
+    final code = (r?['error'] ?? '').toString();
+    if (code.isEmpty) return '';
+    switch (code) {
+      case 'duplicate_product':
+        return '이미 등록된 상품입니다.';
+      case 'shipping_fee_unknown':
+        return '배송비가 유료로 표시되지만 금액을 확인할 수 없어 업로드를 중단했습니다.';
+      case 'coupang_create_failed':
+        final detail = r?['detail'];
+        if (detail is Map) {
+          final msg = (detail['message'] ?? '').toString();
+          if (msg.isNotEmpty) return msg;
+        }
+        return '쿠팡 상품 생성에 실패했습니다.';
+      case 'image_host_unreachable':
+        return '이미지 호스트에 접근할 수 없어 업로드를 중단했습니다.';
+      default:
+        return '업로드 실패: $code';
+    }
+  }
+
+  Future<void> _executeUpload({bool force = false}) async {
     final u = _url.text.trim();
     if (u.isEmpty) {
       setState(() => _error = 'URL을 입력하세요.');
@@ -133,7 +158,10 @@ class _WorkScreenState extends State<WorkScreen> {
     });
 
     try {
-      final json = await widget.api.postJson('/api/upload/execute', {'url': u});
+      final json = await widget.api.postJson('/api/upload/execute', {
+        'url': u,
+        'force': force || _forceUpload ? '1' : '0',
+      });
       setState(() {
         _uploadResult = (json['result'] as Map?)?.cast<String, dynamic>();
         _loginRequired = false;
@@ -145,7 +173,65 @@ class _WorkScreenState extends State<WorkScreen> {
           _loginRequired = true;
           _error = null;
         });
+      } else if (e is ApiException && e.statusCode == 409) {
+        // Try to decode body for duplicate_product
+        try {
+          final raw = e.details ?? '';
+          final map = jsonDecode(raw) as Map<String, dynamic>;
+          if (map['error'] == 'duplicate_product') {
+            final existing = (map['existing'] as Map?)?.cast<String, dynamic>();
+            if (existing != null && mounted) {
+              await showDialog<void>(
+                context: context,
+                builder: (_) {
+                  final title = (existing['title'] ?? '').toString();
+                  final pid = (existing['sellerProductId'] ?? '').toString();
+                  final productUrl = (existing['productUrl'] ?? '').toString();
+                  return AlertDialog(
+                    title: const Text('이미 등록된 상품'),
+                    content: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(title.isEmpty ? '(제목 없음)' : title),
+                        const SizedBox(height: 8),
+                        Text('SellerProductId: ${pid.isEmpty ? '-' : pid}'),
+                      ],
+                    ),
+                    actions: [
+                      if (productUrl.isNotEmpty)
+                        TextButton(
+                          onPressed: () async {
+                            final uri = Uri.tryParse(productUrl);
+                            if (uri != null) {
+                              await launchUrl(uri,
+                                  mode: LaunchMode.externalApplication);
+                            }
+                          },
+                          child: const Text('기존 상품 열기'),
+                        ),
+                      TextButton(
+                        onPressed: () {
+                          Navigator.of(context).pop();
+                          unawaited(_executeUpload(force: true));
+                        },
+                        child: const Text('강제 재업로드'),
+                      ),
+                      TextButton(
+                        onPressed: () => Navigator.of(context).pop(),
+                        child: const Text('취소'),
+                      ),
+                    ],
+                  );
+                },
+              );
+              return;
+            }
+          }
+        } catch (_) {}
+        setState(() => _error = '이미 등록된 상품입니다.');
       } else {
+        // Generic
         setState(() => _error = e.toString());
       }
     } finally {
@@ -393,9 +479,34 @@ class _WorkScreenState extends State<WorkScreen> {
                     const SizedBox(width: 10),
                     Expanded(
                       child: FilledButton(
-                        onPressed:
-                            (!isAuthed || _loading) ? null : _executeUpload,
+                        onPressed: (!isAuthed || _loading)
+                            ? null
+                            : () => _executeUpload(),
                         child: const Text('업로드 실행'),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                Row(
+                  children: [
+                    Switch(
+                      value: _forceUpload,
+                      onChanged: (!isAuthed || _loading)
+                          ? null
+                          : (v) => setState(() => _forceUpload = v),
+                    ),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        '강제 재업로드(중복 허용)',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Theme.of(context)
+                              .colorScheme
+                              .onSurface
+                              .withValues(alpha: 0.65),
+                        ),
                       ),
                     ),
                   ],
@@ -477,8 +588,7 @@ class _WorkScreenState extends State<WorkScreen> {
                               ?.toString() ??
                           '-'),
                   if ((_uploadResult?['error'] ?? '').toString().isNotEmpty)
-                    KvRow(
-                        k: '오류', v: (_uploadResult?['error'] ?? '').toString()),
+                    KvRow(k: '오류', v: _humanizeUploadError(_uploadResult)),
                 ],
               ],
             ),
