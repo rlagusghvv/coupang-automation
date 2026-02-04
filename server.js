@@ -566,7 +566,10 @@ app.post("/api/jobs/start", authRequired, async (req, res) => {
       }
     }
 
-    const job = await createJob({ userId: req.user.id, kind, inputUrl: c.url, force });
+    const userId = req.user.id;
+    const settingsSnapshot = { ...(req.user.settings || {}) };
+
+    const job = await createJob({ userId, kind, inputUrl: c.url, force });
 
     // Run in background
     setTimeout(async () => {
@@ -574,7 +577,7 @@ app.post("/api/jobs/start", authRequired, async (req, res) => {
         await updateJob({ id: job.id, patch: { status: "running" } });
 
         if (kind === "preview") {
-          const preview = await previewUploadFromUrl(c.url, req.user.settings || {});
+          const preview = await previewUploadFromUrl(c.url, settingsSnapshot);
           if (!preview.ok) {
             await updateJob({
               id: job.id,
@@ -585,7 +588,7 @@ app.post("/api/jobs/start", authRequired, async (req, res) => {
                 resultJson: { preview },
               },
             });
-            await notifyUser(req.user.id, {
+            await notifyUser(userId, {
               title: "미리보기 실패",
               body: `미리보기 실패: ${String(preview?.draft?.title || "상품").slice(0, 40)}`,
               tag: "job-preview",
@@ -595,7 +598,7 @@ app.post("/api/jobs/start", authRequired, async (req, res) => {
           }
 
           await updateJob({ id: job.id, patch: { status: "success", resultJson: { preview } } });
-          await notifyUser(req.user.id, {
+          await notifyUser(userId, {
             title: "미리보기 완료",
             body: `미리보기 완료: ${String(preview?.draft?.title || "상품").slice(0, 40)}`,
             tag: "job-preview",
@@ -605,8 +608,7 @@ app.post("/api/jobs/start", authRequired, async (req, res) => {
         }
 
         // upload
-        const settings = req.user.settings || {};
-        const result = await runUploadFromUrl(c.url, { ...settings, force });
+        const result = await runUploadFromUrl(c.url, { ...settingsSnapshot, force });
         const ok = Boolean(result?.ok);
         await updateJob({
           id: job.id,
@@ -618,7 +620,7 @@ app.post("/api/jobs/start", authRequired, async (req, res) => {
           },
         });
 
-        await notifyUser(req.user.id, {
+        await notifyUser(userId, {
           title: ok ? "업로드 완료" : "업로드 실패",
           body: `${ok ? "업로드 완료" : "업로드 실패"}: ${String(result?.draft?.title || "상품").slice(0, 40)}`,
           tag: "job-upload",

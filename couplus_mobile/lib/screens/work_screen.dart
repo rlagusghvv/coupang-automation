@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:couplus_mobile/api/api_client.dart';
 import 'package:couplus_mobile/screens/preview_detail_screen.dart';
@@ -137,6 +138,63 @@ class _WorkScreenState extends State<WorkScreen> {
           _loginRequired = true;
           _error = null;
         });
+      } else if (e is ApiException && e.statusCode == 409) {
+        // duplicate_product
+        try {
+          final raw = e.details ?? '';
+          final map = jsonDecode(raw) as Map<String, dynamic>;
+          if (map['error'] == 'duplicate_product') {
+            final existing = (map['existing'] as Map?)?.cast<String, dynamic>();
+            if (existing != null && mounted) {
+              await showDialog<void>(
+                context: context,
+                builder: (_) {
+                  final title = (existing['title'] ?? '').toString();
+                  final pid = (existing['sellerProductId'] ?? '').toString();
+                  final productUrl = (existing['productUrl'] ?? '').toString();
+                  return AlertDialog(
+                    title: const Text('이미 등록된 상품'),
+                    content: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(title.isEmpty ? '(제목 없음)' : title),
+                        const SizedBox(height: 8),
+                        Text('SellerProductId: ${pid.isEmpty ? '-' : pid}'),
+                      ],
+                    ),
+                    actions: [
+                      if (productUrl.isNotEmpty)
+                        TextButton(
+                          onPressed: () async {
+                            final uri = Uri.tryParse(productUrl);
+                            if (uri != null) {
+                              await launchUrl(uri,
+                                  mode: LaunchMode.externalApplication);
+                            }
+                          },
+                          child: const Text('기존 상품 열기'),
+                        ),
+                      TextButton(
+                        onPressed: () {
+                          Navigator.of(context).pop();
+                          unawaited(_executeUpload(force: true));
+                        },
+                        child: const Text('강제 재업로드'),
+                      ),
+                      TextButton(
+                        onPressed: () => Navigator.of(context).pop(),
+                        child: const Text('취소'),
+                      ),
+                    ],
+                  );
+                },
+              );
+              return;
+            }
+          }
+        } catch (_) {}
+        setState(() => _error = '이미 등록된 상품입니다.');
       } else {
         setState(() => _error = e.toString());
       }
