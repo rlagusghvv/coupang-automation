@@ -623,8 +623,24 @@ app.post("/api/upload/execute", authRequired, async (req, res) => {
     uploadInProgress = true;
 
     const result = await runUploadFromUrl(c.url, settings);
+    appendUploadHistory({
+      at: new Date().toISOString(),
+      url: c.url,
+      ok: Boolean(result?.ok),
+      payloadOnly: Boolean(result?.payloadOnly),
+      title: result?.draft?.title || "",
+      finalPrice: result?.finalPrice ?? null,
+      optionsCount: Array.isArray(result?.optionsUsed) ? result.optionsUsed.length : 0,
+      sellerProductId: result?.create?.sellerProductId ?? null,
+      createStatus: result?.create?.status ?? null,
+      error: result?.error || null,
+    });
     uploadInProgress = false;
-    return res.json({ ok: true, result });
+
+    // IMPORTANT: the client UI uses top-level ok to show "업로드 성공".
+    // If the pipeline failed (e.g. image_host_unreachable), propagate it.
+    const ok = Boolean(result?.ok);
+    return res.status(ok ? 200 : 400).json({ ok, result });
   } catch (e) {
     uploadInProgress = false;
     return res.status(500).json({ ok: false, error: String(e?.message || e) });
