@@ -26,6 +26,10 @@ function parseShippingFeeFromText(allText) {
   const m1 = t.match(/배송비\s*[:\-]?\s*(\d[\d,]*)\s*원/);
   if (m1) return Number(m1[1].replace(/,/g, ""));
 
+  // "배송정보 3,000원 ~" pattern (mobile domeggook)
+  const mInfo = t.match(/배송정보\s*(\d[\d,]*)\s*원/);
+  if (mInfo) return Number(mInfo[1].replace(/,/g, ""));
+
   // Some listings show patterns like "택배비 3,000원" or "기본배송비 3,000원"
   const m2 = t.match(/(택배비|기본\s*배송비|배송\s*비용)\s*[:\-]?\s*(\d[\d,]*)\s*원/);
   if (m2) return Number(m2[2].replace(/,/g, ""));
