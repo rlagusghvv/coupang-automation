@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 
 import 'package:couplus_mobile/api/api_client.dart';
 import 'package:couplus_mobile/screens/preview_detail_screen.dart';
@@ -87,7 +86,24 @@ class _WorkScreenState extends State<WorkScreen> {
     }
   }
 
-  Future<void> _previewFromUrl() async {
+  String _humanizeJobStatus(String s) {
+    switch (s) {
+      case 'queued':
+        return '대기중';
+      case 'running':
+        return '진행중';
+      case 'success':
+        return '완료';
+      case 'failed':
+        return '실패';
+      default:
+        return s;
+    }
+  }
+
+  Map<String, dynamic>? _activeJob;
+
+  Future<void> _startJob(String kind) async {
     final u = _url.text.trim();
     if (u.isEmpty) {
       setState(() => _error = 'URL을 입력하세요.');
@@ -102,12 +118,19 @@ class _WorkScreenState extends State<WorkScreen> {
     });
 
     try {
-      final json = await widget.api.postJson('/api/upload/preview', {'url': u});
+      final json = await widget.api.postJson('/api/jobs/start', {
+        'kind': kind,
+        'url': u,
+        'force': (kind == 'upload' && _forceUpload) ? '1' : '0',
+      });
+      final job = (json['job'] as Map?)?.cast<String, dynamic>();
       setState(() {
-        _preview = (json['preview'] as Map?)?.cast<String, dynamic>();
+        _activeJob = job;
         _loginRequired = false;
       });
-      unawaited(_refresh());
+
+      // poll
+      unawaited(_pollJob());
     } catch (e) {
       if (e is ApiException && e.isUnauthorized) {
         setState(() {
@@ -120,6 +143,46 @@ class _WorkScreenState extends State<WorkScreen> {
     } finally {
       if (mounted) setState(() => _loading = false);
     }
+  }
+
+  Future<void> _pollJob() async {
+    final jobId = (_activeJob?['id'] ?? '').toString();
+    if (jobId.isEmpty) return;
+
+    for (var i = 0; i < 90; i++) {
+      await Future.delayed(const Duration(seconds: 2));
+      try {
+        final json = await widget.api.getJson('/api/jobs/$jobId');
+        final job = (json['job'] as Map?)?.cast<String, dynamic>();
+        if (job == null) continue;
+        if (!mounted) return;
+        setState(() => _activeJob = job);
+
+        final status = (job['status'] ?? '').toString();
+        if (status == 'success' || status == 'failed') {
+          final kind = (job['kind'] ?? '').toString();
+          final result = (job['result'] as Map?)?.cast<String, dynamic>();
+          if (kind == 'preview') {
+            setState(() {
+              _preview = (result?['preview'] as Map?)?.cast<String, dynamic>();
+            });
+          } else if (kind == 'upload') {
+            setState(() {
+              _uploadResult =
+                  (result?['result'] as Map?)?.cast<String, dynamic>();
+            });
+          }
+          unawaited(_refresh());
+          return;
+        }
+      } catch (_) {
+        // ignore polling errors
+      }
+    }
+  }
+
+  Future<void> _previewFromUrl() async {
+    return _startJob('preview');
   }
 
   String _humanizeUploadError(Map<String, dynamic>? r) {
@@ -145,98 +208,10 @@ class _WorkScreenState extends State<WorkScreen> {
   }
 
   Future<void> _executeUpload({bool force = false}) async {
-    final u = _url.text.trim();
-    if (u.isEmpty) {
-      setState(() => _error = 'URL을 입력하세요.');
-      return;
+    if (force) {
+      setState(() => _forceUpload = true);
     }
-
-    setState(() {
-      _loading = true;
-      _error = null;
-      _uploadResult = null;
-    });
-
-    try {
-      final json = await widget.api.postJson('/api/upload/execute', {
-        'url': u,
-        'force': force || _forceUpload ? '1' : '0',
-      });
-      setState(() {
-        _uploadResult = (json['result'] as Map?)?.cast<String, dynamic>();
-        _loginRequired = false;
-      });
-      unawaited(_refresh());
-    } catch (e) {
-      if (e is ApiException && e.isUnauthorized) {
-        setState(() {
-          _loginRequired = true;
-          _error = null;
-        });
-      } else if (e is ApiException && e.statusCode == 409) {
-        // Try to decode body for duplicate_product
-        try {
-          final raw = e.details ?? '';
-          final map = jsonDecode(raw) as Map<String, dynamic>;
-          if (map['error'] == 'duplicate_product') {
-            final existing = (map['existing'] as Map?)?.cast<String, dynamic>();
-            if (existing != null && mounted) {
-              await showDialog<void>(
-                context: context,
-                builder: (_) {
-                  final title = (existing['title'] ?? '').toString();
-                  final pid = (existing['sellerProductId'] ?? '').toString();
-                  final productUrl = (existing['productUrl'] ?? '').toString();
-                  return AlertDialog(
-                    title: const Text('이미 등록된 상품'),
-                    content: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(title.isEmpty ? '(제목 없음)' : title),
-                        const SizedBox(height: 8),
-                        Text('SellerProductId: ${pid.isEmpty ? '-' : pid}'),
-                      ],
-                    ),
-                    actions: [
-                      if (productUrl.isNotEmpty)
-                        TextButton(
-                          onPressed: () async {
-                            final uri = Uri.tryParse(productUrl);
-                            if (uri != null) {
-                              await launchUrl(uri,
-                                  mode: LaunchMode.externalApplication);
-                            }
-                          },
-                          child: const Text('기존 상품 열기'),
-                        ),
-                      TextButton(
-                        onPressed: () {
-                          Navigator.of(context).pop();
-                          unawaited(_executeUpload(force: true));
-                        },
-                        child: const Text('강제 재업로드'),
-                      ),
-                      TextButton(
-                        onPressed: () => Navigator.of(context).pop(),
-                        child: const Text('취소'),
-                      ),
-                    ],
-                  );
-                },
-              );
-              return;
-            }
-          }
-        } catch (_) {}
-        setState(() => _error = '이미 등록된 상품입니다.');
-      } else {
-        // Generic
-        setState(() => _error = e.toString());
-      }
-    } finally {
-      if (mounted) setState(() => _loading = false);
-    }
+    return _startJob('upload');
   }
 
   Future<void> _ordersExport() async {
@@ -511,6 +486,18 @@ class _WorkScreenState extends State<WorkScreen> {
                     ),
                   ],
                 ),
+                if (_activeJob != null) ...[
+                  const SizedBox(height: 6),
+                  KvRow(
+                    k: '작업 상태',
+                    v: _humanizeJobStatus(
+                        (_activeJob?['status'] ?? '').toString()),
+                  ),
+                  KvRow(
+                    k: '작업 ID',
+                    v: (_activeJob?['id'] ?? '-').toString(),
+                  ),
+                ],
                 if (preview != null) ...[
                   const Divider(height: 28),
                   InkWell(
