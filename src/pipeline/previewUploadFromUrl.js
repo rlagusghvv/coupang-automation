@@ -71,12 +71,7 @@ export async function previewUploadFromUrl(inputUrl, settings = {}) {
   });
 
   const shippingFee = Number(draft.shippingFee);
-  const shippingFeeFallback = Number.isFinite(Number(settings.shippingFeeFallback))
-    ? Number(settings.shippingFeeFallback)
-    : 2500;
-  const shippingSurcharge = shippingFee > 0
-    ? shippingFee
-    : (shippingFee === -1 ? shippingFeeFallback : 0);
+  const shippingSurcharge = shippingFee > 0 ? shippingFee : 0;
   const shouldAddShipping = shippingSurcharge > 0;
   if (shouldAddShipping) {
     finalPrice += shippingSurcharge;
@@ -105,7 +100,7 @@ export async function previewUploadFromUrl(inputUrl, settings = {}) {
       finalPrice,
       shippingSurchargeApplied: Boolean(shouldAddShipping),
       shippingSurcharge,
-      shippingFeeFallback,
+      shippingFeeUnknown: shippingFee === -1,
       images,
       contentImageCount: contentImages.length,
       optionsCount: options.length,

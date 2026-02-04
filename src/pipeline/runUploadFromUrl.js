@@ -310,12 +310,20 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
   // 배송비가 유료면 "실제 배송비"만큼 판매가에 가산
   // shippingFee: 0=무료, >0=유료(금액), -1=유료(금액 표기 없음)
   const shippingFee = Number(draft.shippingFee);
-  const shippingFeeFallback = Number.isFinite(Number(settings.shippingFeeFallback))
-    ? Number(settings.shippingFeeFallback)
-    : 2500;
-  const shippingSurcharge = shippingFee > 0
-    ? shippingFee
-    : (shippingFee === -1 ? shippingFeeFallback : 0);
+  if (shippingFee === -1) {
+    return {
+      ok: false,
+      skipped: false,
+      error: "shipping_fee_unknown",
+      detail: {
+        message: "배송비가 유료(착불/배송비별도)로 표시되지만 금액을 파싱하지 못했습니다.",
+        sourceUrl: draft.sourceUrl,
+      },
+      draft: { title: draft.title, price: draft.price, imageUrl: draft.imageUrl, shippingFee: draft.shippingFee },
+    };
+  }
+
+  const shippingSurcharge = shippingFee > 0 ? shippingFee : 0;
   const shouldAddShipping = shippingSurcharge > 0;
   if (shouldAddShipping) {
     finalPrice += shippingSurcharge;
