@@ -1,4 +1,5 @@
 import 'package:couplus_mobile/api/api_client.dart';
+import 'package:couplus_mobile/services/push_token_service.dart';
 
 import 'package:couplus_mobile/screens/auth/webview_screen.dart';
 import 'package:couplus_mobile/services/sensitive_settings_store.dart';
@@ -251,6 +252,9 @@ class _MoreScreenState extends State<MoreScreen> {
         'email': _email.text.trim(),
         'password': _pw.text.trim(),
       });
+      // Ensure APNs device token is registered after cookie is available.
+      // (Token may arrive before login.)
+      PushTokenService.instance.bind(widget.api);
       await _refreshMe();
     } catch (e) {
       setState(() => _error = e.toString());
@@ -269,6 +273,7 @@ class _MoreScreenState extends State<MoreScreen> {
         'email': _email.text.trim(),
         'password': _pw.text.trim(),
       });
+      PushTokenService.instance.bind(widget.api);
       await _refreshMe();
     } catch (e) {
       setState(() => _error = e.toString());
