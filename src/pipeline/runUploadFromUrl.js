@@ -152,7 +152,9 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
 
   // ✅ Best-effort: Upload images to Coupang first (prevents image_host_unreachable)
   // If disabled, falls back to the previous "public hosting" approach.
-  const useCoupangImageUpload = String(settings.useCoupangImageUpload ?? "1").trim() !== "0";
+  // Image upload endpoints are not always available per account.
+  // Allow disabling this to fall back to public hosting (imageProxyBase / Cloudflare Pages).
+  const useCoupangImageUpload = String(settings.useCoupangImageUpload ?? "0").trim() !== "0";
 
   if (!payloadOnly && useCoupangImageUpload) {
     // 1) Main image
