@@ -154,19 +154,38 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
     try {
       const u = new URL(url);
       const host = u.hostname;
-      const p = u.pathname;
+      const p = u.pathname || "";
 
-      const isDomeggookCdn = host === "cdn1.domeggook.com" || host.endsWith(".domeggook.com");
+      const bad = [
+        "img_lensSearch",
+        "kakaolink",
+        "/sns/",
+        "/upload/event/",
+        "/upload/banner/",
+        "/image/",
+        "/images/",
+        "_stt_",
+        "ico_",
+        "bnr_",
+        "arrow",
+        "close",
+        "warning",
+        "caution",
+        "pstatic.net/share",
+      ];
+      const lower = (p + " " + u.href).toLowerCase();
+      if (bad.some((k) => lower.includes(String(k).toLowerCase()))) return false;
+
+      const isDomeggook = host === "cdn1.domeggook.com" || host.endsWith(".domeggook.com");
       const isUploadPath = p.includes("/upload/");
       const isProductUpload = p.includes("/upload/item/") || p.includes("/upload/editor/") || p.includes("/upload/contents/");
-      const isStampOrBadge = p.includes("_stt_") || p.includes("_bnr_") || p.includes("_ico_");
-      const isUiAsset = p.includes("/image/") || p.includes("/images/");
-      const isShareIcon = p.includes("/sns/") || p.includes("kakaolink") || p.includes("facebook") || p.includes("twitter");
-      const isEventAsset = p.includes("/upload/event/") || p.includes("/upload/banner/");
+      if (isDomeggook && isUploadPath && isProductUpload) return true;
 
-      if (isDomeggookCdn && isUploadPath && isProductUpload && !isStampOrBadge && !isUiAsset && !isShareIcon && !isEventAsset) {
-        return true;
-      }
+      // allow external-hosted detail images if they look like real image files (small allowlist)
+      const allowedExternalHosts = ["gi.esmplus.com"];
+      const ext = (p.split("?")[0].split("#")[0].match(/\.(jpg|jpeg|png|webp|gif)$/i) || [])[0];
+      if (ext && allowedExternalHosts.includes(host)) return true;
+
       return false;
     } catch {
       return false;

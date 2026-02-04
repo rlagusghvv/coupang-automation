@@ -11,38 +11,41 @@ function uniq(list) {
 function isLikelyProductImage(url) {
   try {
     const u = new URL(url);
-
-    // Prefer source CDNs / upload paths. Exclude UI/icon assets and social share icons.
     const host = u.hostname;
-    const p = u.pathname;
+    const p = u.pathname || "";
 
-    // Allow: domeggook upload assets (product images / description images)
-    const isDomeggookCdn = host === "cdn1.domeggook.com" || host.endsWith(".domeggook.com");
+    // Block obvious UI/icon/banner assets
+    const bad = [
+      "img_lensSearch",
+      "kakaolink",
+      "/sns/",
+      "/upload/event/",
+      "/upload/banner/",
+      "/image/",
+      "/images/",
+      "_stt_",
+      "ico_",
+      "bnr_",
+      "arrow",
+      "close",
+      "warning",
+      "caution",
+      "pstatic.net/share",
+    ];
+    const lower = (p + " " + u.href).toLowerCase();
+    if (bad.some((k) => lower.includes(String(k).toLowerCase()))) return false;
+
+    // Accept domeggook product upload assets
+    const isDomeggook = host === "cdn1.domeggook.com" || host.endsWith(".domeggook.com");
     const isUploadPath = p.includes("/upload/");
-
-    // Prefer product-related upload paths
     const isProductUpload = p.includes("/upload/item/") || p.includes("/upload/editor/") || p.includes("/upload/contents/");
-    const isStampOrBadge = p.includes("_stt_") || p.includes("_bnr_") || p.includes("_ico_");
-    const isMainOrDetail = p.includes("_img_") || p.includes("/upload/editor/") || p.includes("/upload/contents/");
+    if (isDomeggook && isUploadPath && isProductUpload) return true;
 
-    // Block: common UI/image assets (often hotlink-protected or irrelevant)
-    const isUiAsset = p.includes("/image/") || p.includes("/images/");
-    const isShareIcon = p.includes("/sns/") || p.includes("kakaolink") || p.includes("facebook") || p.includes("twitter");
-    const isEventAsset = p.includes("/upload/event/") || p.includes("/upload/banner/");
+    // Some sellers host detail images on external CDNs (e.g. esmplus). Allow a small allowlist.
+    const allowedExternalHosts = ["gi.esmplus.com"];
+    const ext = (p.split("?")[0].split("#")[0].match(/\.(jpg|jpeg|png|webp|gif)$/i) || [])[0];
+    if (ext && allowedExternalHosts.includes(host)) return true;
 
-    if (
-      isDomeggookCdn &&
-      isUploadPath &&
-      isProductUpload &&
-      isMainOrDetail &&
-      !isStampOrBadge &&
-      !isUiAsset &&
-      !isShareIcon &&
-      !isEventAsset
-    )
-      return true;
-
-    // Otherwise: reject (prevents 쿠팡 image_host_unreachable caused by 3rd-party/blocked assets)
     return false;
   } catch {
     return false;
