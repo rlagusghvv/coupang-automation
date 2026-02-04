@@ -618,9 +618,11 @@ app.post("/api/upload/execute", authRequired, async (req, res) => {
     const c = classifyUrl(url);
     if (!c.ok) return res.status(400).json({ ok: false, error: c.reason, url: c.url });
 
-    // Dedupe: block duplicate uploads of the same source URL
+    const force = String(req.body?.force || "").trim() === "1";
+
+    // Dedupe: block duplicate uploads of the same source URL (unless force=1)
     const existing = await getUploadedProductByUrl(req.user.id, c.url);
-    if (existing?.seller_product_id) {
+    if (!force && existing?.seller_product_id) {
       const pid = String(existing.seller_product_id);
       return res.status(409).json({
         ok: false,
@@ -691,9 +693,11 @@ app.post("/api/upload", authRequired, async (req, res) => {
     const c = classifyUrl(url);
     if (!c.ok) return res.status(400).json({ ok: false, error: c.reason, url: c.url });
 
-    // Dedupe: block duplicate uploads of the same source URL
+    const force = String(req.body?.force || "").trim() === "1";
+
+    // Dedupe: block duplicate uploads of the same source URL (unless force=1)
     const existing = await getUploadedProductByUrl(req.user.id, c.url);
-    if (existing?.seller_product_id) {
+    if (!force && existing?.seller_product_id) {
       const pid = String(existing.seller_product_id);
       return res.status(409).json({
         ok: false,

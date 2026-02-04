@@ -12,6 +12,7 @@ function escapeHtml(s) {
 const urlInput = $("url");
 const submitBtn = $("submit");
 const previewBtn = $("previewUpload");
+const forceUploadEl = $("forceUpload");
 const exportOrdersBtn = $("exportOrders");
 const orderFromInput = $("orderFrom");
 const orderToInput = $("orderTo");
@@ -806,10 +807,11 @@ async function run() {
   renderSummary(null);
 
   try {
+    const force = Boolean(forceUploadEl?.checked);
     const res = await fetch("/api/upload", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url }),
+      body: JSON.stringify({ url, force: force ? "1" : "0" }),
     });
     const json = await res.json();
     if (!res.ok || !json.ok) {
