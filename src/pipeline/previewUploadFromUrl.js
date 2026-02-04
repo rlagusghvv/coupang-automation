@@ -3,6 +3,7 @@ import { parseProductFromDomaeqq } from "../sources/domaeqq/parseProductFromDoma
 import { extractImageUrls } from "../utils/contentImages.js";
 import { computePrice } from "../utils/price.js";
 import { recommendCategory } from "../coupang/api/recommendCategory.js";
+import { suggestTitlesFromNaver } from "../utils/titleSuggest.js";
 
 function uniq(list) {
   return Array.from(new Set((Array.isArray(list) ? list : []).filter(Boolean)));
@@ -99,6 +100,14 @@ export async function previewUploadFromUrl(inputUrl, settings = {}) {
   const images = uniq([mainImageUrl, ...contentImages]);
   const options = Array.isArray(draft.options) ? draft.options : [];
 
+  // Title suggestions (best-effort)
+  let titleSuggestions = null;
+  try {
+    titleSuggestions = await suggestTitlesFromNaver({ title: draft.title, maxLen: 15 });
+  } catch {
+    titleSuggestions = null;
+  }
+
   // Category prediction (best-effort, requires Coupang keys)
   let predictedCategory = null;
   try {
@@ -150,6 +159,7 @@ export async function previewUploadFromUrl(inputUrl, settings = {}) {
       predicted: predictedCategory,
     },
     options,
+    titleSuggestions,
     debug: draft.__debug || null,
   };
 }

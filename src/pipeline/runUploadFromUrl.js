@@ -374,7 +374,7 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
         message: "배송비가 유료(착불/배송비별도)로 표시되지만 금액을 확인할 수 없어 업로드를 중단했습니다.",
         sourceUrl: draft.sourceUrl,
       },
-      draft: { title: draft.title, price: draft.price, imageUrl: draft.imageUrl, shippingFee: draft.shippingFee },
+      draft: { title: sellerProductName, price: draft.price, imageUrl: draft.imageUrl, shippingFee: draft.shippingFee },
     };
   }
 
@@ -440,7 +440,7 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
             skipped: false,
             error: "adult_category_blocked",
             detail: { predictedCategoryId: predicted, predictedCategoryName: predictedName },
-            draft: { title: draft.title, price: draft.price, imageUrl: draft.imageUrl },
+            draft: { title: sellerProductName, price: draft.price, imageUrl: draft.imageUrl },
           };
         }
         if (Number.isFinite(predicted) && predicted > 0) {
@@ -497,6 +497,9 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
       ? makeUniqueOptions(draft.options)
       : [];
 
+  const overrideTitle = String(settings.titleOverride || "").trim();
+  const sellerProductName = overrideTitle || draft.title;
+
   const body = buildSellerProductBody({
     vendorId,
     vendorUserId,
@@ -504,7 +507,7 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
     deliveryCompanyCode: settings.coupangDeliveryCompanyCode,
     displayCategoryCode: finalCategoryCode,
     allowAutoCategory,
-    sellerProductName: draft.title,
+    sellerProductName,
     imageUrl,
     price: finalPrice,
     stock: 10,
@@ -547,7 +550,7 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
       payloadOnly: true,
       payload: body,
       payloadCheck,
-      draft: { title: draft.title, price: draft.price, imageUrl: draft.imageUrl },
+      draft: { title: sellerProductName, price: draft.price, imageUrl: draft.imageUrl },
       finalPrice,
       category: { requested: displayCategoryCode, used: finalCategoryCode, auto: allowAutoCategory },
       optionsUsed: optionsUsed.map((opt) => opt.label),
@@ -571,7 +574,7 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
         ok: false,
         error: "coupang_create_failed",
         detail: createBodyObj,
-        draft: { title: draft.title, price: draft.price, imageUrl: draft.imageUrl },
+        draft: { title: sellerProductName, price: draft.price, imageUrl: draft.imageUrl },
         finalPrice,
         category: { requested: displayCategoryCode, used: finalCategoryCode, auto: allowAutoCategory },
         optionsUsed: optionsUsed.map((opt) => opt.label),

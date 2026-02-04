@@ -538,6 +538,7 @@ app.post("/api/jobs/start", authRequired, async (req, res) => {
     const kind = String(req.body?.kind || "").trim();
     const url = String(req.body?.url || "").trim();
     const force = String(req.body?.force || "0").trim() === "1" ? "1" : "0";
+    const titleOverride = String(req.body?.titleOverride || "").trim();
     if (!kind || (kind !== "preview" && kind !== "upload")) {
       return res.status(400).json({ ok: false, error: "invalid_kind" });
     }
@@ -567,7 +568,7 @@ app.post("/api/jobs/start", authRequired, async (req, res) => {
     }
 
     const userId = req.user.id;
-    const settingsSnapshot = { ...(req.user.settings || {}) };
+    const settingsSnapshot = { ...(req.user.settings || {}), ...(titleOverride ? { titleOverride } : {}) };
 
     const job = await createJob({ userId, kind, inputUrl: c.url, force });
 

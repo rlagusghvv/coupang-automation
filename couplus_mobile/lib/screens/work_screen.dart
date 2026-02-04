@@ -103,6 +103,7 @@ class _WorkScreenState extends State<WorkScreen> {
   }
 
   Map<String, dynamic>? _activeJob;
+  String? _titleOverride;
 
   Future<void> _startJob(String kind) async {
     final u = _url.text.trim();
@@ -123,6 +124,8 @@ class _WorkScreenState extends State<WorkScreen> {
         'kind': kind,
         'url': u,
         'force': (kind == 'upload' && _forceUpload) ? '1' : '0',
+        if (kind == 'upload' && (_titleOverride ?? '').trim().isNotEmpty)
+          'titleOverride': (_titleOverride ?? '').trim(),
       });
       final job = (json['job'] as Map?)?.cast<String, dynamic>();
       setState(() {
@@ -421,6 +424,8 @@ class _WorkScreenState extends State<WorkScreen> {
     final previewComputed = (preview?['computed'] as Map?) ?? {};
 
     final previewTitle = (previewDraft['title'] ?? '').toString();
+    final titleSuggestions = (preview?['titleSuggestions'] as Map?)?.cast<String, dynamic>();
+    final suggestionList = (titleSuggestions?['suggestions'] as List?) ?? const [];
     final previewImage = (previewDraft['imageUrl'] ?? '').toString();
     final previewFinalPrice = previewComputed['finalPrice'];
     final previewOptions = (preview?['options'] as List?) ?? const [];
@@ -614,6 +619,48 @@ class _WorkScreenState extends State<WorkScreen> {
                                         .withValues(alpha: 0.95),
                                   ),
                                 ),
+                                if (suggestionList.isNotEmpty) ...[
+                                  const SizedBox(height: 10),
+                                  Text(
+                                    '추천 제목(15자)',
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w800,
+                                      color: Theme.of(context)
+                                          .colorScheme
+                                          .onSurface
+                                          .withValues(alpha: 0.85),
+                                    ),
+                                  ),
+                                  const SizedBox(height: 6),
+                                  Wrap(
+                                    spacing: 6,
+                                    runSpacing: 6,
+                                    children: suggestionList
+                                        .take(3)
+                                        .map((e) => (e as Map).cast<String, dynamic>())
+                                        .map((s) {
+                                      final t = (s['title'] ?? '').toString();
+                                      final selected = (_titleOverride ?? '').trim() == t.trim();
+                                      return ActionChip(
+                                        label: Text(t),
+                                        onPressed: t.isEmpty
+                                            ? null
+                                            : () => setState(() => _titleOverride = t),
+                                        backgroundColor: selected
+                                            ? Theme.of(context).colorScheme.primary
+                                            : null,
+                                        labelStyle: TextStyle(
+                                          color: selected
+                                              ? Theme.of(context)
+                                                  .colorScheme
+                                                  .onPrimary
+                                              : null,
+                                        ),
+                                      );
+                                    }).toList(),
+                                  ),
+                                ],
                               ],
                             ),
                           ),
