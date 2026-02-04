@@ -885,7 +885,31 @@ export async function parseProductFromDomaeqq(url) {
       (await page.locator(".lItemPrice").first().textContent().catch(() => null))?.trim() ||
       (await page.locator("text=/\\d[\\d,]*\\s*원/").first().textContent().catch(() => null))?.trim();
     const bodyText = await page.locator("body").innerText().catch(() => "");
-    const shippingFee = parseShippingFeeFromText(bodyText);
+    let shippingFee = parseShippingFeeFromText(bodyText);
+
+    // Mobile domeggook pages often contain clearer shipping info ("배송정보 3,000원 ~").
+    // If we are on desktop domeggook and shippingFee is missing/0, try the mobile URL once.
+    try {
+      const cur = new URL(url);
+      const isDesktopDomeggook = cur.hostname === "domeggook.com";
+      const idMatch = (cur.pathname || "").match(/\/(\d{6,})/);
+      const productId = idMatch ? idMatch[1] : null;
+      if (isDesktopDomeggook && productId) {
+        const mobileUrl = `https://mobile.domeggook.com/${productId}`;
+        const mobilePage = await context.newPage();
+        try {
+          await mobilePage.goto(mobileUrl, { waitUntil: "domcontentloaded", timeout: 45000 });
+          await mobilePage.waitForTimeout(600);
+          const mobileText = await mobilePage.locator("body").innerText().catch(() => "");
+          const mobileFee = parseShippingFeeFromText(mobileText);
+          if (Number.isFinite(Number(mobileFee)) && Number(mobileFee) !== 0) {
+            shippingFee = mobileFee;
+          }
+        } finally {
+          await mobilePage.close().catch(() => {});
+        }
+      }
+    } catch {}
 
     const variantPrices = Array.isArray(variantTable?.variants)
       ? variantTable.variants.map((v) => Number(v.price)).filter((n) => Number.isFinite(n))
