@@ -184,6 +184,28 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
       // allow external-hosted detail images if they look like real image files (small allowlist)
       const allowedExternalHosts = ["gi.esmplus.com"];
       const ext = (p.split("?")[0].split("#")[0].match(/\.(jpg|jpeg|png|webp|gif)$/i) || [])[0];
+
+      const externalBad = [
+        "공지",
+        "필독",
+        "인포",
+        "information",
+        "당일출고",
+        "배송",
+        "주의",
+        "warning",
+        "caution",
+        "bnr",
+        "banner",
+      ];
+      const hrefLower = u.href.toLowerCase();
+      const decoded = (() => {
+        try { return decodeURIComponent(u.href); } catch { return u.href; }
+      })().toLowerCase();
+      if (externalBad.some((k) => hrefLower.includes(String(k).toLowerCase()) || decoded.includes(String(k).toLowerCase()))) {
+        return false;
+      }
+
       if (ext && allowedExternalHosts.includes(host)) return true;
 
       return false;
