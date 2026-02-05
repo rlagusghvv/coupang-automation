@@ -928,11 +928,20 @@ export async function parseProductFromDomaeqq(url) {
       ? qtyPriceTiers[0].unitPrice
       : null;
 
+    const priceFromPriceText = (() => {
+      const nums = (String(priceText || "").match(/(\d[\d,]*)/g) || [])
+        .map((x) => Number(String(x).replace(/,/g, "")))
+        .filter((n) => Number.isFinite(n) && n > 0);
+      if (nums.length === 0) return null;
+      // Range text like "3,500원 ~ 3,600원" should not become 35003600.
+      return Math.min(...nums);
+    })();
+
     const priceRaw =
       (is1688 && Number.isFinite(minVariantPrice) ? minVariantPrice : null) ||
       (Number.isFinite(Number(qtyPriceForOne)) ? Number(qtyPriceForOne) : null) ||
       (Number.isFinite(Number(qtyPriceMinQty)) ? Number(qtyPriceMinQty) : null) ||
-      Number(String(priceText || "").replace(/[^\d]/g, "")) ||
+      (Number.isFinite(Number(priceFromPriceText)) ? Number(priceFromPriceText) : null) ||
       pickPriceFromText(bodyText) ||
       9900;
 

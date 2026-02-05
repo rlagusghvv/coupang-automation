@@ -324,6 +324,8 @@ class _WorkScreenState extends State<WorkScreen> {
       final computed = (preview['computed'] as Map?)?.cast<String, dynamic>() ?? {};
       final title = (draft['title'] ?? '').toString();
       final finalPrice = computed['finalPrice'];
+      final imagesRaw = (computed['images'] as List?) ?? const [];
+      final images = imagesRaw.map((e) => e.toString()).where((s) => s.trim().isNotEmpty).toList();
 
       final titleController =
           TextEditingController(text: (_titleOverride ?? '').trim());
@@ -365,6 +367,43 @@ class _WorkScreenState extends State<WorkScreen> {
                                   .onSurface
                                   .withValues(alpha: 0.7))),
                       const SizedBox(height: 12),
+                      if (images.isNotEmpty) ...[
+                        const Text('이미지 미리보기',
+                            style: TextStyle(fontWeight: FontWeight.w900)),
+                        const SizedBox(height: 8),
+                        SizedBox(
+                          height: 78,
+                          child: ListView.separated(
+                            scrollDirection: Axis.horizontal,
+                            itemCount: images.take(12).length,
+                            separatorBuilder: (_, __) => const SizedBox(width: 8),
+                            itemBuilder: (_, i) {
+                              final src = images[i];
+                              return ClipRRect(
+                                borderRadius: BorderRadius.circular(10),
+                                child: AspectRatio(
+                                  aspectRatio: 1,
+                                  child: Image.network(
+                                    src,
+                                    fit: BoxFit.cover,
+                                    errorBuilder: (_, __, ___) => Container(
+                                      color: Theme.of(ctx)
+                                          .colorScheme
+                                          .surfaceContainerHighest,
+                                      child: Icon(Icons.broken_image,
+                                          color: Theme.of(ctx)
+                                              .colorScheme
+                                              .onSurface
+                                              .withValues(alpha: 0.5)),
+                                    ),
+                                  ),
+                                ),
+                              );
+                            },
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                      ],
                       if (suggestions.isNotEmpty) ...[
                         const Text('추천 제목(15자)',
                             style: TextStyle(fontWeight: FontWeight.w900)),
