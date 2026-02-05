@@ -43,7 +43,7 @@ function isLikelyProductImage(url) {
     if (isDomeggook && isUploadPath && isProductUpload) return true;
 
     // Some sellers host detail images on external CDNs (e.g. esmplus). Allow a small allowlist.
-    const allowedExternalHosts = ["gi.esmplus.com"];
+    const allowedExternalHosts = ["gi.esmplus.com", "story-img.kakaocdn.net"];
     const ext = (p.split("?")[0].split("#")[0].match(/\.(jpg|jpeg|png|webp|gif)$/i) || [])[0];
 
     // Filter common non-product banners/notices hosted on external CDNs

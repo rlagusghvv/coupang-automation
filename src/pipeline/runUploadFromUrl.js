@@ -183,7 +183,7 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
       if (isDomeggook && isUploadPath && isProductUpload) return true;
 
       // allow external-hosted detail images if they look like real image files (small allowlist)
-      const allowedExternalHosts = ["gi.esmplus.com"];
+      const allowedExternalHosts = ["gi.esmplus.com", "story-img.kakaocdn.net"];
       const ext = (p.split("?")[0].split("#")[0].match(/\.(jpg|jpeg|png|webp|gif)$/i) || [])[0];
 
       const externalBad = [

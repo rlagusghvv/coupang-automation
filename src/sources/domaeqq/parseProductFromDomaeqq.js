@@ -733,21 +733,72 @@ function extractMainBlock(html) {
 
 async function pickMainImageSrc(page) {
   const candidates = [
+    // common stable selectors
     "img.mainThumb",
     "#lThumbImg",
     "img#lThumbImg",
     "#lThumbWrap img",
-    "img",
   ];
 
   for (const sel of candidates) {
     const loc = page.locator(sel).first();
     try {
-      await loc.waitFor({ state: "attached", timeout: 8000 });
+      await loc.waitFor({ state: "attached", timeout: 3000 });
       const src = normalizeUrl(await loc.getAttribute("src"));
       if (src && src.startsWith("http")) return src;
     } catch {}
   }
+
+  // Fallback: pick the largest likely product image (avoid header/icons)
+  try {
+    const src = await page.evaluate(() => {
+      const normalize = (u) => {
+        if (!u) return "";
+        const s = String(u).trim();
+        if (s.startsWith("//")) return "https:" + s;
+        if (s.startsWith("/")) return location.origin + s;
+        return s;
+      };
+
+      const bad = [
+        "/image/mobile_v2/image/common/",
+        "/image/mobile_v2/image/item/view/",
+        "/image/common/",
+        "/image/item/",
+        "ico_",
+        "arrow",
+        "close",
+        "back.png",
+        "home.png",
+        "cart.png",
+        "search.png",
+      ];
+
+      const imgs = Array.from(document.images)
+        .map((img) => {
+          const src = normalize(img.currentSrc || img.src);
+          const w = img.naturalWidth || img.width || 0;
+          const h = img.naturalHeight || img.height || 0;
+          return { src, w, h, area: w * h };
+        })
+        .filter((x) => x.src && x.src.startsWith("http"))
+        .filter((x) => {
+          const u = x.src.toLowerCase();
+          return !bad.some((k) => u.includes(String(k).toLowerCase()));
+        })
+        // prefer known item upload paths
+        .sort((a, b) => {
+          const au = a.src.includes("/upload/item/") ? 1 : 0;
+          const bu = b.src.includes("/upload/item/") ? 1 : 0;
+          if (au !== bu) return bu - au;
+          return b.area - a.area;
+        });
+
+      return imgs[0]?.src || "";
+    });
+    if (src && src.startsWith("http")) return src;
+  } catch {}
+
   return null;
 }
 
