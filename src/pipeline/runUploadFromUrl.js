@@ -15,7 +15,7 @@ import { getSellerProductHistories } from "../coupang/api/getSellerProductHistor
 import { getCategoryMetas } from "../coupang/api/getCategoryMetas.js";
 import { checkAutoCategoryAgreed } from "../coupang/api/checkAutoCategoryAgreed.js";
 import { recommendCategory } from "../coupang/api/recommendCategory.js";
-import { suggestTitlesFromNaver } from "../utils/titleSuggest.js";
+import { suggestTitlesFromNaver, cleanTitle } from "../utils/titleSuggest.js";
 import { buildSingleItem } from "../coupang/builders/buildSingleItem.js";
 import path from "node:path";
 import { extractImageUrls, buildImageOnlyHtmlFromUrls } from "../utils/contentImages.js";
@@ -517,12 +517,17 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
     finalCategoryCode = null;
     notices = null;
   } else {
-    const useRecommend = String(settings.autoCategoryRecommend || process.env.AUTO_CATEGORY_RECOMMEND || "").trim() === "1";
+    const usePredict = String(settings.autoCategoryPredict ?? "1").trim() !== "0";
+    const useRecommend =
+      String(settings.autoCategoryRecommend || process.env.AUTO_CATEGORY_RECOMMEND || "").trim() === "1" ||
+      usePredict;
     if (useRecommend) {
       try {
+        const productName = cleanTitle(String(draft.title || "").split("|")[0]).slice(0, 80);
         const rec = await recommendCategory({
-          productName: draft.title,
-          productDescription: draft.contentText?.slice(0, 2000) || "",
+          productName,
+          // Avoid noisy page text that can mislead categorization.
+          productDescription: "",
           productImageUrl: imageUrl,
           accessKey,
           secretKey,

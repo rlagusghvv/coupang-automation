@@ -3,7 +3,7 @@ import { parseProductFromDomaeqq } from "../sources/domaeqq/parseProductFromDoma
 import { extractImageUrls } from "../utils/contentImages.js";
 import { computePrice } from "../utils/price.js";
 import { recommendCategory } from "../coupang/api/recommendCategory.js";
-import { suggestTitlesFromNaver } from "../utils/titleSuggest.js";
+import { suggestTitlesFromNaver, cleanTitle } from "../utils/titleSuggest.js";
 import { resolveDisplayCategoryCode } from "../utils/categoryMap.js";
 
 const DISPLAY_CATEGORY_CODE = 77723;
@@ -131,7 +131,8 @@ export async function previewUploadFromUrl(inputUrl, settings = {}) {
     categoryText: draft.categoryText,
     fallback: DISPLAY_CATEGORY_CODE,
   });
-  const usedCategoryCode = Number.isFinite(overrideCategoryCode) && overrideCategoryCode > 0
+  // Prefer predicted category when available (unless overridden).
+  let usedCategoryCode = Number.isFinite(overrideCategoryCode) && overrideCategoryCode > 0
     ? overrideCategoryCode
     : resolvedCategoryCode;
   const options = Array.isArray(draft.options) ? draft.options : [];
@@ -151,9 +152,11 @@ export async function previewUploadFromUrl(inputUrl, settings = {}) {
     const secretKey = String(settings.coupangSecretKey || "").trim();
     const usePredict = String(settings.autoCategoryPredict ?? "1").trim() !== "0";
     if (usePredict && accessKey && secretKey) {
+      const productName = cleanTitle(String(draft.title || "").split("|")[0]).slice(0, 80);
       const pred = await recommendCategory({
-        productName: draft.title,
-        productDescription: String(draft.contentText || "").replace(/<[^>]+>/g, " ").slice(0, 500),
+        productName,
+        // Avoid noisy page text that can mislead categorization.
+        productDescription: "",
         productImageUrl: mainImageUrl,
         accessKey,
         secretKey,
@@ -167,6 +170,13 @@ export async function previewUploadFromUrl(inputUrl, settings = {}) {
       }
     }
   } catch {}
+
+  // After prediction, prefer predicted category when available (unless overridden).
+  if (!(Number.isFinite(overrideCategoryCode) && overrideCategoryCode > 0)) {
+    const pid = predictedCategory?.id;
+    const n = Number(pid);
+    if (pid && Number.isFinite(n) && n > 0) usedCategoryCode = n;
+  }
 
   return {
     ok: true,
