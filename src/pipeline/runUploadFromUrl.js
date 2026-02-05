@@ -231,7 +231,8 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
 
   // Default outputs
   let imageUrl = draft.imageUrl;
-  let contentHtml = stripImgTags(draft.contentText || "");
+  // Never fall back to raw page text; keep details image-only.
+  let contentHtml = "";
 
   // ✅ Best-effort: Upload images to Coupang first (prevents image_host_unreachable)
   // If disabled, falls back to the previous "public hosting" approach.
@@ -387,8 +388,7 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
     imageUrl = mappedMain;
 
     const contentLocalUrls = contentImages.map((u) => downloaded.urlMap[u]).filter(Boolean);
-    contentHtml =
-      contentLocalUrls.length > 0 ? buildImageOnlyHtmlFromUrls(contentLocalUrls) : stripImgTags(draft.contentText || "");
+    contentHtml = contentLocalUrls.length > 0 ? buildImageOnlyHtmlFromUrls(contentLocalUrls) : "";
   }
 
   const displayCategoryCode = resolveDisplayCategoryCode({
