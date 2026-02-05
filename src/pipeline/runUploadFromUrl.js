@@ -15,6 +15,7 @@ import { getSellerProductHistories } from "../coupang/api/getSellerProductHistor
 import { getCategoryMetas } from "../coupang/api/getCategoryMetas.js";
 import { checkAutoCategoryAgreed } from "../coupang/api/checkAutoCategoryAgreed.js";
 import { recommendCategory } from "../coupang/api/recommendCategory.js";
+import { suggestTitlesFromNaver } from "../utils/titleSuggest.js";
 import { buildSingleItem } from "../coupang/builders/buildSingleItem.js";
 import path from "node:path";
 import { extractImageUrls, buildImageOnlyHtmlFromUrls } from "../utils/contentImages.js";
@@ -545,7 +546,20 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
       : [];
 
   const overrideTitle = String(settings.titleOverride || "").trim();
-  const sellerProductName = overrideTitle || draft.title;
+
+  // If user didn't pick a title in the UI, auto-apply the best 15-char suggestion.
+  // This makes "Upload" behave like it benefited from the preview step.
+  let autoSuggestedTitle = "";
+  const autoTitleSuggest = String(settings.autoTitleSuggest ?? "1").trim() !== "0";
+  if (!overrideTitle && autoTitleSuggest) {
+    try {
+      const sug = await suggestTitlesFromNaver({ title: draft.title, maxLen: 15 });
+      const first = sug?.suggestions?.[0]?.title;
+      if (first) autoSuggestedTitle = String(first).trim();
+    } catch {}
+  }
+
+  const sellerProductName = overrideTitle || autoSuggestedTitle || draft.title;
 
   const body = buildSellerProductBody({
     vendorId,
