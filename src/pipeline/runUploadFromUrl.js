@@ -231,43 +231,68 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
   // If disabled, falls back to the previous "public hosting" approach.
   // Image upload endpoints are not always available per account.
   // Allow disabling this to fall back to public hosting (imageProxyBase / Cloudflare Pages).
-  const useCoupangImageUpload = String(settings.useCoupangImageUpload ?? "0").trim() !== "0";
+  // Default to using Coupang image upload because hotlink-protected CDNs often break.
+  const useCoupangImageUpload = String(settings.useCoupangImageUpload ?? "1").trim() !== "0";
 
+  // Try Coupang upload first; if it fails, fall back to public hosting instead of hard-failing.
   if (!payloadOnly && useCoupangImageUpload) {
-    // 1) Main image
-    const mainDl = await downloadImageBufferWithPlaywright({
-      pageUrl: draft.sourceUrl,
-      imageUrl: draft.imageUrl,
-    });
+    try {
+      // 1) Main image
+      const mainDl = await downloadImageBufferWithPlaywright({
+        pageUrl: draft.sourceUrl,
+        imageUrl: draft.imageUrl,
+      });
 
-    if (!mainDl?.ok) {
-      return {
-        ok: false,
-        skipped: false,
-        error: "main_image_download_failed",
-        detail: mainDl,
-      };
+      if (!mainDl?.ok) throw new Error("main_image_download_failed");
+
+      const mainUp = await uploadMarketplaceImage({
+        vendorId,
+        buffer: mainDl.buffer,
+        fileName: `main${mainDl.ext || ".jpg"}`,
+        mimeType: mainDl.mimeType || "image/jpeg",
+        accessKey,
+        secretKey,
+      });
+
+      if (!mainUp.ok || !(mainUp.vendorPath || mainUp.cdnPath)) throw new Error("coupang_image_upload_failed");
+
+      imageUrl = mainUp.vendorPath || mainUp.cdnPath;
+
+      // 2) Content images (optional)
+      const uploadedContentUrls = [];
+      for (const u of contentImages) {
+        try {
+          const dl = await downloadImageBufferWithPlaywright({
+            pageUrl: draft.sourceUrl,
+            imageUrl: u,
+          });
+          if (!dl?.ok) continue;
+
+          const up = await uploadMarketplaceImage({
+            vendorId,
+            buffer: dl.buffer,
+            fileName: `content${dl.ext || ".jpg"}`,
+            mimeType: dl.mimeType || "image/jpeg",
+            accessKey,
+            secretKey,
+          });
+          const src = up?.cdnPath || up?.vendorPath;
+          if (src) uploadedContentUrls.push(src);
+        } catch {
+          // ignore single image failure
+        }
+      }
+
+      // Build clean HTML with only Coupang-hosted images
+      if (uploadedContentUrls.length > 0) {
+        contentHtml = buildImageOnlyHtmlFromUrls(uploadedContentUrls);
+      }
+    } catch {
+      // Fall back to public hosting approach below
     }
+  }
 
-    const mainUp = await uploadMarketplaceImage({
-      vendorId,
-      buffer: mainDl.buffer,
-      fileName: `main${mainDl.ext || ".jpg"}`,
-      mimeType: mainDl.mimeType || "image/jpeg",
-      accessKey,
-      secretKey,
-    });
-
-    if (!mainUp.ok || !(mainUp.vendorPath || mainUp.cdnPath)) {
-      return {
-        ok: false,
-        skipped: false,
-        error: "coupang_image_upload_failed",
-        detail: mainUp,
-      };
-    }
-
-    imageUrl = mainUp.vendorPath || mainUp.cdnPath;
+  if (payloadOnly || !useCoupangImageUpload || imageUrl === draft.imageUrl) {
 
     // 2) Content images (optional)
     const uploadedContentUrls = [];
