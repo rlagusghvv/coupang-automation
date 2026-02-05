@@ -5,6 +5,7 @@ import 'package:couplus_mobile/api/api_client.dart';
 import 'package:couplus_mobile/screens/preview_detail_screen.dart';
 import 'package:couplus_mobile/ui/widgets.dart';
 import 'package:couplus_mobile/screens/image_edit_screen.dart';
+import 'package:couplus_mobile/screens/image_viewer_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -407,22 +408,36 @@ class _WorkScreenState extends State<WorkScreen> {
                             separatorBuilder: (_, __) => const SizedBox(width: 8),
                             itemBuilder: (_, i) {
                               final src = (_imagesOverride ?? images)[i];
-                              return ClipRRect(
+                              return InkWell(
                                 borderRadius: BorderRadius.circular(10),
-                                child: AspectRatio(
-                                  aspectRatio: 1,
-                                  child: Image.network(
-                                    src,
-                                    fit: BoxFit.cover,
-                                    errorBuilder: (_, __, ___) => Container(
-                                      color: Theme.of(ctx)
-                                          .colorScheme
-                                          .surfaceContainerHighest,
-                                      child: Icon(Icons.broken_image,
-                                          color: Theme.of(ctx)
-                                              .colorScheme
-                                              .onSurface
-                                              .withValues(alpha: 0.5)),
+                                onTap: () {
+                                  Navigator.of(context).push(
+                                    MaterialPageRoute(
+                                      builder: (_) => ImageViewerScreen(
+                                        images: (_imagesOverride ?? images),
+                                        initialIndex: i,
+                                        title: '이미지 미리보기',
+                                      ),
+                                    ),
+                                  );
+                                },
+                                child: ClipRRect(
+                                  borderRadius: BorderRadius.circular(10),
+                                  child: AspectRatio(
+                                    aspectRatio: 1,
+                                    child: Image.network(
+                                      src,
+                                      fit: BoxFit.cover,
+                                      errorBuilder: (_, __, ___) => Container(
+                                        color: Theme.of(ctx)
+                                            .colorScheme
+                                            .surfaceContainerHighest,
+                                        child: Icon(Icons.broken_image,
+                                            color: Theme.of(ctx)
+                                                .colorScheme
+                                                .onSurface
+                                                .withValues(alpha: 0.5)),
+                                      ),
                                     ),
                                   ),
                                 ),

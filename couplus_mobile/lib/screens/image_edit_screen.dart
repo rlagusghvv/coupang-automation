@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:couplus_mobile/screens/image_viewer_screen.dart';
 
 class ImageEditScreen extends StatefulWidget {
   const ImageEditScreen({
@@ -177,23 +178,36 @@ class _ImageEditScreenState extends State<ImageEditScreen> {
                   onDismissed: (_) => _removeAt(i),
                   child: ListTile(
                     key: ValueKey('tile-$src'),
-                    leading: ClipRRect(
-                      borderRadius: BorderRadius.circular(10),
-                      child: SizedBox(
-                        width: 62,
-                        height: 62,
-                        child: Image.network(
-                          src,
-                          fit: BoxFit.cover,
-                          errorBuilder: (_, __, ___) => Container(
-                            color: Theme.of(ctx)
-                                .colorScheme
-                                .surfaceContainerHighest,
-                            child: Icon(Icons.broken_image,
-                                color: Theme.of(ctx)
-                                    .colorScheme
-                                    .onSurface
-                                    .withValues(alpha: 0.5)),
+                    leading: GestureDetector(
+                      onTap: () {
+                        Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) => ImageViewerScreen(
+                              images: _list,
+                              initialIndex: i,
+                              title: '이미지 크게 보기',
+                            ),
+                          ),
+                        );
+                      },
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(10),
+                        child: SizedBox(
+                          width: 62,
+                          height: 62,
+                          child: Image.network(
+                            src,
+                            fit: BoxFit.cover,
+                            errorBuilder: (_, __, ___) => Container(
+                              color: Theme.of(ctx)
+                                  .colorScheme
+                                  .surfaceContainerHighest,
+                              child: Icon(Icons.broken_image,
+                                  color: Theme.of(ctx)
+                                      .colorScheme
+                                      .onSurface
+                                      .withValues(alpha: 0.5)),
+                            ),
                           ),
                         ),
                       ),
