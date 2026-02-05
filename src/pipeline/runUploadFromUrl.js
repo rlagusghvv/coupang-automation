@@ -520,16 +520,19 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
     const useRecommend = String(settings.autoCategoryRecommend || process.env.AUTO_CATEGORY_RECOMMEND || "").trim() === "1";
     if (useRecommend) {
       try {
-    const rec = await recommendCategory({
-      productName: draft.title,
-      productDescription: draft.contentText?.slice(0, 2000) || "",
-      productImageUrl: imageUrl,
-      accessKey,
-      secretKey,
+        const rec = await recommendCategory({
+          productName: draft.title,
+          productDescription: draft.contentText?.slice(0, 2000) || "",
+          productImageUrl: imageUrl,
+          accessKey,
+          secretKey,
         });
         const bodyObj = typeof rec.body === "string" ? JSON.parse(rec.body) : rec.body;
         const recCode = bodyObj?.data?.predictedCategoryId;
+        const recName = bodyObj?.data?.predictedCategoryName;
         if (recCode) finalCategoryCode = Number(recCode);
+        // attach for result/UI (non-persistent)
+        settings.__predictedCategory = { id: recCode ?? null, name: recName ?? null };
       } catch {}
     }
 
@@ -618,7 +621,7 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
       payloadCheck,
       draft: { title: sellerProductName, price: draft.price, imageUrl: draft.imageUrl },
       finalPrice,
-      category: { requested: displayCategoryCode, used: finalCategoryCode, auto: allowAutoCategory },
+      category: { requested: displayCategoryCode, used: finalCategoryCode, auto: allowAutoCategory, predicted: settings.__predictedCategory || null },
       optionsUsed: optionsUsed.map((opt) => opt.label),
     };
   }
@@ -642,7 +645,7 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
         detail: createBodyObj,
         draft: { title: sellerProductName, price: draft.price, imageUrl: draft.imageUrl },
         finalPrice,
-        category: { requested: displayCategoryCode, used: finalCategoryCode, auto: allowAutoCategory },
+        category: { requested: displayCategoryCode, used: finalCategoryCode, auto: allowAutoCategory, predicted: settings.__predictedCategory || null },
         optionsUsed: optionsUsed.map((opt) => opt.label),
         payloadCheck,
         create: { status: res.status, body: createBody, sellerProductId: null },
@@ -672,7 +675,7 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
     ok: true,
     draft: { title: draft.title, price: draft.price, imageUrl: draft.imageUrl },
     finalPrice,
-    category: { requested: displayCategoryCode, used: finalCategoryCode, auto: allowAutoCategory },
+    category: { requested: displayCategoryCode, used: finalCategoryCode, auto: allowAutoCategory, predicted: settings.__predictedCategory || null },
     optionsUsed: optionsUsed.map((opt) => opt.label),
     payloadCheck,
     create: { status: res.status, body: createBody, sellerProductId: createdId },

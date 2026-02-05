@@ -4,6 +4,9 @@ import { extractImageUrls } from "../utils/contentImages.js";
 import { computePrice } from "../utils/price.js";
 import { recommendCategory } from "../coupang/api/recommendCategory.js";
 import { suggestTitlesFromNaver } from "../utils/titleSuggest.js";
+import { resolveDisplayCategoryCode } from "../utils/categoryMap.js";
+
+const DISPLAY_CATEGORY_CODE = 77723;
 
 function uniq(list) {
   return Array.from(new Set((Array.isArray(list) ? list : []).filter(Boolean)));
@@ -121,6 +124,16 @@ export async function previewUploadFromUrl(inputUrl, settings = {}) {
 
   const mainImageUrl = draft.imageUrl || "";
   const images = uniq([mainImageUrl, ...contentImages]);
+
+  const overrideCategoryCode = Number(settings.categoryOverrideCode);
+  const resolvedCategoryCode = resolveDisplayCategoryCode({
+    title: draft.title,
+    categoryText: draft.categoryText,
+    fallback: DISPLAY_CATEGORY_CODE,
+  });
+  const usedCategoryCode = Number.isFinite(overrideCategoryCode) && overrideCategoryCode > 0
+    ? overrideCategoryCode
+    : resolvedCategoryCode;
   const options = Array.isArray(draft.options) ? draft.options : [];
 
   // Title suggestions (best-effort)
@@ -179,6 +192,8 @@ export async function previewUploadFromUrl(inputUrl, settings = {}) {
     },
     category: {
       overrideCode: settings.categoryOverrideCode ?? null,
+      resolvedCode: resolvedCategoryCode,
+      usedCode: usedCategoryCode,
       predicted: predictedCategory,
     },
     options,

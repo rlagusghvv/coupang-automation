@@ -400,6 +400,12 @@ class _WorkScreenState extends State<WorkScreen> {
       final computed = (preview['computed'] as Map?)?.cast<String, dynamic>() ?? {};
       final title = (draft['title'] ?? '').toString();
       final finalPrice = computed['finalPrice'];
+      final cat = (preview['category'] as Map?)?.cast<String, dynamic>() ?? {};
+      final usedCode = (cat['usedCode'] ?? '').toString();
+      final predicted = (cat['predicted'] as Map?)?.cast<String, dynamic>();
+      final predictedName = (predicted?['name'] ?? '').toString();
+      final predictedId = (predicted?['id'] ?? '').toString();
+
       final imagesRaw = (computed['images'] as List?) ?? const [];
       final images = imagesRaw.map((e) => e.toString()).where((s) => s.trim().isNotEmpty).toList();
 
@@ -448,6 +454,21 @@ class _WorkScreenState extends State<WorkScreen> {
                                   .colorScheme
                                   .onSurface
                                   .withValues(alpha: 0.7))),
+                      if (usedCode.trim().isNotEmpty) ...[
+                        const SizedBox(height: 6),
+                        Text(
+                          '카테고리 코드: $usedCode'
+                          '${predictedName.trim().isNotEmpty ? ' · 예측: $predictedName' : ''}'
+                          '${predictedId.trim().isNotEmpty ? '($predictedId)' : ''}',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Theme.of(ctx)
+                                .colorScheme
+                                .onSurface
+                                .withValues(alpha: 0.65),
+                          ),
+                        ),
+                      ],
                       const SizedBox(height: 12),
                       if (images.isNotEmpty) ...[
                         Row(
