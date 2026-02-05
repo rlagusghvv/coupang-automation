@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:couplus_mobile/api/api_client.dart';
 import 'package:couplus_mobile/screens/preview_detail_screen.dart';
 import 'package:couplus_mobile/ui/widgets.dart';
+import 'package:couplus_mobile/screens/image_edit_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -27,6 +28,7 @@ class _WorkScreenState extends State<WorkScreen> {
 
   bool _forceUpload = false;
   bool _skipPreviewBeforeUpload = false;
+  List<String>? _imagesOverride;
 
   Map<String, dynamic>? _dashboard;
 
@@ -127,6 +129,8 @@ class _WorkScreenState extends State<WorkScreen> {
         'force': (kind == 'upload' && _forceUpload) ? '1' : '0',
         if (kind == 'upload' && (_titleOverride ?? '').trim().isNotEmpty)
           'titleOverride': (_titleOverride ?? '').trim(),
+        if (kind == 'upload' && (_imagesOverride ?? const []).isNotEmpty)
+          'imagesOverride': (_imagesOverride ?? const []),
       });
       final job = (json['job'] as Map?)?.cast<String, dynamic>();
       setState(() {
@@ -368,17 +372,41 @@ class _WorkScreenState extends State<WorkScreen> {
                                   .withValues(alpha: 0.7))),
                       const SizedBox(height: 12),
                       if (images.isNotEmpty) ...[
-                        const Text('이미지 미리보기',
-                            style: TextStyle(fontWeight: FontWeight.w900)),
+                        Row(
+                          children: [
+                            const Expanded(
+                              child: Text('이미지 미리보기',
+                                  style:
+                                      TextStyle(fontWeight: FontWeight.w900)),
+                            ),
+                            TextButton(
+                              onPressed: () async {
+                                final next = await Navigator.of(context).push<List<String>>(
+                                  MaterialPageRoute(
+                                    builder: (_) => ImageEditScreen(
+                                      initial: _imagesOverride ?? images,
+                                      all: images,
+                                    ),
+                                  ),
+                                );
+                                if (next != null) {
+                                  setState(() => _imagesOverride = next);
+                                  setInner(() {});
+                                }
+                              },
+                              child: const Text('편집'),
+                            ),
+                          ],
+                        ),
                         const SizedBox(height: 8),
                         SizedBox(
                           height: 78,
                           child: ListView.separated(
                             scrollDirection: Axis.horizontal,
-                            itemCount: images.take(12).length,
+                            itemCount: (_imagesOverride ?? images).take(12).length,
                             separatorBuilder: (_, __) => const SizedBox(width: 8),
                             itemBuilder: (_, i) {
-                              final src = images[i];
+                              final src = (_imagesOverride ?? images)[i];
                               return ClipRRect(
                                 borderRadius: BorderRadius.circular(10),
                                 child: AspectRatio(

@@ -215,8 +215,13 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
     }
   }
 
-  const contentImages = extractImageUrls(draft.contentText)
-    .filter(isLikelyProductImage)
+  const imagesOverride = Array.isArray(settings.imagesOverride)
+    ? settings.imagesOverride.map((x) => String(x || "").trim()).filter(Boolean)
+    : [];
+
+  const contentImages = (imagesOverride.length > 0
+    ? imagesOverride
+    : extractImageUrls(draft.contentText).filter(isLikelyProductImage))
     .slice(0, Math.max(0, maxContentImages))
     .filter(Boolean);
 
