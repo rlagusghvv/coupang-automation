@@ -26,6 +26,7 @@ class _WorkScreenState extends State<WorkScreen> {
   bool _loginRequired = false;
 
   bool _forceUpload = false;
+  bool _skipPreviewBeforeUpload = false;
 
   Map<String, dynamic>? _dashboard;
 
@@ -275,6 +276,179 @@ class _WorkScreenState extends State<WorkScreen> {
     return _startJob('upload');
   }
 
+  Future<void> _confirmThenUpload() async {
+    final u = _url.text.trim();
+    if (u.isEmpty) {
+      setState(() => _error = 'URL을 입력하세요.');
+      return;
+    }
+
+    // Optional escape hatch
+    if (_skipPreviewBeforeUpload) {
+      await _executeUpload();
+      return;
+    }
+
+    setState(() {
+      _loading = true;
+      _error = null;
+      _uploadResult = null;
+    });
+
+    try {
+      final json = await widget.api.postJson('/api/upload/preview', {
+        'url': u,
+      });
+      final preview = (json['preview'] as Map?)?.cast<String, dynamic>();
+      if (preview == null) {
+        setState(() => _error = '미리보기 응답이 비었습니다.');
+        return;
+      }
+
+      if (!mounted) return;
+      setState(() {
+        _preview = preview;
+        _loginRequired = false;
+      });
+
+      // Pull suggestions from preview
+      final sug = (preview['titleSuggestions'] as Map?)?.cast<String, dynamic>();
+      final list = (sug?['suggestions'] as List?) ?? const [];
+      final suggestions = list
+          .map((e) => (e as Map).cast<String, dynamic>())
+          .map((m) => (m['title'] ?? '').toString().trim())
+          .where((t) => t.isNotEmpty)
+          .toList();
+
+      final draft = (preview['draft'] as Map?)?.cast<String, dynamic>() ?? {};
+      final computed = (preview['computed'] as Map?)?.cast<String, dynamic>() ?? {};
+      final title = (draft['title'] ?? '').toString();
+      final finalPrice = computed['finalPrice'];
+
+      final titleController =
+          TextEditingController(text: (_titleOverride ?? '').trim());
+
+      final proceed = await showModalBottomSheet<bool>(
+        context: context,
+        isScrollControlled: true,
+        showDragHandle: true,
+        builder: (ctx) {
+          return StatefulBuilder(
+            builder: (ctx, setInner) {
+              return SafeArea(
+                child: Padding(
+                  padding: EdgeInsets.only(
+                    left: 16,
+                    right: 16,
+                    top: 10,
+                    bottom: 16 + MediaQuery.of(ctx).viewInsets.bottom,
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text('업로드 전 확인',
+                          style: TextStyle(
+                              fontSize: 16, fontWeight: FontWeight.w900)),
+                      const SizedBox(height: 8),
+                      Text(
+                        title.isEmpty ? '(제목 없음)' : title,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontWeight: FontWeight.w800),
+                      ),
+                      const SizedBox(height: 6),
+                      Text('최종가: ${finalPrice ?? '-'}',
+                          style: TextStyle(
+                              color: Theme.of(ctx)
+                                  .colorScheme
+                                  .onSurface
+                                  .withValues(alpha: 0.7))),
+                      const SizedBox(height: 12),
+                      if (suggestions.isNotEmpty) ...[
+                        const Text('추천 제목(15자)',
+                            style: TextStyle(fontWeight: FontWeight.w900)),
+                        const SizedBox(height: 6),
+                        Wrap(
+                          spacing: 6,
+                          runSpacing: 6,
+                          children: suggestions.take(3).map((t) {
+                            final selected =
+                                titleController.text.trim() == t.trim();
+                            return ActionChip(
+                              label: Text(t),
+                              onPressed: () {
+                                titleController.text = t;
+                                _titleOverride = t;
+                                setInner(() {});
+                              },
+                              backgroundColor: selected
+                                  ? Theme.of(ctx).colorScheme.primary
+                                  : null,
+                              labelStyle: TextStyle(
+                                  color: selected
+                                      ? Theme.of(ctx).colorScheme.onPrimary
+                                      : null),
+                            );
+                          }).toList(),
+                        ),
+                        const SizedBox(height: 10),
+                      ],
+                      TextField(
+                        decoration: const InputDecoration(
+                          labelText: '제품명(선택)',
+                          hintText: '비우면 자동 추천 제목이 적용될 수 있어요',
+                        ),
+                        controller: titleController,
+                        onChanged: (v) {
+                          _titleOverride = v;
+                          setInner(() {});
+                        },
+                      ),
+                      const SizedBox(height: 14),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: OutlinedButton(
+                              onPressed: () => Navigator.of(ctx).pop(false),
+                              child: const Text('취소'),
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: FilledButton(
+                              onPressed: () => Navigator.of(ctx).pop(true),
+                              child: const Text('업로드 실행'),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            },
+          );
+        },
+      );
+
+      if (proceed == true) {
+        await _executeUpload();
+      }
+    } catch (e) {
+      if (e is ApiException && e.isUnauthorized) {
+        setState(() {
+          _loginRequired = true;
+          _error = null;
+        });
+      } else {
+        setState(() => _error = e.toString());
+      }
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
   Future<void> _ordersExport() async {
     setState(() {
       _loading = true;
@@ -519,7 +693,7 @@ class _WorkScreenState extends State<WorkScreen> {
                       child: FilledButton(
                         onPressed: (!isAuthed || _loading)
                             ? null
-                            : () => _executeUpload(),
+                            : () => _confirmThenUpload(),
                         child: const Text('업로드 실행'),
                       ),
                     ),
@@ -538,6 +712,29 @@ class _WorkScreenState extends State<WorkScreen> {
                     Expanded(
                       child: Text(
                         '강제 재업로드(중복 허용)',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Theme.of(context)
+                              .colorScheme
+                              .onSurface
+                              .withValues(alpha: 0.65),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                Row(
+                  children: [
+                    Switch(
+                      value: _skipPreviewBeforeUpload,
+                      onChanged: (!isAuthed || _loading)
+                          ? null
+                          : (v) => setState(() => _skipPreviewBeforeUpload = v),
+                    ),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        '바로 업로드(미리보기/컨펌 생략)',
                         style: TextStyle(
                           fontSize: 12,
                           color: Theme.of(context)
