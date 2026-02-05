@@ -1,6 +1,34 @@
 import 'package:flutter/material.dart';
 import 'package:couplus_mobile/screens/image_viewer_screen.dart';
 
+bool isLikelyBannerUrl(String url) {
+  final u = url.toLowerCase();
+  const bad = [
+    // Korean common banner/notice words
+    '공지',
+    '필독',
+    '안내',
+    '주의',
+    '배송',
+    // English-ish
+    'notice',
+    'info',
+    'information',
+    'warning',
+    'caution',
+    // banner tokens
+    'bnr',
+    'banner',
+    // known vendor patterns
+    'naggama_notice',
+    'check_normal',
+  ];
+  for (final k in bad) {
+    if (u.contains(k)) return true;
+  }
+  return false;
+}
+
 class ImageEditScreen extends StatefulWidget {
   const ImageEditScreen({
     super.key,
@@ -74,6 +102,7 @@ class _ImageEditScreenState extends State<ImageEditScreen> {
                     separatorBuilder: (_, __) => const Divider(height: 1),
                     itemBuilder: (_, i) {
                       final src = available[i];
+                      final banner = isLikelyBannerUrl(src);
                       return ListTile(
                         leading: ClipRRect(
                           borderRadius: BorderRadius.circular(8),
@@ -96,10 +125,30 @@ class _ImageEditScreenState extends State<ImageEditScreen> {
                             ),
                           ),
                         ),
-                        title: Text(
-                          src,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
+                        title: Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                src,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            if (banner)
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 8, vertical: 4),
+                                decoration: BoxDecoration(
+                                  color: Colors.orange.withValues(alpha: 0.18),
+                                  borderRadius: BorderRadius.circular(999),
+                                ),
+                                child: const Text('배너 의심',
+                                    style: TextStyle(
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.w800,
+                                        color: Colors.orange)),
+                              ),
+                          ],
                         ),
                         onTap: () => Navigator.of(ctx).pop(src),
                       );
@@ -117,12 +166,27 @@ class _ImageEditScreenState extends State<ImageEditScreen> {
     setState(() => _list.add(picked.trim()));
   }
 
+  void _autoRemoveBanners() {
+    final before = _list.length;
+    setState(() {
+      _list = _list.where((s) => !isLikelyBannerUrl(s)).toList();
+    });
+    final removed = before - _list.length;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('배너 의심 이미지 $removed개 제외했어요.')),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         title: Text(widget.title),
         actions: [
+          TextButton(
+            onPressed: _autoRemoveBanners,
+            child: const Text('배너 제외'),
+          ),
           TextButton(
             onPressed: () => Navigator.of(context).pop(_list),
             child: const Text('완료'),

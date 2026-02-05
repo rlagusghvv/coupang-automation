@@ -332,6 +332,12 @@ class _WorkScreenState extends State<WorkScreen> {
       final imagesRaw = (computed['images'] as List?) ?? const [];
       final images = imagesRaw.map((e) => e.toString()).where((s) => s.trim().isNotEmpty).toList();
 
+      // Auto-filter likely banner/notice images by default (user can re-add in edit).
+      if ((_imagesOverride == null || (_imagesOverride ?? const []).isEmpty) && images.isNotEmpty) {
+        final filtered = images.where((u) => !isLikelyBannerUrl(u)).toList();
+        _imagesOverride = filtered.isNotEmpty ? filtered : images;
+      }
+
       final titleController =
           TextEditingController(text: (_titleOverride ?? '').trim());
 
