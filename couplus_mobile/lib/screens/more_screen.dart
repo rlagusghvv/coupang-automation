@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:couplus_mobile/api/api_client.dart';
 import 'package:couplus_mobile/services/push_token_service.dart';
 
@@ -50,6 +52,10 @@ class _MoreScreenState extends State<MoreScreen> {
   String? _error;
   String? _sensitiveError;
   Map<String, dynamic>? _me;
+
+  // Presets
+  List<Map<String, dynamic>> _presets = const [];
+  bool _loadingPresets = false;
 
   @override
   void initState() {
@@ -170,10 +176,143 @@ class _MoreScreenState extends State<MoreScreen> {
       _categoryOverrideCode.text = (s['categoryOverrideCode'] ?? '').toString();
       _autoCategoryPredict = (s['autoCategoryPredict'] ?? true) == true;
       if (mounted) setState(() {});
+
+      // load presets (best-effort)
+      unawaited(_refreshPresets());
     } catch (e) {
       // 401이면 로그인 상태로 자연스럽게 유도.
       if (e is ApiException && e.isUnauthorized) return;
       if (mounted) setState(() => _sensitiveError = e.toString());
+    }
+  }
+
+  Map<String, dynamic> _buildCurrentSettingsPayload() {
+    return {
+      // Sensitive
+      SensitiveSettingsStore.coupangAccessKey: _coupangAccessKey.text.trim(),
+      SensitiveSettingsStore.coupangSecretKey: _coupangSecretKey.text.trim(),
+      SensitiveSettingsStore.coupangVendorId: _coupangVendorId.text.trim(),
+      SensitiveSettingsStore.coupangVendorUserId: _coupangVendorUserId.text.trim(),
+      SensitiveSettingsStore.coupangDeliveryCompanyCode:
+          _coupangDeliveryCompanyCode.text.trim(),
+      SensitiveSettingsStore.pagesApiToken: _pagesApiToken.text.trim(),
+
+      // General
+      'marginRate': double.tryParse(_marginRate.text.trim()) ?? 0,
+      'marginAdd': double.tryParse(_marginAdd.text.trim()) ?? 0,
+      'priceMin': double.tryParse(_priceMin.text.trim()) ?? 0,
+      'roundUnit': double.tryParse(_roundUnit.text.trim()) ?? 0,
+      'shippingPolicy': _shippingPolicy,
+      'shippingFixedAmount':
+          double.tryParse(_shippingFixedAmount.text.trim()) ?? 2500,
+      'categoryOverrideCode': int.tryParse(_categoryOverrideCode.text.trim()) ?? 0,
+      'autoCategoryPredict': _autoCategoryPredict ? '1' : '0',
+    };
+  }
+
+  Future<void> _refreshPresets() async {
+    setState(() => _loadingPresets = true);
+    try {
+      final json = await widget.api.getJson('/api/presets', query: {'limit': '200'});
+      final list = (json['presets'] as List?) ?? const [];
+      if (mounted) {
+        setState(() => _presets = list.map((e) => (e as Map).cast<String, dynamic>()).toList());
+      }
+    } catch (_) {
+      // ignore
+    } finally {
+      if (mounted) setState(() => _loadingPresets = false);
+    }
+  }
+
+  Future<void> _saveAsPreset() async {
+    if ((_me?['user'] as Map?)?['email'] == null) return;
+
+    final nameController = TextEditingController();
+    final name = await showDialog<String>(
+      context: context,
+      builder: (ctx) {
+        return AlertDialog(
+          title: const Text('프리셋 저장'),
+          content: TextField(
+            controller: nameController,
+            decoration: const InputDecoration(labelText: '프리셋 이름'),
+            autofocus: true,
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(null),
+              child: const Text('취소'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(ctx).pop(nameController.text.trim()),
+              child: const Text('저장'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if ((name ?? '').trim().isEmpty) return;
+
+    try {
+      await widget.api.postJson('/api/presets', {
+        'name': name!.trim(),
+        'settings': _buildCurrentSettingsPayload(),
+      });
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('프리셋 저장됨: ${name.trim()}')));
+      }
+      unawaited(_refreshPresets());
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('프리셋 저장 실패: $e')));
+      }
+    }
+  }
+
+  Future<void> _applyPreset(String id) async {
+    try {
+      await widget.api.postJson('/api/presets/$id/apply', {});
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text('프리셋 적용됨')));
+      }
+      await _refreshSettings();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('적용 실패: $e')));
+      }
+    }
+  }
+
+  Future<void> _deletePreset(String id) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) {
+        return AlertDialog(
+          title: const Text('프리셋 삭제'),
+          content: const Text('정말 삭제할까요?'),
+          actions: [
+            TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('취소')),
+            FilledButton(onPressed: () => Navigator.of(ctx).pop(true), child: const Text('삭제')),
+          ],
+        );
+      },
+    );
+    if (ok != true) return;
+
+    try {
+      await widget.api.deleteJson('/api/presets/$id');
+      unawaited(_refreshPresets());
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('삭제 실패: $e')));
+      }
     }
   }
 
@@ -688,6 +827,88 @@ class _MoreScreenState extends State<MoreScreen> {
                         .withValues(alpha: 0.65),
                   ),
                 ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+          AppCard(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                SectionHeader(
+                  '프리셋',
+                  trailing: _loadingPresets
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : TextButton(
+                          onPressed: (_me == null) ? null : _refreshPresets,
+                          child: const Text('새로고침'),
+                        ),
+                ),
+                const SizedBox(height: 10),
+                Text(
+                  '현재 설정(마진/배송/카테고리/키 등)을 이름으로 저장하고 불러올 수 있어요.',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Theme.of(context)
+                        .colorScheme
+                        .onSurface
+                        .withValues(alpha: 0.60),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton.tonal(
+                    onPressed: (_me == null) ? null : _saveAsPreset,
+                    child: const Text('현재 설정을 프리셋으로 저장'),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                if (_presets.isEmpty)
+                  Text(
+                    '저장된 프리셋이 없어요.',
+                    style: TextStyle(
+                      color: Theme.of(context)
+                          .colorScheme
+                          .onSurface
+                          .withValues(alpha: 0.65),
+                    ),
+                  )
+                else
+                  ListView.separated(
+                    shrinkWrap: true,
+                    physics: const NeverScrollableScrollPhysics(),
+                    itemCount: _presets.length,
+                    separatorBuilder: (_, __) => const Divider(height: 18),
+                    itemBuilder: (_, i) {
+                      final p = _presets[i];
+                      final id = (p['id'] ?? '').toString();
+                      final name = (p['name'] ?? '').toString();
+                      return Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              name.isEmpty ? id : name,
+                              style: const TextStyle(fontWeight: FontWeight.w800),
+                            ),
+                          ),
+                          TextButton(
+                            onPressed: (_me == null) ? null : () => _applyPreset(id),
+                            child: const Text('적용'),
+                          ),
+                          IconButton(
+                            tooltip: '삭제',
+                            onPressed: (_me == null) ? null : () => _deletePreset(id),
+                            icon: const Icon(Icons.delete_outline),
+                          ),
+                        ],
+                      );
+                    },
+                  ),
               ],
             ),
           ),

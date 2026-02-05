@@ -153,6 +153,20 @@ export async function initDb() {
     )`,
   );
 
+  // Presets (named settings snapshots)
+  await dbRun(
+    db,
+    `CREATE TABLE IF NOT EXISTS presets (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      settings_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      UNIQUE(user_id, name)
+    )`,
+  );
+
   db.close();
 }
 

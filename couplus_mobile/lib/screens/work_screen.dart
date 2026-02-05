@@ -18,8 +18,21 @@ class WorkScreen extends StatefulWidget {
   State<WorkScreen> createState() => _WorkScreenState();
 }
 
+enum _QueueStatus { pending, confirmed, uploading, success, failed, skipped }
+
+class _QueueItem {
+  _QueueItem({required this.url});
+
+  final String url;
+  _QueueStatus status = _QueueStatus.pending;
+  Map<String, dynamic>? preview;
+  Map<String, dynamic>? uploadResult;
+  String? error;
+}
+
 class _WorkScreenState extends State<WorkScreen> {
   final _url = TextEditingController();
+  final _batchUrls = TextEditingController();
   final _dateFrom = TextEditingController();
   final _dateTo = TextEditingController();
 
@@ -30,6 +43,14 @@ class _WorkScreenState extends State<WorkScreen> {
   bool _forceUpload = false;
   bool _skipPreviewBeforeUpload = false;
   List<String>? _imagesOverride;
+
+  // Presets
+  List<Map<String, dynamic>> _presets = const [];
+  String? _selectedPresetId;
+
+  // Batch queue
+  final List<_QueueItem> _queue = [];
+  bool _batchRunning = false;
 
   Map<String, dynamic>? _dashboard;
 
@@ -57,6 +78,7 @@ class _WorkScreenState extends State<WorkScreen> {
   @override
   void dispose() {
     _url.dispose();
+    _batchUrls.dispose();
     _dateFrom.dispose();
     _dateTo.dispose();
     super.dispose();
@@ -66,6 +88,37 @@ class _WorkScreenState extends State<WorkScreen> {
     final mm = d.month.toString().padLeft(2, '0');
     final dd = d.day.toString().padLeft(2, '0');
     return '${d.year}-$mm-$dd';
+  }
+
+  List<String> _parseUrls(String raw) {
+    final text = raw.replaceAll('\r', '\n');
+    final parts = text.split(RegExp(r'[\n,\s]+'));
+    final out = <String>[];
+    final seen = <String>{};
+    for (final p in parts) {
+      final u = p.trim();
+      if (u.isEmpty) continue;
+      if (!u.startsWith('http')) continue;
+      if (seen.contains(u)) continue;
+      seen.add(u);
+      out.add(u);
+    }
+    return out;
+  }
+
+  int _enqueueFromText(String raw) {
+    final urls = _parseUrls(raw);
+    if (urls.isEmpty) return 0;
+    final existing = _queue.map((e) => e.url).toSet();
+    var added = 0;
+    setState(() {
+      for (final u in urls) {
+        if (existing.contains(u)) continue;
+        _queue.add(_QueueItem(url: u));
+        added += 1;
+      }
+    });
+    return added;
   }
 
   Future<void> _refresh() async {
@@ -80,9 +133,25 @@ class _WorkScreenState extends State<WorkScreen> {
         'purchaseLimit': '50',
       });
 
+      final authed = (dash['auth'] as Map?)?['authenticated'] == true;
+      Map<String, dynamic>? presetJson;
+      if (authed) {
+        try {
+          presetJson = await widget.api.getJson('/api/presets', query: {'limit': '200'});
+        } catch (_) {
+          presetJson = null;
+        }
+      }
+
+      final presetList = (presetJson?['presets'] as List?) ?? const [];
+
       setState(() {
         _dashboard = dash;
-        _loginRequired = (dash['auth'] as Map?)?['authenticated'] != true;
+        _loginRequired = !authed;
+        _presets = presetList.map((e) => (e as Map).cast<String, dynamic>()).toList();
+        if (_selectedPresetId != null && !_presets.any((p) => p['id'] == _selectedPresetId)) {
+          _selectedPresetId = null;
+        }
       });
     } catch (e) {
       setState(() => _error = e.toString());
@@ -128,6 +197,7 @@ class _WorkScreenState extends State<WorkScreen> {
         'kind': kind,
         'url': u,
         'force': (kind == 'upload' && _forceUpload) ? '1' : '0',
+        if ((_selectedPresetId ?? '').trim().isNotEmpty) 'presetId': (_selectedPresetId ?? '').trim(),
         if (kind == 'upload' && (_titleOverride ?? '').trim().isNotEmpty)
           'titleOverride': (_titleOverride ?? '').trim(),
         if (kind == 'upload' && (_imagesOverride ?? const []).isNotEmpty)
@@ -303,6 +373,7 @@ class _WorkScreenState extends State<WorkScreen> {
     try {
       final json = await widget.api.postJson('/api/upload/preview', {
         'url': u,
+        if ((_selectedPresetId ?? '').trim().isNotEmpty) 'presetId': (_selectedPresetId ?? '').trim(),
       });
       final preview = (json['preview'] as Map?)?.cast<String, dynamic>();
       if (preview == null) {
@@ -537,6 +608,190 @@ class _WorkScreenState extends State<WorkScreen> {
     }
   }
 
+  Future<Map<String, dynamic>?> _pollJobById(String jobId) async {
+    for (var i = 0; i < 120; i++) {
+      await Future.delayed(const Duration(seconds: 2));
+      try {
+        final json = await widget.api.getJson('/api/jobs/$jobId');
+        final job = (json['job'] as Map?)?.cast<String, dynamic>();
+        if (job == null) continue;
+        final status = (job['status'] ?? '').toString();
+        if (status == 'success' || status == 'failed') return job;
+      } catch (_) {
+        // ignore
+      }
+    }
+    return null;
+  }
+
+  Future<void> _runBatch() async {
+    if (_queue.isEmpty) return;
+
+    setState(() {
+      _batchRunning = true;
+      _error = null;
+    });
+
+    try {
+      for (var i = 0; i < _queue.length; i++) {
+        if (!_batchRunning) break;
+        final item = _queue[i];
+        if (item.status == _QueueStatus.success || item.status == _QueueStatus.failed || item.status == _QueueStatus.skipped) {
+          continue;
+        }
+
+        // 1) preview
+        Map<String, dynamic>? preview;
+        try {
+          final json = await widget.api.postJson('/api/upload/preview', {
+            'url': item.url,
+            if ((_selectedPresetId ?? '').trim().isNotEmpty) 'presetId': (_selectedPresetId ?? '').trim(),
+          });
+          preview = (json['preview'] as Map?)?.cast<String, dynamic>();
+          item.preview = preview;
+        } catch (e) {
+          item.status = _QueueStatus.failed;
+          item.error = e.toString();
+          if (mounted) setState(() {});
+          continue;
+        }
+
+        if (!mounted) return;
+
+        // 2) per-item confirm
+        final decision = await showModalBottomSheet<String>(
+          context: context,
+          isScrollControlled: true,
+          showDragHandle: true,
+          builder: (ctx) {
+            final draft = (preview?['draft'] as Map?)?.cast<String, dynamic>() ?? {};
+            final computed = (preview?['computed'] as Map?)?.cast<String, dynamic>() ?? {};
+            final title = (draft['title'] ?? '').toString();
+            final finalPrice = computed['finalPrice'];
+            return SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.only(
+                  left: 16,
+                  right: 16,
+                  top: 10,
+                  bottom: 16,
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('배치 업로드 - 개별 확인',
+                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900)),
+                    const SizedBox(height: 8),
+                    Text(title.isEmpty ? '(제목 없음)' : title,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontWeight: FontWeight.w800)),
+                    const SizedBox(height: 6),
+                    Text('최종가: ${finalPrice ?? '-'}',
+                        style: TextStyle(
+                            color: Theme.of(ctx)
+                                .colorScheme
+                                .onSurface
+                                .withValues(alpha: 0.7))),
+                    const SizedBox(height: 6),
+                    Text(item.url,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                            fontSize: 12,
+                            color: Theme.of(ctx)
+                                .colorScheme
+                                .onSurface
+                                .withValues(alpha: 0.6))),
+                    const SizedBox(height: 14),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: OutlinedButton(
+                            onPressed: () => Navigator.of(ctx).pop('skip'),
+                            child: const Text('스킵'),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: FilledButton(
+                            onPressed: () => Navigator.of(ctx).pop('upload'),
+                            child: const Text('업로드'),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    SizedBox(
+                      width: double.infinity,
+                      child: TextButton(
+                        onPressed: () => Navigator.of(ctx).pop('stop'),
+                        child: const Text('배치 중단'),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+
+        if (decision == 'stop') {
+          setState(() => _batchRunning = false);
+          break;
+        }
+
+        if (decision != 'upload') {
+          item.status = _QueueStatus.skipped;
+          if (mounted) setState(() {});
+          continue;
+        }
+
+        // 3) upload
+        item.status = _QueueStatus.uploading;
+        item.error = null;
+        if (mounted) setState(() {});
+
+        try {
+          final json = await widget.api.postJson('/api/jobs/start', {
+            'kind': 'upload',
+            'url': item.url,
+            'force': _forceUpload ? '1' : '0',
+            if ((_selectedPresetId ?? '').trim().isNotEmpty) 'presetId': (_selectedPresetId ?? '').trim(),
+          });
+          final job = (json['job'] as Map?)?.cast<String, dynamic>();
+          final jobId = (job?['id'] ?? '').toString();
+          if (jobId.isEmpty) throw Exception('jobId missing');
+
+          final done = await _pollJobById(jobId);
+          final status = (done?['status'] ?? '').toString();
+          final result = (done?['result'] as Map?)?.cast<String, dynamic>();
+          item.uploadResult = (result?['result'] as Map?)?.cast<String, dynamic>();
+
+          if (status == 'success') {
+            item.status = _QueueStatus.success;
+          } else {
+            item.status = _QueueStatus.failed;
+            item.error = _humanizeUploadError(item.uploadResult);
+            if ((item.error ?? '').isEmpty) item.error = (done?['errorMessage'] ?? '업로드 실패').toString();
+          }
+        } catch (e) {
+          item.status = _QueueStatus.failed;
+          item.error = e.toString();
+        }
+
+        if (mounted) setState(() {});
+      }
+
+      unawaited(_refresh());
+    } finally {
+      if (mounted) {
+        setState(() => _batchRunning = false);
+      }
+    }
+  }
+
   Future<void> _ordersExport() async {
     setState(() {
       _loading = true;
@@ -735,6 +990,33 @@ class _WorkScreenState extends State<WorkScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 const SectionHeader('URL → 미리보기 / 업로드'),
+                const SizedBox(height: 10),
+                DropdownButtonFormField<String?>(
+                  initialValue: (_selectedPresetId != null && _presets.any((p) => p['id'] == _selectedPresetId))
+                      ? _selectedPresetId
+                      : null,
+                  items: [
+                    const DropdownMenuItem<String?>(
+                      value: null,
+                      child: Text('기본 설정(현재)'),
+                    ),
+                    ..._presets.map((p) {
+                      final id = (p['id'] ?? '').toString();
+                      final name = (p['name'] ?? '').toString();
+                      return DropdownMenuItem<String?>(
+                        value: id,
+                        child: Text(name.isEmpty ? id : name),
+                      );
+                    }),
+                  ],
+                  onChanged: (!isAuthed || _loading)
+                      ? null
+                      : (v) => setState(() => _selectedPresetId = v),
+                  decoration: const InputDecoration(
+                    labelText: '프리셋(선택)',
+                    helperText: '선택하면 미리보기/업로드/배치에 동일하게 적용돼요',
+                  ),
+                ),
                 const SizedBox(height: 10),
                 ValueListenableBuilder<TextEditingValue>(
                   valueListenable: _url,
@@ -966,6 +1248,136 @@ class _WorkScreenState extends State<WorkScreen> {
                           '-'),
                   if ((_uploadResult?['error'] ?? '').toString().isNotEmpty)
                     KvRow(k: '오류', v: _humanizeUploadError(_uploadResult)),
+                ],
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+          AppCard(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                SectionHeader('배치 업로드 큐', trailing: InfoChip(label: '${_queue.length}')),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: _batchUrls,
+                  enabled: isAuthed && !_loading && !_batchRunning,
+                  minLines: 3,
+                  maxLines: 6,
+                  decoration: const InputDecoration(
+                    labelText: '여러 URL 입력',
+                    hintText: '줄바꿈 또는 쉼표(,)로 여러 URL을 붙여넣기',
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton(
+                        onPressed: (!isAuthed || _loading || _batchRunning)
+                            ? null
+                            : () {
+                                final added = _enqueueFromText(_batchUrls.text);
+                                if (added > 0) {
+                                  _batchUrls.clear();
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(content: Text('큐에 $added개 추가됨')),
+                                  );
+                                }
+                              },
+                        child: const Text('큐에 추가'),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: FilledButton(
+                        onPressed: (!isAuthed || _loading || _batchRunning || _queue.isEmpty)
+                            ? null
+                            : _runBatch,
+                        child: Text(_batchRunning ? '진행중...' : '배치 시작'),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextButton(
+                        onPressed: (_batchRunning || _queue.isEmpty)
+                            ? null
+                            : () => setState(() {
+                                  _queue.clear();
+                                }),
+                        child: const Text('큐 비우기'),
+                      ),
+                    ),
+                    if (_batchRunning)
+                      TextButton(
+                        onPressed: () => setState(() => _batchRunning = false),
+                        child: const Text('중단'),
+                      ),
+                  ],
+                ),
+                if (_queue.isNotEmpty) ...[
+                  const Divider(height: 24),
+                  ListView.separated(
+                    shrinkWrap: true,
+                    physics: const NeverScrollableScrollPhysics(),
+                    itemCount: _queue.length,
+                    separatorBuilder: (_, __) => const Divider(height: 18),
+                    itemBuilder: (_, i) {
+                      final it = _queue[i];
+                      final st = it.status;
+                      String statusText = '대기';
+                      if (st == _QueueStatus.confirmed) statusText = '확인됨';
+                      if (st == _QueueStatus.uploading) statusText = '업로드중';
+                      if (st == _QueueStatus.success) statusText = '완료';
+                      if (st == _QueueStatus.failed) statusText = '실패';
+                      if (st == _QueueStatus.skipped) statusText = '스킵';
+
+                      Color color = Theme.of(context).colorScheme.outline;
+                      if (st == _QueueStatus.success) color = const Color(0xFF2F9E44);
+                      if (st == _QueueStatus.failed) color = const Color(0xFFE03131);
+                      if (st == _QueueStatus.uploading) color = const Color(0xFF1971C2);
+
+                      return Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          InfoChip(label: statusText, color: color),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(it.url,
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(fontWeight: FontWeight.w800)),
+                                if ((it.error ?? '').isNotEmpty) ...[
+                                  const SizedBox(height: 4),
+                                  Text(it.error!,
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        color: Theme.of(context)
+                                            .colorScheme
+                                            .onSurface
+                                            .withValues(alpha: 0.65),
+                                      )),
+                                ],
+                              ],
+                            ),
+                          ),
+                          if (!_batchRunning)
+                            IconButton(
+                              tooltip: '삭제',
+                              onPressed: () => setState(() => _queue.removeAt(i)),
+                              icon: const Icon(Icons.delete_outline),
+                            ),
+                        ],
+                      );
+                    },
+                  ),
                 ],
               ],
             ),

@@ -28,6 +28,12 @@ import {
   updateJob,
   getJob,
 } from "./src/server/storage_sqlite.js";
+import {
+  listPresets,
+  getPreset,
+  upsertPreset,
+  deletePreset,
+} from "./src/server/presets_sqlite.js";
 import { addOrder, clearOrders, listOrders } from "./src/server/orders_sqlite.js";
 import { exportOrdersToDomeme } from "./src/pipeline/exportOrdersToDomeme.js";
 import { uploadDomemeExcel } from "./src/pipeline/uploadDomemeExcel.js";
@@ -482,6 +488,75 @@ app.get("/api/settings", authRequired, (req, res) => {
   return res.json({ ok: true, settings: req.user.settings || {} });
 });
 
+// ✅ Presets: list/create/update/delete/apply
+app.get("/api/presets", authRequired, async (req, res) => {
+  try {
+    const limit = Math.max(1, Math.min(500, Number(req.query.limit || 100) || 100));
+    const presets = await listPresets(req.user.id, limit);
+    return res.json({ ok: true, presets });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+app.get("/api/presets/:id", authRequired, async (req, res) => {
+  try {
+    const id = String(req.params.id || "").trim();
+    const preset = await getPreset(req.user.id, id);
+    if (!preset) return res.status(404).json({ ok: false, error: "not_found" });
+    return res.json({ ok: true, preset });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+app.post("/api/presets", authRequired, async (req, res) => {
+  try {
+    const name = String(req.body?.name || "").trim();
+    const settings = (req.body?.settings && typeof req.body.settings === "object") ? req.body.settings : {};
+    const preset = await upsertPreset({ userId: req.user.id, name, settings });
+    return res.json({ ok: true, preset });
+  } catch (e) {
+    return res.status(400).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+app.put("/api/presets/:id", authRequired, async (req, res) => {
+  try {
+    const id = String(req.params.id || "").trim();
+    const name = String(req.body?.name || "").trim();
+    const settings = (req.body?.settings && typeof req.body.settings === "object") ? req.body.settings : {};
+    // upsert by name (unique per user). id is returned but name conflict can update existing.
+    const preset = await upsertPreset({ userId: req.user.id, id, name, settings });
+    return res.json({ ok: true, preset });
+  } catch (e) {
+    return res.status(400).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+app.delete("/api/presets/:id", authRequired, async (req, res) => {
+  try {
+    const id = String(req.params.id || "").trim();
+    await deletePreset(req.user.id, id);
+    return res.json({ ok: true });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+app.post("/api/presets/:id/apply", authRequired, async (req, res) => {
+  try {
+    const id = String(req.params.id || "").trim();
+    const preset = await getPreset(req.user.id, id);
+    if (!preset) return res.status(404).json({ ok: false, error: "not_found" });
+
+    const saved = await updateSettings(req.user.id, preset.settings || {});
+    return res.json({ ok: true, settings: saved, appliedPreset: { id: preset.id, name: preset.name } });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
 // ✅ PWA Push: VAPID public key
 app.get("/api/push/public-key", authRequired, (req, res) => {
   return res.json({ ok: true, publicKey: VAPID.publicKey });
@@ -543,6 +618,11 @@ app.post("/api/jobs/start", authRequired, async (req, res) => {
     const imagesOverride = Array.isArray(imagesOverrideRaw)
       ? imagesOverrideRaw.map((x) => String(x || "").trim()).filter(Boolean).slice(0, 50)
       : [];
+
+    const presetId = String(req.body?.presetId || "").trim();
+    const settingsOverride = (req.body?.settingsOverride && typeof req.body.settingsOverride === "object")
+      ? req.body.settingsOverride
+      : null;
     if (!kind || (kind !== "preview" && kind !== "upload")) {
       return res.status(400).json({ ok: false, error: "invalid_kind" });
     }
@@ -572,8 +652,19 @@ app.post("/api/jobs/start", authRequired, async (req, res) => {
     }
 
     const userId = req.user.id;
+
+    let presetSettings = {};
+    if (presetId) {
+      try {
+        const p = await getPreset(req.user.id, presetId);
+        if (p?.settings && typeof p.settings === "object") presetSettings = p.settings;
+      } catch {}
+    }
+
     const settingsSnapshot = {
       ...(req.user.settings || {}),
+      ...(presetSettings || {}),
+      ...(settingsOverride || {}),
       ...(titleOverride ? { titleOverride } : {}),
       ...(imagesOverride.length > 0 ? { imagesOverride } : {}),
     };
@@ -686,7 +777,26 @@ app.post("/api/upload/preview", authRequired, async (req, res) => {
     const c = classifyUrl(url);
     if (!c.ok) return res.status(400).json({ ok: false, error: c.reason, url: c.url });
 
-    const preview = await previewUploadFromUrl(c.url, req.user.settings || {});
+    const presetId = String(req.body?.presetId || "").trim();
+    const settingsOverride = (req.body?.settingsOverride && typeof req.body.settingsOverride === "object")
+      ? req.body.settingsOverride
+      : null;
+
+    let presetSettings = {};
+    if (presetId) {
+      try {
+        const p = await getPreset(req.user.id, presetId);
+        if (p?.settings && typeof p.settings === "object") presetSettings = p.settings;
+      } catch {}
+    }
+
+    const effectiveSettings = {
+      ...(req.user.settings || {}),
+      ...(presetSettings || {}),
+      ...(settingsOverride || {}),
+    };
+
+    const preview = await previewUploadFromUrl(c.url, effectiveSettings);
     if (!preview.ok) {
       // push (best-effort)
       setTimeout(() => {
