@@ -48,6 +48,11 @@ import UserNotifications
   }
 
   override func application(_ application: UIApplication, didFailToRegisterForRemoteNotificationsWithError error: Error) {
-    // no-op
+    pushChannel?.invokeMethod("apnsError", arguments: String(describing: error))
+  }
+
+  override func applicationDidBecomeActive(_ application: UIApplication) {
+    // Retry registration when app becomes active (helps after first-time permission prompts)
+    ensurePushRegistered(application)
   }
 }

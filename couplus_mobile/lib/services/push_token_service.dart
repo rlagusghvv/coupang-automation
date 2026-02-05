@@ -12,7 +12,11 @@ class PushTokenService {
 
   ApiClient? _api;
   String? _pendingToken;
+  String? _lastError;
   bool _bound = false;
+
+  String? get lastError => _lastError;
+  String? get pendingToken => _pendingToken;
 
   void bind(ApiClient api) {
     _api = api;
@@ -27,8 +31,12 @@ class PushTokenService {
         final token = (call.arguments ?? '').toString().trim();
         if (token.isNotEmpty) {
           _pendingToken = token;
+          _lastError = null;
           _tryRegister();
         }
+      } else if (call.method == 'apnsError') {
+        final msg = (call.arguments ?? '').toString().trim();
+        _lastError = msg.isEmpty ? 'unknown' : msg;
       }
     });
 

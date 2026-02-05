@@ -332,6 +332,13 @@ class _MoreScreenState extends State<MoreScreen> {
                 KvRow(
                     k: 'Session cookie',
                     v: widget.api.cookie == null ? '-' : 'Saved'),
+                KvRow(
+                    k: 'APNs token',
+                    v: PushTokenService.instance.pendingToken == null
+                        ? '-'
+                        : 'Received'),
+                if (PushTokenService.instance.lastError != null)
+                  KvRow(k: 'APNs error', v: PushTokenService.instance.lastError!),
                 KvRow(k: 'Signed in', v: authedEmail.isEmpty ? 'No' : 'Yes'),
                 if (authedEmail.isNotEmpty) KvRow(k: 'Email', v: authedEmail),
                 const Divider(height: 24),
