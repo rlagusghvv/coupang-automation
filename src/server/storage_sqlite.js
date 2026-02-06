@@ -200,17 +200,34 @@ export async function initDb() {
       seller_product_id TEXT,
       status TEXT NOT NULL DEFAULT 'draft',
       validation_json TEXT NOT NULL DEFAULT '{}',
+      last_source_snapshot_json TEXT NOT NULL DEFAULT '{}',
+      last_synced_at TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
       deployed_at TEXT,
       UNIQUE(user_id, source_url)
     )`,
   );
-  // Migrations
-  try {
-    await ensureColumn(db, 'jobs', 'catalog_id', 'TEXT');
-  } catch {}
 
+  // Catalog events (sync/change log)
+  await dbRun(
+    db,
+    `CREATE TABLE IF NOT EXISTS catalog_events (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      catalog_id TEXT NOT NULL,
+      type TEXT NOT NULL,
+      severity TEXT NOT NULL DEFAULT 'info',
+      message TEXT NOT NULL DEFAULT '',
+      data_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL
+    )`,
+  );
+
+  // Migrations
+  try { await ensureColumn(db, 'jobs', 'catalog_id', 'TEXT'); } catch {}
+  try { await ensureColumn(db, 'catalog_products', 'last_source_snapshot_json', "TEXT NOT NULL DEFAULT '{}'" ); } catch {}
+  try { await ensureColumn(db, 'catalog_products', 'last_synced_at', 'TEXT'); } catch {}
 
   db.close();
 }
@@ -304,6 +321,17 @@ export async function updateSettings(userId, nextSettings) {
   ]);
   db.close();
   return merged;
+}
+
+export async function listUsersForSync() {
+  const db = openDb();
+  const rows = await dbAll(db, 'SELECT id, settings_json FROM users', []);
+  db.close();
+  return rows.map((r) => {
+    let settings = {};
+    try { settings = JSON.parse(r.settings_json || '{}'); } catch {}
+    return { id: r.id, settings };
+  });
 }
 
 export async function addPreviewHistory({
@@ -693,7 +721,7 @@ export async function getCatalogProductById(userId, id) {
   const db = openDb();
   const row = await dbGet(
     db,
-    `SELECT id, user_id, source_url, confirmed_title, main_image_url, detail_images_json, preset_id, category_override, seller_product_id, status, validation_json, created_at, updated_at, deployed_at
+    `SELECT id, user_id, source_url, confirmed_title, main_image_url, detail_images_json, preset_id, category_override, seller_product_id, status, validation_json, last_source_snapshot_json, last_synced_at, created_at, updated_at, deployed_at
      FROM catalog_products
      WHERE user_id = ? AND id = ?`,
     [userId, String(id)],
@@ -702,8 +730,10 @@ export async function getCatalogProductById(userId, id) {
   if (!row) return null;
   let detailImages = [];
   let validation = {};
+  let lastSourceSnapshot = {};
   try { detailImages = JSON.parse(row.detail_images_json || '[]'); } catch {}
   try { validation = JSON.parse(row.validation_json || '{}'); } catch {}
+  try { lastSourceSnapshot = JSON.parse(row.last_source_snapshot_json || '{}'); } catch {}
   return {
     id: row.id,
     sourceUrl: row.source_url,
@@ -715,6 +745,8 @@ export async function getCatalogProductById(userId, id) {
     sellerProductId: row.seller_product_id,
     status: row.status,
     validation,
+    lastSourceSnapshot,
+    lastSyncedAt: row.last_synced_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     deployedAt: row.deployed_at,
@@ -769,6 +801,8 @@ export async function updateCatalogProduct(userId, id, patch = {}) {
     deployedAt: 'deployed_at',
     validation: 'validation_json',
     detailImages: 'detail_images_json',
+    lastSourceSnapshot: 'last_source_snapshot_json',
+    lastSyncedAt: 'last_synced_at',
   };
 
   for (const [k, col] of Object.entries(allowed)) {
@@ -776,6 +810,7 @@ export async function updateCatalogProduct(userId, id, patch = {}) {
     fields.push(`${col} = ?`);
     if (k === "detailImages") params.push(JSON.stringify(normalizeImages(patch[k], 80)));
     else if (k === "validation") params.push(JSON.stringify(patch[k] ?? {}));
+    else if (k === "lastSourceSnapshot") params.push(JSON.stringify(patch[k] ?? {}));
     else if (k === "categoryOverride") params.push(patch[k] == null || patch[k] === "" ? null : Number(patch[k]));
     else if (k === "presetId") params.push(patch[k] ? String(patch[k]) : null);
     else params.push(patch[k] ?? null);
@@ -798,4 +833,48 @@ export async function deleteCatalogProduct(userId, id) {
   const db = openDb();
   await dbRun(db, 'DELETE FROM catalog_products WHERE user_id = ? AND id = ?', [userId, String(id)]);
   db.close();
+}
+
+// ---- Catalog Events (sync/change log) ----
+export async function addCatalogEvent({ userId, catalogId, type, severity = 'info', message = '', data = {} }) {
+  if (!userId) throw new Error('userId required');
+  if (!catalogId) throw new Error('catalogId required');
+  const db = openDb();
+  const id = crypto.randomUUID();
+  await dbRun(
+    db,
+    'INSERT INTO catalog_events (id, user_id, catalog_id, type, severity, message, data_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+    [id, String(userId), String(catalogId), String(type), String(severity), String(message || ''), JSON.stringify(data || {}), new Date().toISOString()],
+  );
+  db.close();
+  return { id };
+}
+
+export async function listCatalogEvents(userId, catalogId, { limit = 50 } = {}) {
+  if (!userId) throw new Error('userId required');
+  if (!catalogId) throw new Error('catalogId required');
+  const lim = Math.max(1, Math.min(200, Number(limit) || 50));
+  const db = openDb();
+  const rows = await dbAll(
+    db,
+    `SELECT id, type, severity, message, data_json, created_at
+     FROM catalog_events
+     WHERE user_id = ? AND catalog_id = ?
+     ORDER BY created_at DESC
+     LIMIT ?`,
+    [String(userId), String(catalogId), lim],
+  );
+  db.close();
+  return rows.map((r) => {
+    let data = {};
+    try { data = JSON.parse(r.data_json || '{}'); } catch {}
+    return {
+      id: r.id,
+      type: r.type,
+      severity: r.severity,
+      message: r.message,
+      data,
+      createdAt: r.created_at,
+    };
+  });
 }

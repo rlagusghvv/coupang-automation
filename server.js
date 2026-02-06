@@ -32,6 +32,8 @@ import {
   getCatalogProductById,
   updateCatalogProduct,
   deleteCatalogProduct,
+  listCatalogEvents,
+  listUsersForSync,
 } from "./src/server/storage_sqlite.js";
 import {
   listPresets,
@@ -54,6 +56,7 @@ import {
 } from "./src/config/paths.js";
 import { getSellerProduct } from "./src/server/externalAdapters.js";
 import { runtimeState } from "./src/server/runtime_state.js";
+import { syncOneCatalogProduct, syncAllCatalogProducts, startCatalogSyncLoop } from "./src/server/catalogSync.js";
 
 const app = express();
 app.set("trust proxy", true);
@@ -761,6 +764,38 @@ app.post('/api/catalog/:id/deploy', authRequired, async (req, res) => {
     return res.status(500).json({ ok: false, error: String(e?.message || e) });
   }
 });
+
+// Catalog: 운영 동기화(가격/재고 등) 훅
+app.post('/api/catalog/:id/sync', authRequired, async (req, res) => {
+  try {
+    const id = String(req.params.id || '').trim();
+    const r = await syncOneCatalogProduct({ userId: req.user.id, catalogId: id, userSettings: req.user.settings || {} });
+    return res.json({ ok: true, result: r });
+  } catch (e) {
+    return res.status(400).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+app.post('/api/catalog/sync/run', authRequired, async (req, res) => {
+  try {
+    const r = await syncAllCatalogProducts({ userId: req.user.id, userSettings: req.user.settings || {}, limit: 200 });
+    return res.json({ ok: true, result: r });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+app.get('/api/catalog/:id/events', authRequired, async (req, res) => {
+  try {
+    const id = String(req.params.id || '').trim();
+    const limit = Math.max(1, Math.min(200, Number(req.query.limit || 50) || 50));
+    const events = await listCatalogEvents(req.user.id, id, { limit });
+    return res.json({ ok: true, events });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
 // ✅ PWA Push: VAPID public key
 app.get("/api/push/public-key", authRequired, (req, res) => {
   return res.json({ ok: true, publicKey: VAPID.publicKey });
@@ -1820,9 +1855,20 @@ function escapeHtml(s) {
 // Override with HOST=127.0.0.1 if you explicitly want local-only.
 const HOST = (process.env.HOST || "0.0.0.0").trim();
 
-app.listen(PORT, HOST, () => {
+app.listen(PORT, HOST, async () => {
   const baseHost = HOST === "0.0.0.0" ? "localhost" : HOST;
   log(`server running: http://${baseHost}:${PORT}`);
   log(`authorize start: http://${baseHost}:${PORT}/auth/kakao`);
   log(`bind: ${HOST}:${PORT}`);
+
+  // 운영 동기화 루프(옵션): CE_SYNC_INTERVAL_MIN 설정 시 주기 실행
+  const intervalMin = Number(process.env.CE_SYNC_INTERVAL_MIN || 0);
+  if (Number.isFinite(intervalMin) && intervalMin > 0) {
+    const intervalMs = Math.max(60_000, intervalMin * 60_000);
+    startCatalogSyncLoop({
+      getUsers: async () => await listUsersForSync(),
+      intervalMs,
+    });
+    log(`catalog sync loop enabled: every ${intervalMin} min`);
+  }
 });
