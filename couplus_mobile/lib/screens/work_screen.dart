@@ -137,7 +137,8 @@ class _WorkScreenState extends State<WorkScreen> {
       Map<String, dynamic>? presetJson;
       if (authed) {
         try {
-          presetJson = await widget.api.getJson('/api/presets', query: {'limit': '200'});
+          presetJson =
+              await widget.api.getJson('/api/presets', query: {'limit': '200'});
         } catch (_) {
           presetJson = null;
         }
@@ -148,8 +149,10 @@ class _WorkScreenState extends State<WorkScreen> {
       setState(() {
         _dashboard = dash;
         _loginRequired = !authed;
-        _presets = presetList.map((e) => (e as Map).cast<String, dynamic>()).toList();
-        if (_selectedPresetId != null && !_presets.any((p) => p['id'] == _selectedPresetId)) {
+        _presets =
+            presetList.map((e) => (e as Map).cast<String, dynamic>()).toList();
+        if (_selectedPresetId != null &&
+            !_presets.any((p) => p['id'] == _selectedPresetId)) {
           _selectedPresetId = null;
         }
       });
@@ -197,7 +200,8 @@ class _WorkScreenState extends State<WorkScreen> {
         'kind': kind,
         'url': u,
         'force': (kind == 'upload' && _forceUpload) ? '1' : '0',
-        if ((_selectedPresetId ?? '').trim().isNotEmpty) 'presetId': (_selectedPresetId ?? '').trim(),
+        if ((_selectedPresetId ?? '').trim().isNotEmpty)
+          'presetId': (_selectedPresetId ?? '').trim(),
         if (kind == 'upload' && (_titleOverride ?? '').trim().isNotEmpty)
           'titleOverride': (_titleOverride ?? '').trim(),
         if (kind == 'upload' && (_imagesOverride ?? const []).isNotEmpty)
@@ -373,7 +377,8 @@ class _WorkScreenState extends State<WorkScreen> {
     try {
       final json = await widget.api.postJson('/api/upload/preview', {
         'url': u,
-        if ((_selectedPresetId ?? '').trim().isNotEmpty) 'presetId': (_selectedPresetId ?? '').trim(),
+        if ((_selectedPresetId ?? '').trim().isNotEmpty)
+          'presetId': (_selectedPresetId ?? '').trim(),
       });
       final preview = (json['preview'] as Map?)?.cast<String, dynamic>();
       if (preview == null) {
@@ -388,7 +393,8 @@ class _WorkScreenState extends State<WorkScreen> {
       });
 
       // Pull suggestions from preview
-      final sug = (preview['titleSuggestions'] as Map?)?.cast<String, dynamic>();
+      final sug =
+          (preview['titleSuggestions'] as Map?)?.cast<String, dynamic>();
       final list = (sug?['suggestions'] as List?) ?? const [];
       final suggestions = list
           .map((e) => (e as Map).cast<String, dynamic>())
@@ -397,7 +403,8 @@ class _WorkScreenState extends State<WorkScreen> {
           .toList();
 
       final draft = (preview['draft'] as Map?)?.cast<String, dynamic>() ?? {};
-      final computed = (preview['computed'] as Map?)?.cast<String, dynamic>() ?? {};
+      final computed =
+          (preview['computed'] as Map?)?.cast<String, dynamic>() ?? {};
       final title = (draft['title'] ?? '').toString();
       final finalPrice = computed['finalPrice'];
       final cat = (preview['category'] as Map?)?.cast<String, dynamic>() ?? {};
@@ -407,10 +414,14 @@ class _WorkScreenState extends State<WorkScreen> {
       final predictedId = (predicted?['id'] ?? '').toString();
 
       final imagesRaw = (computed['images'] as List?) ?? const [];
-      final images = imagesRaw.map((e) => e.toString()).where((s) => s.trim().isNotEmpty).toList();
+      final images = imagesRaw
+          .map((e) => e.toString())
+          .where((s) => s.trim().isNotEmpty)
+          .toList();
 
       // Auto-filter likely banner/notice images by default (user can re-add in edit).
-      if ((_imagesOverride == null || (_imagesOverride ?? const []).isEmpty) && images.isNotEmpty) {
+      if ((_imagesOverride == null || (_imagesOverride ?? const []).isEmpty) &&
+          images.isNotEmpty) {
         final filtered = images.where((u) => !isLikelyBannerUrl(u)).toList();
         _imagesOverride = filtered.isNotEmpty ? filtered : images;
       }
@@ -480,7 +491,8 @@ class _WorkScreenState extends State<WorkScreen> {
                             ),
                             TextButton(
                               onPressed: () async {
-                                final next = await Navigator.of(context).push<List<String>>(
+                                final next = await Navigator.of(context)
+                                    .push<List<String>>(
                                   MaterialPageRoute(
                                     builder: (_) => ImageEditScreen(
                                       initial: _imagesOverride ?? images,
@@ -502,8 +514,10 @@ class _WorkScreenState extends State<WorkScreen> {
                           height: 78,
                           child: ListView.separated(
                             scrollDirection: Axis.horizontal,
-                            itemCount: (_imagesOverride ?? images).take(12).length,
-                            separatorBuilder: (_, __) => const SizedBox(width: 8),
+                            itemCount:
+                                (_imagesOverride ?? images).take(12).length,
+                            separatorBuilder: (_, __) =>
+                                const SizedBox(width: 8),
                             itemBuilder: (_, i) {
                               final src = (_imagesOverride ?? images)[i];
                               return InkWell(
@@ -613,7 +627,40 @@ class _WorkScreenState extends State<WorkScreen> {
       );
 
       if (proceed == true) {
-        await _executeUpload();
+        // 1) Save to catalog (confirmed snapshot)
+        Map<String, dynamic>? product;
+        try {
+          final cjson = await widget.api.postJson('/api/catalog/confirm', {
+            'sourceUrl': u,
+            if ((_selectedPresetId ?? '').trim().isNotEmpty)
+              'presetId': (_selectedPresetId ?? '').trim(),
+            if ((_titleOverride ?? '').trim().isNotEmpty)
+              'confirmedTitle': (_titleOverride ?? '').trim(),
+            'mainImageUrl': (draft['imageUrl'] ?? '').toString(),
+            if ((_imagesOverride ?? const []).isNotEmpty)
+              'detailImages': (_imagesOverride ?? const []),
+            // If preview category used code exists, keep as override by default.
+            if (int.tryParse(usedCode) != null)
+              'categoryOverride': int.parse(usedCode),
+          });
+          product = (cjson['product'] as Map?)?.cast<String, dynamic>();
+        } catch (_) {
+          product = null;
+        }
+
+        // 2) Deploy via catalog (creates an upload job linked to catalogId)
+        if (product != null && (product!['id'] ?? '').toString().isNotEmpty) {
+          final deploy = await widget.api
+              .postJson('/api/catalog/${product!['id']}/deploy', {});
+          final job = (deploy['job'] as Map?)?.cast<String, dynamic>();
+          setState(() {
+            _activeJob = job;
+          });
+          unawaited(_pollJob());
+        } else {
+          // Fallback: legacy upload job
+          await _executeUpload();
+        }
       }
     } catch (e) {
       if (e is ApiException && e.isUnauthorized) {
@@ -657,7 +704,9 @@ class _WorkScreenState extends State<WorkScreen> {
       for (var i = 0; i < _queue.length; i++) {
         if (!_batchRunning) break;
         final item = _queue[i];
-        if (item.status == _QueueStatus.success || item.status == _QueueStatus.failed || item.status == _QueueStatus.skipped) {
+        if (item.status == _QueueStatus.success ||
+            item.status == _QueueStatus.failed ||
+            item.status == _QueueStatus.skipped) {
           continue;
         }
 
@@ -666,7 +715,8 @@ class _WorkScreenState extends State<WorkScreen> {
         try {
           final json = await widget.api.postJson('/api/upload/preview', {
             'url': item.url,
-            if ((_selectedPresetId ?? '').trim().isNotEmpty) 'presetId': (_selectedPresetId ?? '').trim(),
+            if ((_selectedPresetId ?? '').trim().isNotEmpty)
+              'presetId': (_selectedPresetId ?? '').trim(),
           });
           preview = (json['preview'] as Map?)?.cast<String, dynamic>();
           item.preview = preview;
@@ -685,8 +735,10 @@ class _WorkScreenState extends State<WorkScreen> {
           isScrollControlled: true,
           showDragHandle: true,
           builder: (ctx) {
-            final draft = (preview?['draft'] as Map?)?.cast<String, dynamic>() ?? {};
-            final computed = (preview?['computed'] as Map?)?.cast<String, dynamic>() ?? {};
+            final draft =
+                (preview?['draft'] as Map?)?.cast<String, dynamic>() ?? {};
+            final computed =
+                (preview?['computed'] as Map?)?.cast<String, dynamic>() ?? {};
             final title = (draft['title'] ?? '').toString();
             final finalPrice = computed['finalPrice'];
             return SafeArea(
@@ -702,7 +754,8 @@ class _WorkScreenState extends State<WorkScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     const Text('배치 업로드 - 개별 확인',
-                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900)),
+                        style: TextStyle(
+                            fontSize: 16, fontWeight: FontWeight.w900)),
                     const SizedBox(height: 8),
                     Text(title.isEmpty ? '(제목 없음)' : title,
                         maxLines: 2,
@@ -775,27 +828,55 @@ class _WorkScreenState extends State<WorkScreen> {
         if (mounted) setState(() {});
 
         try {
-          final json = await widget.api.postJson('/api/jobs/start', {
-            'kind': 'upload',
-            'url': item.url,
-            'force': _forceUpload ? '1' : '0',
-            if ((_selectedPresetId ?? '').trim().isNotEmpty) 'presetId': (_selectedPresetId ?? '').trim(),
+          // 1) confirm to catalog
+          final draft =
+              (preview?['draft'] as Map?)?.cast<String, dynamic>() ?? {};
+          final computed =
+              (preview?['computed'] as Map?)?.cast<String, dynamic>() ?? {};
+          final cat =
+              (preview?['category'] as Map?)?.cast<String, dynamic>() ?? {};
+          final usedCode = (cat['usedCode'] ?? '').toString();
+
+          final imagesRaw = (computed['images'] as List?) ?? const [];
+          final images = imagesRaw
+              .map((e) => e.toString())
+              .where((s) => s.trim().isNotEmpty)
+              .toList();
+
+          final cjson = await widget.api.postJson('/api/catalog/confirm', {
+            'sourceUrl': item.url,
+            if ((_selectedPresetId ?? '').trim().isNotEmpty)
+              'presetId': (_selectedPresetId ?? '').trim(),
+            'confirmedTitle': (draft['title'] ?? '').toString(),
+            'mainImageUrl': (draft['imageUrl'] ?? '').toString(),
+            if (images.isNotEmpty) 'detailImages': images,
+            if (int.tryParse(usedCode) != null)
+              'categoryOverride': int.parse(usedCode),
           });
-          final job = (json['job'] as Map?)?.cast<String, dynamic>();
+          final product = (cjson['product'] as Map?)?.cast<String, dynamic>();
+          final pid = (product?['id'] ?? '').toString();
+          if (pid.isEmpty) throw Exception('catalog product id missing');
+
+          // 2) deploy
+          final djson =
+              await widget.api.postJson('/api/catalog/$pid/deploy', {});
+          final job = (djson['job'] as Map?)?.cast<String, dynamic>();
           final jobId = (job?['id'] ?? '').toString();
           if (jobId.isEmpty) throw Exception('jobId missing');
 
           final done = await _pollJobById(jobId);
           final status = (done?['status'] ?? '').toString();
           final result = (done?['result'] as Map?)?.cast<String, dynamic>();
-          item.uploadResult = (result?['result'] as Map?)?.cast<String, dynamic>();
+          item.uploadResult =
+              (result?['result'] as Map?)?.cast<String, dynamic>();
 
           if (status == 'success') {
             item.status = _QueueStatus.success;
           } else {
             item.status = _QueueStatus.failed;
             item.error = _humanizeUploadError(item.uploadResult);
-            if ((item.error ?? '').isEmpty) item.error = (done?['errorMessage'] ?? '업로드 실패').toString();
+            if ((item.error ?? '').isEmpty)
+              item.error = (done?['errorMessage'] ?? '업로드 실패').toString();
           }
         } catch (e) {
           item.status = _QueueStatus.failed;
@@ -962,8 +1043,10 @@ class _WorkScreenState extends State<WorkScreen> {
     final previewComputed = (preview?['computed'] as Map?) ?? {};
 
     final previewTitle = (previewDraft['title'] ?? '').toString();
-    final titleSuggestions = (preview?['titleSuggestions'] as Map?)?.cast<String, dynamic>();
-    final suggestionList = (titleSuggestions?['suggestions'] as List?) ?? const [];
+    final titleSuggestions =
+        (preview?['titleSuggestions'] as Map?)?.cast<String, dynamic>();
+    final suggestionList =
+        (titleSuggestions?['suggestions'] as List?) ?? const [];
     final previewImage = (previewDraft['imageUrl'] ?? '').toString();
     final previewFinalPrice = previewComputed['finalPrice'];
     final previewOptions = (preview?['options'] as List?) ?? const [];
@@ -1013,7 +1096,8 @@ class _WorkScreenState extends State<WorkScreen> {
                 const SectionHeader('URL → 미리보기 / 업로드'),
                 const SizedBox(height: 10),
                 DropdownButtonFormField<String?>(
-                  initialValue: (_selectedPresetId != null && _presets.any((p) => p['id'] == _selectedPresetId))
+                  initialValue: (_selectedPresetId != null &&
+                          _presets.any((p) => p['id'] == _selectedPresetId))
                       ? _selectedPresetId
                       : null,
                   items: [
@@ -1226,17 +1310,23 @@ class _WorkScreenState extends State<WorkScreen> {
                                     runSpacing: 6,
                                     children: suggestionList
                                         .take(3)
-                                        .map((e) => (e as Map).cast<String, dynamic>())
+                                        .map((e) =>
+                                            (e as Map).cast<String, dynamic>())
                                         .map((s) {
                                       final t = (s['title'] ?? '').toString();
-                                      final selected = (_titleOverride ?? '').trim() == t.trim();
+                                      final selected =
+                                          (_titleOverride ?? '').trim() ==
+                                              t.trim();
                                       return ActionChip(
                                         label: Text(t),
                                         onPressed: t.isEmpty
                                             ? null
-                                            : () => setState(() => _titleOverride = t),
+                                            : () => setState(
+                                                () => _titleOverride = t),
                                         backgroundColor: selected
-                                            ? Theme.of(context).colorScheme.primary
+                                            ? Theme.of(context)
+                                                .colorScheme
+                                                .primary
                                             : null,
                                         labelStyle: TextStyle(
                                           color: selected
@@ -1278,7 +1368,8 @@ class _WorkScreenState extends State<WorkScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                SectionHeader('배치 업로드 큐', trailing: InfoChip(label: '${_queue.length}')),
+                SectionHeader('배치 업로드 큐',
+                    trailing: InfoChip(label: '${_queue.length}')),
                 const SizedBox(height: 10),
                 TextField(
                   controller: _batchUrls,
@@ -1312,7 +1403,10 @@ class _WorkScreenState extends State<WorkScreen> {
                     const SizedBox(width: 10),
                     Expanded(
                       child: FilledButton(
-                        onPressed: (!isAuthed || _loading || _batchRunning || _queue.isEmpty)
+                        onPressed: (!isAuthed ||
+                                _loading ||
+                                _batchRunning ||
+                                _queue.isEmpty)
                             ? null
                             : _runBatch,
                         child: Text(_batchRunning ? '진행중...' : '배치 시작'),
@@ -1358,9 +1452,12 @@ class _WorkScreenState extends State<WorkScreen> {
                       if (st == _QueueStatus.skipped) statusText = '스킵';
 
                       Color color = Theme.of(context).colorScheme.outline;
-                      if (st == _QueueStatus.success) color = const Color(0xFF2F9E44);
-                      if (st == _QueueStatus.failed) color = const Color(0xFFE03131);
-                      if (st == _QueueStatus.uploading) color = const Color(0xFF1971C2);
+                      if (st == _QueueStatus.success)
+                        color = const Color(0xFF2F9E44);
+                      if (st == _QueueStatus.failed)
+                        color = const Color(0xFFE03131);
+                      if (st == _QueueStatus.uploading)
+                        color = const Color(0xFF1971C2);
 
                       return Row(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1374,7 +1471,8 @@ class _WorkScreenState extends State<WorkScreen> {
                                 Text(it.url,
                                     maxLines: 2,
                                     overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(fontWeight: FontWeight.w800)),
+                                    style: const TextStyle(
+                                        fontWeight: FontWeight.w800)),
                                 if ((it.error ?? '').isNotEmpty) ...[
                                   const SizedBox(height: 4),
                                   Text(it.error!,
@@ -1392,7 +1490,8 @@ class _WorkScreenState extends State<WorkScreen> {
                           if (!_batchRunning)
                             IconButton(
                               tooltip: '삭제',
-                              onPressed: () => setState(() => _queue.removeAt(i)),
+                              onPressed: () =>
+                                  setState(() => _queue.removeAt(i)),
                               icon: const Icon(Icons.delete_outline),
                             ),
                         ],
