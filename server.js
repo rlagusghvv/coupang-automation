@@ -27,6 +27,11 @@ import {
   createJob,
   updateJob,
   getJob,
+  upsertCatalogProduct,
+  listCatalogProducts,
+  getCatalogProductById,
+  updateCatalogProduct,
+  deleteCatalogProduct,
 } from "./src/server/storage_sqlite.js";
 import {
   listPresets,
@@ -47,6 +52,7 @@ import {
   DOMEME_STORAGE_STATE_PATH,
   DOMEGGOOK_STORAGE_STATE_PATH,
 } from "./src/config/paths.js";
+import { getSellerProduct } from "./src/coupang/api/getSellerProduct.js";
 import { runtimeState } from "./src/server/runtime_state.js";
 
 const app = express();
@@ -557,6 +563,204 @@ app.post("/api/presets/:id/apply", authRequired, async (req, res) => {
   }
 });
 
+// ✅ Catalog Products (B-style): CRUD + confirm + deploy
+app.get('/api/catalog', authRequired, async (req, res) => {
+  try {
+    const limit = Math.max(1, Math.min(200, Number(req.query.limit || 50) || 50));
+    const status = String(req.query.status || '').trim();
+    const products = await listCatalogProducts(req.user.id, { limit, status });
+    return res.json({ ok: true, products });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+app.get('/api/catalog/:id', authRequired, async (req, res) => {
+  try {
+    const id = String(req.params.id || '').trim();
+    const product = await getCatalogProductById(req.user.id, id);
+    if (!product) return res.status(404).json({ ok: false, error: 'not_found' });
+    return res.json({ ok: true, product });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+app.post('/api/catalog', authRequired, async (req, res) => {
+  try {
+    const b = req.body || {};
+    const product = await upsertCatalogProduct({
+      userId: req.user.id,
+      sourceUrl: String(b.sourceUrl || b.url || '').trim(),
+      confirmedTitle: String(b.confirmedTitle || '').trim(),
+      mainImageUrl: String(b.mainImageUrl || '').trim(),
+      detailImages: Array.isArray(b.detailImages) ? b.detailImages : [],
+      presetId: String(b.presetId || '').trim() || null,
+      categoryOverride: b.categoryOverride ?? null,
+      status: String(b.status || 'draft'),
+    });
+    return res.json({ ok: true, product });
+  } catch (e) {
+    return res.status(400).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+app.put('/api/catalog/:id', authRequired, async (req, res) => {
+  try {
+    const id = String(req.params.id || '').trim();
+    const patch = req.body && typeof req.body === 'object' ? req.body : {};
+    const product = await updateCatalogProduct(req.user.id, id, patch);
+    if (!product) return res.status(404).json({ ok: false, error: 'not_found' });
+    return res.json({ ok: true, product });
+  } catch (e) {
+    return res.status(400).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+app.delete('/api/catalog/:id', authRequired, async (req, res) => {
+  try {
+    const id = String(req.params.id || '').trim();
+    await deleteCatalogProduct(req.user.id, id);
+    return res.json({ ok: true });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+// Confirm (upsert by sourceUrl). Used by Preview -> Confirm.
+app.post('/api/catalog/confirm', authRequired, async (req, res) => {
+  try {
+    const b = req.body || {};
+    const url = String(b.sourceUrl || b.url || '').trim();
+    if (!url) return res.status(400).json({ ok: false, error: 'missing url' });
+
+    const product = await upsertCatalogProduct({
+      userId: req.user.id,
+      sourceUrl: url,
+      confirmedTitle: String(b.confirmedTitle || b.title || '').trim(),
+      mainImageUrl: String(b.mainImageUrl || '').trim(),
+      detailImages: Array.isArray(b.detailImages) ? b.detailImages : [],
+      presetId: String(b.presetId || '').trim() || null,
+      categoryOverride: b.categoryOverride ?? null,
+      status: 'confirmed',
+    });
+
+    return res.json({ ok: true, product });
+  } catch (e) {
+    return res.status(400).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+// Deploy: starts an upload job using catalog snapshot
+app.post('/api/catalog/:id/deploy', authRequired, async (req, res) => {
+  try {
+    const id = String(req.params.id || '').trim();
+    const product = await getCatalogProductById(req.user.id, id);
+    if (!product) return res.status(404).json({ ok: false, error: 'not_found' });
+
+    const job = await createJob({ userId: req.user.id, kind: 'upload', inputUrl: product.sourceUrl, force: '0', catalogId: product.id });
+
+    setTimeout(async () => {
+      try {
+        await updateJob({ id: job.id, patch: { status: 'running' } });
+
+        let presetSettings = {};
+        if (product.presetId) {
+          try {
+            const p = await getPreset(req.user.id, product.presetId);
+            if (p?.settings && typeof p.settings === 'object') presetSettings = p.settings;
+          } catch {}
+        }
+
+        const settingsSnapshot = {
+          ...(req.user.settings || {}),
+          ...(presetSettings || {}),
+          ...(product.confirmedTitle ? { titleOverride: product.confirmedTitle } : {}),
+          ...(Array.isArray(product.detailImages) && product.detailImages.length > 0 ? { imagesOverride: product.detailImages } : {}),
+          ...(product.categoryOverride != null ? { displayCategoryCode: Number(product.categoryOverride) } : {}),
+        };
+
+        const result = await runUploadFromUrl(product.sourceUrl, { ...settingsSnapshot, force: false });
+        const ok = Boolean(result?.ok);
+
+        // post-upload validation
+        let validation = { ok: true, checkedAt: new Date().toISOString(), errors: [] };
+        try {
+          const sellerProductId = result?.create?.sellerProductId || null;
+          const expectedCat = product.categoryOverride != null ? Number(product.categoryOverride) : null;
+          if (sellerProductId) {
+            const accessKey = String(settingsSnapshot.coupangAccessKey || '').trim();
+            const secretKey = String(settingsSnapshot.coupangSecretKey || '').trim();
+            if (accessKey && secretKey) {
+              const r = await getSellerProduct({ sellerProductId, accessKey, secretKey });
+              let obj = null;
+              try { obj = typeof r?.body === 'string' ? JSON.parse(r.body) : r?.body; } catch {}
+              const data = obj?.data || obj || null;
+              const displayCategoryCode = data?.displayCategoryCode ?? data?.displayCategoryId ?? null;
+              const items = Array.isArray(data?.items) ? data.items : [];
+              const content = items?.[0]?.content || items?.[0]?.contentText || items?.[0]?.contentHtml || '';
+              if (!content || String(content).trim().length < 20) {
+                validation.ok = false;
+                validation.errors.push('detail_empty');
+              }
+              if (expectedCat != null && displayCategoryCode != null && Number(displayCategoryCode) !== Number(expectedCat)) {
+                validation.ok = false;
+                validation.errors.push('category_mismatch');
+                validation.expectedCategory = expectedCat;
+                validation.actualCategory = Number(displayCategoryCode);
+              }
+            }
+          }
+        } catch (e) {
+          validation.ok = false;
+          validation.errors.push('validation_exception');
+          validation.error = String(e?.message || e);
+        }
+
+        await updateJob({
+          id: job.id,
+          patch: {
+            status: ok ? 'success' : 'failed',
+            errorCode: ok ? null : String(result?.error || 'upload_failed'),
+            errorMessage: ok ? null : '업로드에 실패했습니다.',
+            resultJson: { result, validation },
+          },
+        });
+
+        const sellerProductId = result?.create?.sellerProductId ?? null;
+        await updateCatalogProduct(req.user.id, product.id, {
+          sellerProductId: sellerProductId ? String(sellerProductId) : null,
+          status: ok ? (validation.ok ? 'deployed' : 'deployed_invalid') : 'deploy_failed',
+          deployedAt: ok ? new Date().toISOString() : null,
+          validation,
+        });
+
+        await notifyUser(req.user.id, {
+          title: ok ? (validation.ok ? '업로드 완료' : '업로드 완료(검증 실패)') : '업로드 실패',
+          body: (ok ? '업로드' : '업로드 실패') + ': ' + String(result?.draft?.title || product.confirmedTitle || '상품').slice(0, 40),
+          tag: 'catalog-deploy',
+          url: '/',
+          sellerProductId,
+        });
+      } catch (e) {
+        try {
+          await updateJob({
+            id: job.id,
+            patch: {
+              status: 'failed',
+              errorCode: 'job_exception',
+              errorMessage: '작업 처리 중 오류가 발생했습니다.',
+            },
+          });
+        } catch {}
+      }
+    }, 0);
+
+    return res.json({ ok: true, job });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
 // ✅ PWA Push: VAPID public key
 app.get("/api/push/public-key", authRequired, (req, res) => {
   return res.json({ ok: true, publicKey: VAPID.publicKey });
@@ -614,6 +818,7 @@ app.post("/api/jobs/start", authRequired, async (req, res) => {
     const url = String(req.body?.url || "").trim();
     const force = String(req.body?.force || "0").trim() === "1" ? "1" : "0";
     const titleOverride = String(req.body?.titleOverride || "").trim();
+    const catalogId = String(req.body?.catalogId || "").trim();
     const imagesOverrideRaw = req.body?.imagesOverride;
     const imagesOverride = Array.isArray(imagesOverrideRaw)
       ? imagesOverrideRaw.map((x) => String(x || "").trim()).filter(Boolean).slice(0, 50)
@@ -669,7 +874,7 @@ app.post("/api/jobs/start", authRequired, async (req, res) => {
       ...(imagesOverride.length > 0 ? { imagesOverride } : {}),
     };
 
-    const job = await createJob({ userId, kind, inputUrl: c.url, force });
+    const job = await createJob({ userId, kind, inputUrl: c.url, force, catalogId: catalogId || null });
 
     // Run in background
     setTimeout(async () => {

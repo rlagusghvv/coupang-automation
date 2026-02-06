@@ -44,6 +44,23 @@ function dbAll(db, sql, params = []) {
   });
 }
 
+async function tableInfo(db, table) {
+  try {
+    return await dbAll(db, `PRAGMA table_info(${table})`);
+  } catch {
+    return [];
+  }
+}
+
+async function ensureColumn(db, table, column, colDefSql) {
+  const info = await tableInfo(db, table);
+  const exists = Array.isArray(info) && info.some((c) => String(c?.name || '') === column);
+  if (exists) return false;
+  await dbRun(db, `ALTER TABLE ${table} ADD COLUMN ${column} ${colDefSql}`);
+  return true;
+}
+
+
 export async function initDb() {
   const db = openDb();
   await dbRun(
@@ -142,6 +159,7 @@ export async function initDb() {
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL,
       kind TEXT NOT NULL,               -- preview | upload
+      catalog_id TEXT,
       status TEXT NOT NULL,             -- queued | running | success | failed
       input_url TEXT NOT NULL,
       force TEXT NOT NULL DEFAULT '0',
@@ -166,6 +184,33 @@ export async function initDb() {
       UNIQUE(user_id, name)
     )`,
   );
+
+  // Catalog products (B-style)
+  await dbRun(
+    db,
+    `CREATE TABLE IF NOT EXISTS catalog_products (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      source_url TEXT NOT NULL,
+      confirmed_title TEXT NOT NULL DEFAULT '',
+      main_image_url TEXT NOT NULL DEFAULT '',
+      detail_images_json TEXT NOT NULL DEFAULT '[]',
+      preset_id TEXT,
+      category_override INTEGER,
+      seller_product_id TEXT,
+      status TEXT NOT NULL DEFAULT 'draft',
+      validation_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      deployed_at TEXT,
+      UNIQUE(user_id, source_url)
+    )`,
+  );
+  // Migrations
+  try {
+    await ensureColumn(db, 'jobs', 'catalog_id', 'TEXT');
+  } catch {}
+
 
   db.close();
 }
@@ -425,7 +470,7 @@ export async function deleteApnsToken({ userId, deviceToken }) {
   db.close();
 }
 
-export async function createJob({ userId, kind, inputUrl, force = '0' }) {
+export async function createJob({ userId, kind, inputUrl, force = '0', catalogId = null }) {
   if (!userId) throw new Error('userId required');
   if (!kind) throw new Error('kind required');
   if (!inputUrl) throw new Error('inputUrl required');
@@ -434,12 +479,12 @@ export async function createJob({ userId, kind, inputUrl, force = '0' }) {
   const nowIso = new Date().toISOString();
   await dbRun(
     db,
-    `INSERT INTO jobs (id, user_id, kind, status, input_url, force, result_json, created_at, updated_at)
-     VALUES (?, ?, ?, 'queued', ?, ?, '{}', ?, ?)`,
-    [id, userId, String(kind), String(inputUrl), String(force), nowIso, nowIso],
+    `INSERT INTO jobs (id, user_id, kind, status, input_url, force, catalog_id, result_json, created_at, updated_at)
+     VALUES (?, ?, ?, 'queued', ?, ?, ?, '{}', ?, ?)`,
+    [id, userId, String(kind), String(inputUrl), String(force), catalogId ? String(catalogId) : null, nowIso, nowIso],
   );
   db.close();
-  return { id, status: 'queued', kind, inputUrl, force };
+  return { id, status: 'queued', kind, inputUrl, force, catalogId: catalogId ? String(catalogId) : null };
 }
 
 export async function updateJob({ id, patch = {} }) {
@@ -568,4 +613,189 @@ export async function listPreviewHistory(userId, limit = 50) {
       options,
     };
   });
+}
+
+// ---- Catalog Products (B-style) ----
+function normalizeImages(arr, limit = 50) {
+  const list = Array.isArray(arr) ? arr : [];
+  const out = [];
+  const seen = new Set();
+  for (const x of list) {
+    const s = String(x || '').trim();
+    if (!s) continue;
+    if (seen.has(s)) continue;
+    seen.add(s);
+    out.push(s);
+    if (out.length >= limit) break;
+  }
+  return out;
+}
+
+export async function upsertCatalogProduct({
+  userId,
+  sourceUrl,
+  confirmedTitle = '',
+  mainImageUrl = '',
+  detailImages = [],
+  presetId = null,
+  categoryOverride = null,
+  status = 'draft',
+}) {
+  if (!userId) throw new Error('userId required');
+  const url = String(sourceUrl || '').trim();
+  if (!url) throw new Error('sourceUrl required');
+
+  const nowIso = new Date().toISOString();
+  const id = crypto.randomUUID();
+  const images = normalizeImages(detailImages, 80);
+
+  const db = openDb();
+  await dbRun(
+    db,
+    `INSERT INTO catalog_products (
+      id, user_id, source_url, confirmed_title, main_image_url, detail_images_json, preset_id, category_override, status, validation_json, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(user_id, source_url) DO UPDATE SET
+      confirmed_title = excluded.confirmed_title,
+      main_image_url = excluded.main_image_url,
+      detail_images_json = excluded.detail_images_json,
+      preset_id = excluded.preset_id,
+      category_override = excluded.category_override,
+      status = excluded.status,
+      updated_at = excluded.updated_at`,
+    [
+      id,
+      userId,
+      url,
+      String(confirmedTitle || ''),
+      String(mainImageUrl || ''),
+      JSON.stringify(images),
+      presetId ? String(presetId) : null,
+      categoryOverride == null || categoryOverride === '' ? null : Number(categoryOverride),
+      String(status || 'draft'),
+      '{}',
+      nowIso,
+      nowIso,
+    ],
+  );
+
+  const row = await dbGet(
+    db,
+    'SELECT id FROM catalog_products WHERE user_id = ? AND source_url = ?',
+    [userId, url],
+  );
+  db.close();
+  return row ? await getCatalogProductById(userId, row.id) : null;
+}
+
+export async function getCatalogProductById(userId, id) {
+  if (!userId) throw new Error('userId required');
+  const db = openDb();
+  const row = await dbGet(
+    db,
+    `SELECT id, user_id, source_url, confirmed_title, main_image_url, detail_images_json, preset_id, category_override, seller_product_id, status, validation_json, created_at, updated_at, deployed_at
+     FROM catalog_products
+     WHERE user_id = ? AND id = ?`,
+    [userId, String(id)],
+  );
+  db.close();
+  if (!row) return null;
+  let detailImages = [];
+  let validation = {};
+  try { detailImages = JSON.parse(row.detail_images_json || '[]'); } catch {}
+  try { validation = JSON.parse(row.validation_json || '{}'); } catch {}
+  return {
+    id: row.id,
+    sourceUrl: row.source_url,
+    confirmedTitle: row.confirmed_title,
+    mainImageUrl: row.main_image_url,
+    detailImages,
+    presetId: row.preset_id,
+    categoryOverride: row.category_override,
+    sellerProductId: row.seller_product_id,
+    status: row.status,
+    validation,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    deployedAt: row.deployed_at,
+  };
+}
+
+export async function listCatalogProducts(userId, { limit = 50, status = "" } = {}) {
+  if (!userId) throw new Error('userId required');
+  const lim = Math.max(1, Math.min(200, Number(limit) || 50));
+  const st = String(status || '').trim();
+  const db = openDb();
+  const rows = await dbAll(
+    db,
+    `SELECT id, source_url, confirmed_title, main_image_url, preset_id, category_override, seller_product_id, status, updated_at, deployed_at
+     FROM catalog_products
+     WHERE user_id = ?
+       AND (? = "" OR status = ?)
+     ORDER BY updated_at DESC
+     LIMIT ?`,
+    [userId, st, st, lim],
+  );
+  db.close();
+  return rows.map((r) => ({
+    id: r.id,
+    sourceUrl: r.source_url,
+    confirmedTitle: r.confirmed_title,
+    mainImageUrl: r.main_image_url,
+    presetId: r.preset_id,
+    categoryOverride: r.category_override,
+    sellerProductId: r.seller_product_id,
+    status: r.status,
+    updatedAt: r.updated_at,
+    deployedAt: r.deployed_at,
+  }));
+}
+
+export async function updateCatalogProduct(userId, id, patch = {}) {
+  if (!userId) throw new Error('userId required');
+  if (!id) throw new Error('id required');
+  const nowIso = new Date().toISOString();
+  const fields = [];
+  const params = [];
+
+  const allowed = {
+    sourceUrl: 'source_url',
+    confirmedTitle: 'confirmed_title',
+    mainImageUrl: 'main_image_url',
+    presetId: 'preset_id',
+    categoryOverride: 'category_override',
+    sellerProductId: 'seller_product_id',
+    status: 'status',
+    deployedAt: 'deployed_at',
+    validation: 'validation_json',
+    detailImages: 'detail_images_json',
+  };
+
+  for (const [k, col] of Object.entries(allowed)) {
+    if (patch[k] === undefined) continue;
+    fields.push(`${col} = ?`);
+    if (k === "detailImages") params.push(JSON.stringify(normalizeImages(patch[k], 80)));
+    else if (k === "validation") params.push(JSON.stringify(patch[k] ?? {}));
+    else if (k === "categoryOverride") params.push(patch[k] == null || patch[k] === "" ? null : Number(patch[k]));
+    else if (k === "presetId") params.push(patch[k] ? String(patch[k]) : null);
+    else params.push(patch[k] ?? null);
+  }
+
+  fields.push('updated_at = ?');
+  params.push(nowIso);
+  params.push(userId);
+  params.push(String(id));
+
+  const db = openDb();
+  await dbRun(db, `UPDATE catalog_products SET ${fields.join(", ")} WHERE user_id = ? AND id = ?`, params);
+  db.close();
+  return await getCatalogProductById(userId, id);
+}
+
+export async function deleteCatalogProduct(userId, id) {
+  if (!userId) throw new Error('userId required');
+  if (!id) throw new Error('id required');
+  const db = openDb();
+  await dbRun(db, 'DELETE FROM catalog_products WHERE user_id = ? AND id = ?', [userId, String(id)]);
+  db.close();
 }

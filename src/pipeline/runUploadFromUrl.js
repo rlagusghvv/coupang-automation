@@ -299,42 +299,26 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
     }
   }
 
-  if (payloadOnly || !useCoupangImageUpload || imageUrl === draft.imageUrl) {
+  const needFallbackHosting =
+    (
+      !useCoupangImageUpload ||
+      imageUrl === draft.imageUrl ||
+      (contentImages.length > 0 && !contentHtml)
+    );
 
-    // 2) Content images (optional)
-    const uploadedContentUrls = [];
-    for (const u of contentImages) {
-      try {
-        const dl = await downloadImageBufferWithPlaywright({
-          pageUrl: draft.sourceUrl,
-          imageUrl: u,
-        });
-        if (!dl?.ok) continue;
-
-        const up = await uploadMarketplaceImage({
-          vendorId,
-          buffer: dl.buffer,
-          fileName: `content${dl.ext || ".jpg"}`,
-          mimeType: dl.mimeType || "image/jpeg",
-          accessKey,
-          secretKey,
-        });
-        const src = up?.cdnPath || up?.vendorPath;
-        if (src) uploadedContentUrls.push(src);
-      } catch {
-        // ignore single image failure
-      }
-    }
-
-    // Build clean HTML with only Coupang-hosted images
-    if (uploadedContentUrls.length > 0) {
-      contentHtml = buildImageOnlyHtmlFromUrls(uploadedContentUrls);
-    }
-  } else {
+  if (needFallbackHosting) {
     // Fallback: download images and expose via local/public base URL
     const localImageBase = resolveLocalImageBase(settings);
     const outDir = path.join(process.cwd(), "out");
-    const downloadList = Array.from(new Set([draft.imageUrl, ...contentImages])).filter(Boolean);
+
+    // If main image is already uploaded to Coupang, we only need content images.
+    const downloadList = Array.from(
+      new Set(
+        imageUrl === draft.imageUrl
+          ? [draft.imageUrl, ...contentImages]
+          : [...contentImages],
+      ),
+    ).filter(Boolean);
 
     const { DOMEGGOOK_STORAGE_STATE_PATH } = await import("../config/paths.js");
     const storageStatePath = DOMEGGOOK_STORAGE_STATE_PATH;
@@ -370,22 +354,25 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
       await new Promise((r) => setTimeout(r, 3000));
     }
 
-    const mappedMain = downloaded.urlMap[draft.imageUrl];
-    if (!mappedMain) {
-      return { ok: false, skipped: false, error: "main image download failed" };
-    }
+    // Update main image only if we haven't already uploaded it to Coupang.
+    if (imageUrl === draft.imageUrl) {
+      const mappedMain = downloaded.urlMap[draft.imageUrl];
+      if (!mappedMain) {
+        return { ok: false, skipped: false, error: "main image download failed" };
+      }
 
-    const imageReachable = await isUrlReachable(mappedMain, IMAGE_CHECK_TIMEOUT_MS);
-    if (!imageReachable) {
-      return {
-        ok: false,
-        skipped: false,
-        error: "image_host_unreachable",
-        imageUrl: mappedMain,
-      };
-    }
+      const imageReachable = await isUrlReachable(mappedMain, IMAGE_CHECK_TIMEOUT_MS);
+      if (!imageReachable) {
+        return {
+          ok: false,
+          skipped: false,
+          error: "image_host_unreachable",
+          imageUrl: mappedMain,
+        };
+      }
 
-    imageUrl = mappedMain;
+      imageUrl = mappedMain;
+    }
 
     const contentLocalUrls = contentImages.map((u) => downloaded.urlMap[u]).filter(Boolean);
     contentHtml = contentLocalUrls.length > 0 ? buildImageOnlyHtmlFromUrls(contentLocalUrls) : "";
