@@ -4,6 +4,7 @@ import 'package:couplus_mobile/api/api_client.dart';
 import 'package:couplus_mobile/screens/image_edit_screen.dart';
 import 'package:couplus_mobile/screens/image_viewer_screen.dart';
 import 'package:couplus_mobile/ui/widgets.dart';
+import 'package:couplus_mobile/ui/app_button.dart';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -87,7 +88,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
       final cat = int.tryParse(_category.text.trim());
 
       final json =
-          await widget.api.putJson('/api/catalog/${widget.productId}', {
+          await widget.api.postJson('/api/catalog/${widget.productId}', {
         'confirmedTitle': _title.text.trim(),
         'presetId':
             (_presetId ?? '').trim().isEmpty ? null : (_presetId ?? '').trim(),
@@ -117,7 +118,8 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
       MaterialPageRoute(
         builder: (_) => ImageEditScreen(
           title: '상세 이미지 편집',
-          initialUrls: _detailImages,
+          initial: _detailImages,
+          all: _detailImages,
         ),
       ),
     );
@@ -288,7 +290,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                                 MaterialPageRoute(
                                   builder: (_) => ImageViewerScreen(
                                     title: '상세 이미지',
-                                    urls: _detailImages,
+                                    images: _detailImages,
                                   ),
                                 ),
                               );

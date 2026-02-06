@@ -649,9 +649,9 @@ class _WorkScreenState extends State<WorkScreen> {
         }
 
         // 2) Deploy via catalog (creates an upload job linked to catalogId)
-        if (product != null && (product!['id'] ?? '').toString().isNotEmpty) {
-          final deploy = await widget.api
-              .postJson('/api/catalog/${product!['id']}/deploy', {});
+        final pid = (product?['id'] ?? '').toString();
+        if (pid.isNotEmpty) {
+          final deploy = await widget.api.postJson('/api/catalog/$pid/deploy', {});
           final job = (deploy['job'] as Map?)?.cast<String, dynamic>();
           setState(() {
             _activeJob = job;
@@ -875,8 +875,9 @@ class _WorkScreenState extends State<WorkScreen> {
           } else {
             item.status = _QueueStatus.failed;
             item.error = _humanizeUploadError(item.uploadResult);
-            if ((item.error ?? '').isEmpty)
+            if ((item.error ?? '').isEmpty) {
               item.error = (done?['errorMessage'] ?? '업로드 실패').toString();
+            }
           }
         } catch (e) {
           item.status = _QueueStatus.failed;
@@ -1445,19 +1446,32 @@ class _WorkScreenState extends State<WorkScreen> {
                       final it = _queue[i];
                       final st = it.status;
                       String statusText = '대기';
-                      if (st == _QueueStatus.confirmed) statusText = '확인됨';
-                      if (st == _QueueStatus.uploading) statusText = '업로드중';
-                      if (st == _QueueStatus.success) statusText = '완료';
-                      if (st == _QueueStatus.failed) statusText = '실패';
-                      if (st == _QueueStatus.skipped) statusText = '스킵';
+                      if (st == _QueueStatus.confirmed) {
+                        statusText = '확인됨';
+                      }
+                      if (st == _QueueStatus.uploading) {
+                        statusText = '업로드중';
+                      }
+                      if (st == _QueueStatus.success) {
+                        statusText = '완료';
+                      }
+                      if (st == _QueueStatus.failed) {
+                        statusText = '실패';
+                      }
+                      if (st == _QueueStatus.skipped) {
+                        statusText = '스킵';
+                      }
 
                       Color color = Theme.of(context).colorScheme.outline;
-                      if (st == _QueueStatus.success)
+                      if (st == _QueueStatus.success) {
                         color = const Color(0xFF2F9E44);
-                      if (st == _QueueStatus.failed)
+                      }
+                      if (st == _QueueStatus.failed) {
                         color = const Color(0xFFE03131);
-                      if (st == _QueueStatus.uploading)
+                      }
+                      if (st == _QueueStatus.uploading) {
                         color = const Color(0xFF1971C2);
+                      }
 
                       return Row(
                         crossAxisAlignment: CrossAxisAlignment.start,
