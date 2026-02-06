@@ -1,0 +1,9 @@
+{
+  "ok": true,
+  "draft": {
+    "title": "[MOCK] 테스트 상품"
+  },
+  "create": {
+    "sellerProductId": "9999999999"
+  }
+}

@@ -3,7 +3,7 @@ import "dotenv/config";
 import express from "express";
 import fs from "node:fs";
 import path from "node:path";
-import { runUploadFromUrl } from "./src/pipeline/runUploadFromUrl.js";
+import { runUploadFromUrl } from "./src/server/externalAdapters.js";
 import { previewUploadFromUrl } from "./src/pipeline/previewUploadFromUrl.js";
 import { classifyUrl } from "./src/utils/urlFilter.js";
 import {
@@ -52,7 +52,7 @@ import {
   DOMEME_STORAGE_STATE_PATH,
   DOMEGGOOK_STORAGE_STATE_PATH,
 } from "./src/config/paths.js";
-import { getSellerProduct } from "./src/coupang/api/getSellerProduct.js";
+import { getSellerProduct } from "./src/server/externalAdapters.js";
 import { runtimeState } from "./src/server/runtime_state.js";
 
 const app = express();

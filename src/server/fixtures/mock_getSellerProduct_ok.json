@@ -1,0 +1,10 @@
+{
+  "data": {
+    "displayCategoryCode": 12345,
+    "items": [
+      {
+        "content": "<div>상세 내용이 정상적으로 들어간 모의 HTML 입니다. 길이가 충분합니다.</div>"
+      }
+    ]
+  }
+}
