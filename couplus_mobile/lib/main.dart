@@ -3,6 +3,7 @@ import 'package:couplus_mobile/screens/home_screen.dart';
 import 'package:couplus_mobile/screens/more_screen.dart';
 import 'package:couplus_mobile/screens/work_screen.dart';
 import 'package:couplus_mobile/screens/my_products_screen.dart';
+import 'package:couplus_mobile/screens/orders_screen.dart';
 import 'package:couplus_mobile/services/push_token_service.dart';
 import 'package:couplus_mobile/ui/app_theme.dart';
 import 'package:flutter/material.dart';
@@ -52,6 +53,7 @@ class _RootTabsState extends State<RootTabs> {
       HomeScreen(api: _api),
       WorkScreen(api: _api),
       MyProductsScreen(api: _api),
+      OrdersScreen(api: _api),
       MoreScreen(api: _api),
     ];
 
@@ -84,6 +86,11 @@ class _RootTabsState extends State<RootTabs> {
                 icon: Icon(Icons.inventory_2_outlined),
                 selectedIcon: Icon(Icons.inventory_2),
                 label: '내 상품',
+              ),
+              NavigationDestination(
+                icon: Icon(Icons.receipt_long_outlined),
+                selectedIcon: Icon(Icons.receipt_long),
+                label: '주문',
               ),
               NavigationDestination(
                 icon: Icon(Icons.more_horiz),
