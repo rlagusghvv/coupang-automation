@@ -753,10 +753,14 @@ export async function getCatalogProductById(userId, id) {
   };
 }
 
-export async function listCatalogProducts(userId, { limit = 50, status = "" } = {}) {
+export async function listCatalogProducts(userId, { limit = 50, status = "", q = "" } = {}) {
   if (!userId) throw new Error('userId required');
   const lim = Math.max(1, Math.min(200, Number(limit) || 50));
   const st = String(status || '').trim();
+  const query = String(q || '').trim();
+
+  const like = query ? `%${query.replaceAll('%', '').replaceAll('_', '')}%` : '';
+
   const db = openDb();
   const rows = await dbAll(
     db,
@@ -764,9 +768,10 @@ export async function listCatalogProducts(userId, { limit = 50, status = "" } = 
      FROM catalog_products
      WHERE user_id = ?
        AND (? = "" OR status = ?)
+       AND (? = "" OR confirmed_title LIKE ? OR source_url LIKE ?)
      ORDER BY updated_at DESC
      LIMIT ?`,
-    [userId, st, st, lim],
+    [userId, st, st, query, like, like, lim],
   );
   db.close();
   return rows.map((r) => ({

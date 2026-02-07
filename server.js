@@ -571,7 +571,8 @@ app.get('/api/catalog', authRequired, async (req, res) => {
   try {
     const limit = Math.max(1, Math.min(200, Number(req.query.limit || 50) || 50));
     const status = String(req.query.status || '').trim();
-    const products = await listCatalogProducts(req.user.id, { limit, status });
+    const q = String(req.query.q || '').trim();
+    const products = await listCatalogProducts(req.user.id, { limit, status, q });
     return res.json({ ok: true, products });
   } catch (e) {
     return res.status(500).json({ ok: false, error: String(e?.message || e) });

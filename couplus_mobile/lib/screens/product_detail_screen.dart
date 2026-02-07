@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:couplus_mobile/api/api_client.dart';
+import 'package:couplus_mobile/screens/catalog_events_screen.dart';
 import 'package:couplus_mobile/screens/image_edit_screen.dart';
 import 'package:couplus_mobile/screens/image_viewer_screen.dart';
 import 'package:couplus_mobile/ui/widgets.dart';
@@ -188,7 +189,25 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const SectionHeader('메타'),
+                SectionHeader(
+                  '메타',
+                  trailing: TextButton(
+                    onPressed: _loading
+                        ? null
+                        : () {
+                            Navigator.of(context).push(
+                              MaterialPageRoute(
+                                builder: (_) => CatalogEventsScreen(
+                                  api: widget.api,
+                                  catalogId: widget.productId,
+                                  title: '이벤트',
+                                ),
+                              ),
+                            );
+                          },
+                    child: const Text('이벤트'),
+                  ),
+                ),
                 const SizedBox(height: 10),
                 KvRow(k: '상태', v: status.isEmpty ? '-' : status),
                 CopyableSingleLineRow(k: 'ID', value: widget.productId),
