@@ -41,7 +41,7 @@ import {
   upsertPreset,
   deletePreset,
 } from "./src/server/presets_sqlite.js";
-import { addOrder, clearOrders, listOrders, refreshShippingStatusesMock } from "./src/server/orders_sqlite.js";
+import { addOrder, clearOrders, listOrders, refreshShippingStatusesFromCoupang } from "./src/server/orders_sqlite.js";
 import { exportOrdersToDomeme } from "./src/pipeline/exportOrdersToDomeme.js";
 import { uploadDomemeExcel } from "./src/pipeline/uploadDomemeExcel.js";
 import { exportPaidOrdersToVendors } from "./src/pipeline/exportPaidOrdersToVendor.js";
@@ -1107,8 +1107,17 @@ app.get("/api/orders", authRequired, async (req, res) => {
 // Shipping status refresh (MVP stub)
 app.post('/api/orders/shipping/refresh', authRequired, async (req, res) => {
   try {
-    const result = await refreshShippingStatusesMock(req.user.id);
-    return res.json({ ok: true, result });
+    const dateFrom = String(req.body?.dateFrom || '').trim();
+    const dateTo = String(req.body?.dateTo || '').trim();
+    const status = String(req.body?.status || 'ACCEPT').trim();
+    const result = await refreshShippingStatusesFromCoupang({
+      userId: req.user.id,
+      settings: req.user.settings || {},
+      dateFrom,
+      dateTo,
+      status,
+    });
+    return res.status(result?.ok ? 200 : 400).json({ ok: Boolean(result?.ok), result });
   } catch (e) {
     return res.status(500).json({ ok: false, error: String(e?.message || e) });
   }

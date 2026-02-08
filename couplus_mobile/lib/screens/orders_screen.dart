@@ -114,14 +114,18 @@ class _OrdersScreenState extends State<OrdersScreen> {
     });
 
     try {
-      final json = await widget.api.postJson('/api/orders/shipping/refresh', {});
+      final json = await widget.api.postJson('/api/orders/shipping/refresh', {
+        'dateFrom': _dateFrom.text.trim(),
+        'dateTo': _dateTo.text.trim(),
+        'status': 'ACCEPT',
+      });
       final result = (json['result'] as Map?)?.cast<String, dynamic>() ?? {};
       setState(() => _lastShippingRefresh = result);
       await _refresh();
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('배송상태 갱신 실행 완료')),
+          const SnackBar(content: Text('쿠팡에서 최신 주문/배송상태를 다시 가져왔어요.')),
         );
       }
     } catch (e) {
@@ -211,7 +215,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
                     Expanded(
                       child: FilledButton.tonal(
                         onPressed: _loading ? null : _refreshShipping,
-                        child: const Text('배송상태 갱신(임시)'),
+                        child: const Text('쿠팡 최신 상태 다시 가져오기'),
                       ),
                     ),
                   ],
@@ -239,7 +243,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
           if (_orders.isEmpty && !_loading)
             AppCard(
               child: Text(
-                '아직 저장된 주문이 없어요. (현재는 엑셀 생성/다운로드 기능이 메인입니다.)',
+                '아직 주문이 없어요.\n\n1) 위에서 “쿠팡 최신 상태 다시 가져오기”를 눌러 주세요.\n2) 그 다음 “엑셀 생성”을 누르면 됩니다.',
                 style: TextStyle(
                   color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.7),
                 ),
