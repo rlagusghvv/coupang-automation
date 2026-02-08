@@ -1139,6 +1139,11 @@ app.post('/api/orders/shipping/refresh', authRequired, async (req, res) => {
           details: result,
         });
       }
+      // If API call succeeded but no orders, treat as ok (not an error)
+      if (result?.ok === true && result?.inserted === 0) {
+        return res.json({ ok: true, result });
+      }
+
       return res.status(400).json({
         ok: false,
         error: '쿠팡에서 주문을 가져오지 못했어요. 잠시 후 다시 시도해 주세요.',

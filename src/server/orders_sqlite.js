@@ -113,7 +113,10 @@ async function fetchOrderSheetsAll({ vendorId, accessKey, secretKey, createdAtFr
     } catch {
       return { ok: false, error: "invalid_json", body: res.body };
     }
-    if (!body || body.code !== "SUCCESS") {
+    // Coupang API sometimes returns code as string ("SUCCESS") or number (200)
+    const c = body?.code;
+    const isOk = c === "SUCCESS" || c === 200 || c === "200";
+    if (!body || !isOk) {
       return { ok: false, error: "api_failed", body };
     }
     const data = body.data || [];
