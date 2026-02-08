@@ -1111,6 +1111,8 @@ app.post('/api/orders/shipping/refresh', authRequired, async (req, res) => {
     const dateTo = String(req.body?.dateTo || '').trim();
     const status = String(req.body?.status || 'ACCEPT').trim();
 
+    log(`[orders.refresh] user=${req.user.id} dateFrom=${dateFrom} dateTo=${dateTo} status=${status}`);
+
     const result = await refreshShippingStatusesFromCoupang({
       userId: req.user.id,
       settings: req.user.settings || {},
@@ -1118,6 +1120,8 @@ app.post('/api/orders/shipping/refresh', authRequired, async (req, res) => {
       dateTo,
       status,
     });
+
+    log(`[orders.refresh] user=${req.user.id} ok=${Boolean(result?.ok)} result=${JSON.stringify(result).slice(0, 2000)}`);
 
     if (!result?.ok) {
       // Friendly errors for the app
@@ -1144,6 +1148,7 @@ app.post('/api/orders/shipping/refresh', authRequired, async (req, res) => {
 
     return res.json({ ok: true, result });
   } catch (e) {
+    log(`[orders.refresh] user=${req.user.id} exception=${String(e?.message || e)}`);
     return res.status(500).json({ ok: false, error: String(e?.message || e) });
   }
 });
