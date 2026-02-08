@@ -10,6 +10,36 @@ function ensureDir() {
   if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 }
 
+let _schemaReady = false;
+
+async function ensureOrdersSchema(db) {
+  if (_schemaReady) return;
+
+  // ensure columns
+  const cols = await dbAll(db, "PRAGMA table_info(orders)");
+  const names = new Set(cols.map((c) => String(c.name)));
+
+  // Add columns for dedupe/upsert
+  if (!names.has('external_id')) {
+    await dbRun(db, "ALTER TABLE orders ADD COLUMN external_id TEXT");
+  }
+  if (!names.has('external_sub_id')) {
+    await dbRun(db, "ALTER TABLE orders ADD COLUMN external_sub_id TEXT");
+  }
+  if (!names.has('updated_at')) {
+    await dbRun(db, "ALTER TABLE orders ADD COLUMN updated_at TEXT");
+  }
+
+  // Unique index for dedupe
+  await dbRun(
+    db,
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_unique ON orders(user_id, source, external_id, external_sub_id)",
+  );
+  await dbRun(db, "CREATE INDEX IF NOT EXISTS idx_orders_created_at ON orders(user_id, created_at)");
+
+  _schemaReady = true;
+}
+
 function openDb() {
   ensureDir();
   return new sqlite3.Database(DB_PATH);
@@ -33,59 +63,86 @@ function dbAll(db, sql, params = []) {
   });
 }
 
-export async function addOrder({ userId, source, status = "paid", order }) {
+export async function addOrder({ userId, source, status = "paid", order, externalId = null, externalSubId = null }) {
   if (!userId) throw new Error("userId required");
   if (!source) throw new Error("source required");
+
+  const now = new Date().toISOString();
   const db = openDb();
-  await dbRun(
-    db,
-    `INSERT INTO orders (user_id, source, status, order_json, created_at)
-     VALUES (?, ?, ?, ?, ?)`,
-    [
-      userId,
-      String(source),
-      String(status || "paid"),
-      JSON.stringify(order || {}),
-      new Date().toISOString(),
-    ],
-  );
-  db.close();
+  try {
+    await ensureOrdersSchema(db);
+
+    const eid = externalId == null ? null : String(externalId);
+    const esid = externalSubId == null ? '' : String(externalSubId);
+
+    await dbRun(
+      db,
+      `INSERT INTO orders (user_id, source, status, external_id, external_sub_id, order_json, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(user_id, source, external_id, external_sub_id) DO UPDATE SET
+         status = excluded.status,
+         order_json = excluded.order_json,
+         updated_at = excluded.updated_at`,
+      [
+        userId,
+        String(source),
+        String(status || "paid"),
+        eid,
+        esid,
+        JSON.stringify(order || {}),
+        now,
+        now,
+      ],
+    );
+  } finally {
+    db.close();
+  }
 }
 
 export async function clearOrders(userId) {
   if (!userId) throw new Error("userId required");
   const db = openDb();
-  await dbRun(db, `DELETE FROM orders WHERE user_id = ?`, [userId]);
-  db.close();
+  try {
+    await ensureOrdersSchema(db);
+    await dbRun(db, `DELETE FROM orders WHERE user_id = ?`, [userId]);
+  } finally {
+    db.close();
+  }
 }
 
 export async function listOrders(userId, limit = 50) {
   if (!userId) throw new Error("userId required");
   const lim = Math.max(1, Math.min(200, Number(limit) || 50));
   const db = openDb();
-  const rows = await dbAll(
-    db,
-    `SELECT id, source, status, order_json, created_at
-     FROM orders
-     WHERE user_id = ?
-     ORDER BY id DESC
-     LIMIT ?`,
-    [userId, lim],
-  );
-  db.close();
-  return rows.map((r) => {
-    let order = {};
-    try {
-      order = JSON.parse(r.order_json || "{}");
-    } catch {}
-    return {
-      id: r.id,
-      at: r.created_at,
-      source: r.source,
-      status: r.status,
-      order,
-    };
-  });
+  try {
+    await ensureOrdersSchema(db);
+    const rows = await dbAll(
+      db,
+      `SELECT id, source, status, order_json, created_at, external_id, external_sub_id
+       FROM orders
+       WHERE user_id = ?
+       ORDER BY id DESC
+       LIMIT ?`,
+      [userId, lim],
+    );
+    return rows.map((r) => {
+      let order = {};
+      try {
+        order = JSON.parse(r.order_json || "{}");
+      } catch {}
+      return {
+        id: r.id,
+        at: r.created_at,
+        source: r.source,
+        status: r.status,
+        externalId: r.external_id,
+        externalSubId: r.external_sub_id,
+        order,
+      };
+    });
+  } finally {
+    db.close();
+  }
 }
 
 async function fetchOrderSheetsAll({ vendorId, accessKey, secretKey, createdAtFrom, createdAtTo, status }) {
@@ -131,6 +188,45 @@ function formatDateKST(dateStr) {
   return `${dateStr}+09:00`;
 }
 
+import crypto from 'node:crypto';
+
+function stableHash(obj) {
+  try {
+    const s = JSON.stringify(obj);
+    return crypto.createHash('sha1').update(s).digest('hex');
+  } catch {
+    return crypto.randomUUID();
+  }
+}
+
+function pickFirst(obj, keys) {
+  for (const k of keys) {
+    const v = obj?.[k];
+    if (v != null && String(v).trim() !== '') return v;
+  }
+  return null;
+}
+
+function buildCoupangExternalIds(sheet, item, i) {
+  const externalId = pickFirst(sheet, [
+    'orderId',
+    'orderSheetId',
+    'orderSheetNo',
+    'shipmentBoxId',
+    'shipmentBoxNo',
+    'deliveryId',
+  ]) || stableHash(sheet);
+
+  const externalSubId = pickFirst(item, [
+    'orderItemId',
+    'orderItemNo',
+    'vendorItemId',
+    'sellerProductItemId',
+  ]) || String(i);
+
+  return { externalId: String(externalId), externalSubId: String(externalSubId) };
+}
+
 export async function refreshShippingStatusesFromCoupang({ userId, settings = {}, dateFrom, dateTo, status = "ACCEPT" }) {
   if (!userId) throw new Error('userId required');
   const accessKey = String(settings.coupangAccessKey || "").trim();
@@ -154,25 +250,36 @@ export async function refreshShippingStatusesFromCoupang({ userId, settings = {}
   const r = await fetchOrderSheetsAll({ vendorId, accessKey, secretKey, createdAtFrom, createdAtTo, status });
   if (!r.ok) return r;
 
-  // MVP: store latest snapshot into our orders table (replace user's existing orders)
-  await clearOrders(userId);
-
-  let inserted = 0;
+  // Accumulate + dedupe via unique keys (do NOT clear existing orders)
+  let processed = 0;
   for (const sheet of r.data) {
     const orderItems = Array.isArray(sheet?.orderItems) ? sheet.orderItems : [];
     if (orderItems.length === 0) {
-      await addOrder({ userId, source: 'coupang', status: String(status || 'ACCEPT'), order: sheet });
-      inserted += 1;
+      const ids = buildCoupangExternalIds(sheet, {}, 0);
+      await addOrder({
+        userId,
+        source: 'coupang',
+        status: String(status || 'ACCEPT'),
+        order: { sheet },
+        externalId: ids.externalId,
+        externalSubId: ids.externalSubId,
+      });
+      processed += 1;
       continue;
     }
+    let idx = 0;
     for (const item of orderItems) {
+      const ids = buildCoupangExternalIds(sheet, item, idx);
       await addOrder({
         userId,
         source: 'coupang',
         status: String(status || 'ACCEPT'),
         order: { sheet, item },
+        externalId: ids.externalId,
+        externalSubId: ids.externalSubId,
       });
-      inserted += 1;
+      processed += 1;
+      idx += 1;
     }
   }
 
@@ -183,7 +290,7 @@ export async function refreshShippingStatusesFromCoupang({ userId, settings = {}
     dateTo,
     status,
     scannedSheets: r.data.length,
-    inserted,
+    processed,
     at: new Date().toISOString(),
   };
 }
