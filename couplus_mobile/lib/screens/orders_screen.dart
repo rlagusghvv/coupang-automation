@@ -21,6 +21,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
   final _dateTo = TextEditingController();
 
   Map<String, dynamic>? _lastExport;
+  Map<String, dynamic>? _lastShippingRefresh;
 
   @override
   void initState() {
@@ -105,6 +106,31 @@ class _OrdersScreenState extends State<OrdersScreen> {
     }
   }
 
+  Future<void> _refreshShipping() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+      _lastShippingRefresh = null;
+    });
+
+    try {
+      final json = await widget.api.postJson('/api/orders/shipping/refresh', {});
+      final result = (json['result'] as Map?)?.cast<String, dynamic>() ?? {};
+      setState(() => _lastShippingRefresh = result);
+      await _refresh();
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('배송상태 갱신 실행 완료')),
+        );
+      }
+    } catch (e) {
+      setState(() => _error = e.toString());
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final last = _lastExport;
@@ -177,6 +203,24 @@ class _OrdersScreenState extends State<OrdersScreen> {
                   KvRow(k: 'ok', v: lastOk == true ? 'true' : 'false'),
                   KvRow(k: 'rowCount', v: (last['rowCount'] ?? '-').toString()),
                   KvRow(k: 'missingMapCount', v: (last['missingMapCount'] ?? '-').toString()),
+                ],
+
+                const SizedBox(height: 10),
+                Row(
+                  children: [
+                    Expanded(
+                      child: FilledButton.tonal(
+                        onPressed: _loading ? null : _refreshShipping,
+                        child: const Text('배송상태 갱신(임시)'),
+                      ),
+                    ),
+                  ],
+                ),
+                if (_lastShippingRefresh != null) ...[
+                  const SizedBox(height: 10),
+                  KvRow(k: 'shippingRefresh.mode', v: (_lastShippingRefresh?['mode'] ?? '-').toString()),
+                  KvRow(k: 'scanned', v: (_lastShippingRefresh?['scanned'] ?? '-').toString()),
+                  KvRow(k: 'updated', v: (_lastShippingRefresh?['updated'] ?? '-').toString()),
                 ],
               ],
             ),

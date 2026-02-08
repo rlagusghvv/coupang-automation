@@ -41,7 +41,7 @@ import {
   upsertPreset,
   deletePreset,
 } from "./src/server/presets_sqlite.js";
-import { addOrder, clearOrders, listOrders } from "./src/server/orders_sqlite.js";
+import { addOrder, clearOrders, listOrders, refreshShippingStatusesMock } from "./src/server/orders_sqlite.js";
 import { exportOrdersToDomeme } from "./src/pipeline/exportOrdersToDomeme.js";
 import { uploadDomemeExcel } from "./src/pipeline/uploadDomemeExcel.js";
 import { exportPaidOrdersToVendors } from "./src/pipeline/exportPaidOrdersToVendor.js";
@@ -1099,6 +1099,16 @@ app.get("/api/orders", authRequired, async (req, res) => {
     const limit = Number(req.query.limit || 50);
     const orders = await listOrders(req.user.id, limit);
     return res.json({ ok: true, orders });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+// Shipping status refresh (MVP stub)
+app.post('/api/orders/shipping/refresh', authRequired, async (req, res) => {
+  try {
+    const result = await refreshShippingStatusesMock(req.user.id);
+    return res.json({ ok: true, result });
   } catch (e) {
     return res.status(500).json({ ok: false, error: String(e?.message || e) });
   }

@@ -86,3 +86,30 @@ export async function listOrders(userId, limit = 50) {
     };
   });
 }
+
+export async function refreshShippingStatusesMock(userId) {
+  if (!userId) throw new Error('userId required');
+  const db = openDb();
+
+  const rows = await dbAll(
+    db,
+    `SELECT id, status
+     FROM orders
+     WHERE user_id = ?
+     ORDER BY id DESC
+     LIMIT 500`,
+    [userId],
+  );
+
+  let updated = 0;
+  for (const r of rows) {
+    const st = String(r.status || '');
+    if (st === 'paid' || st === 'accepted' || st === 'ready') {
+      await dbRun(db, 'UPDATE orders SET status = ? WHERE user_id = ? AND id = ?', ['shipped', userId, r.id]);
+      updated += 1;
+    }
+  }
+
+  db.close();
+  return { ok: true, mode: 'mock', scanned: rows.length, updated, at: new Date().toISOString() };
+}
