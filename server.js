@@ -1110,6 +1110,7 @@ app.post('/api/orders/shipping/refresh', authRequired, async (req, res) => {
     const dateFrom = String(req.body?.dateFrom || '').trim();
     const dateTo = String(req.body?.dateTo || '').trim();
     const status = String(req.body?.status || 'ACCEPT').trim();
+
     const result = await refreshShippingStatusesFromCoupang({
       userId: req.user.id,
       settings: req.user.settings || {},
@@ -1117,7 +1118,31 @@ app.post('/api/orders/shipping/refresh', authRequired, async (req, res) => {
       dateTo,
       status,
     });
-    return res.status(result?.ok ? 200 : 400).json({ ok: Boolean(result?.ok), result });
+
+    if (!result?.ok) {
+      // Friendly errors for the app
+      if (result?.reason === 'missing_keys') {
+        return res.status(400).json({
+          ok: false,
+          error: '쿠팡 키가 필요해요. 더보기 탭에서 쿠팡 Access Key / Secret Key / Vendor ID를 먼저 넣어주세요.',
+          details: result,
+        });
+      }
+      if (result?.reason === 'missing_dates') {
+        return res.status(400).json({
+          ok: false,
+          error: '날짜를 먼저 적어주세요. (예: 2026-02-08)',
+          details: result,
+        });
+      }
+      return res.status(400).json({
+        ok: false,
+        error: '쿠팡에서 주문을 가져오지 못했어요. 잠시 후 다시 시도해 주세요.',
+        details: result,
+      });
+    }
+
+    return res.json({ ok: true, result });
   } catch (e) {
     return res.status(500).json({ ok: false, error: String(e?.message || e) });
   }

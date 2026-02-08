@@ -33,8 +33,10 @@ class _QueueItem {
 class _WorkScreenState extends State<WorkScreen> {
   final _url = TextEditingController();
   final _batchUrls = TextEditingController();
-  final _dateFrom = TextEditingController();
-  final _dateTo = TextEditingController();
+  // 주문 관련 날짜는 주문 탭에서 사용합니다.
+  // (Work 탭은 상품 업로드 전용)
+  // final _dateFrom = TextEditingController();
+  // final _dateTo = TextEditingController();
 
   bool _loading = false;
   String? _error;
@@ -57,20 +59,17 @@ class _WorkScreenState extends State<WorkScreen> {
   Map<String, dynamic>? _preview;
   Map<String, dynamic>? _uploadResult;
 
-  Map<String, dynamic>? _ordersExportResult;
-  Map<String, dynamic>? _ordersUploadResult;
-
-  Map<String, dynamic>? _purchaseDraftResult;
-  Map<String, dynamic>? _purchaseUploadResult;
+  // 주문 관련 상태값은 주문 탭으로 이동했습니다.
+  // Map<String, dynamic>? _ordersExportResult;
+  // Map<String, dynamic>? _ordersUploadResult;
+  // Map<String, dynamic>? _purchaseDraftResult;
+  // Map<String, dynamic>? _purchaseUploadResult;
 
   @override
   void initState() {
     super.initState();
 
-    final now = DateTime.now();
-    final from = now.subtract(const Duration(days: 7));
-    _dateFrom.text = _fmtDate(from);
-    _dateTo.text = _fmtDate(now);
+    // 날짜 입력(주문 기능)은 주문 탭으로 이동했습니다.
 
     _refresh();
   }
@@ -79,16 +78,10 @@ class _WorkScreenState extends State<WorkScreen> {
   void dispose() {
     _url.dispose();
     _batchUrls.dispose();
-    _dateFrom.dispose();
-    _dateTo.dispose();
     super.dispose();
   }
 
-  String _fmtDate(DateTime d) {
-    final mm = d.month.toString().padLeft(2, '0');
-    final dd = d.day.toString().padLeft(2, '0');
-    return '${d.year}-$mm-$dd';
-  }
+  // (주문 탭으로 이동) 날짜 포맷 함수는 더 이상 Work 탭에서 사용하지 않습니다.
 
   List<String> _parseUrls(String raw) {
     final text = raw.replaceAll('\r', '\n');
@@ -895,131 +888,10 @@ class _WorkScreenState extends State<WorkScreen> {
     }
   }
 
-  Future<void> _ordersExport() async {
-    setState(() {
-      _loading = true;
-      _error = null;
-      _ordersExportResult = null;
-    });
+  // 주문 관련 기능은 주문 탭으로 이동했습니다.
+  // (Work 탭은 상품 업로드 전용)
 
-    try {
-      final json = await widget.api.postJson('/api/orders/export', {
-        'dateFrom': _dateFrom.text.trim(),
-        'dateTo': _dateTo.text.trim(),
-      });
-      setState(() {
-        _ordersExportResult = (json['result'] as Map?)?.cast<String, dynamic>();
-        _loginRequired = false;
-      });
-    } catch (e) {
-      if (e is ApiException && e.isUnauthorized) {
-        setState(() {
-          _loginRequired = true;
-          _error = null;
-        });
-      } else {
-        setState(() => _error = e.toString());
-      }
-    } finally {
-      if (mounted) setState(() => _loading = false);
-    }
-  }
-
-  Future<void> _ordersUpload() async {
-    final filePath = (_ordersExportResult?['filePath'] ?? '').toString().trim();
-    if (filePath.isEmpty) {
-      setState(() => _error = '먼저 주문 엑셀을 생성하세요.');
-      return;
-    }
-
-    setState(() {
-      _loading = true;
-      _error = null;
-      _ordersUploadResult = null;
-    });
-
-    try {
-      final json = await widget.api.postJson('/api/orders/upload', {
-        'filePath': filePath,
-      });
-      setState(() {
-        _ordersUploadResult = (json['result'] as Map?)?.cast<String, dynamic>();
-        _loginRequired = false;
-      });
-    } catch (e) {
-      if (e is ApiException && e.isUnauthorized) {
-        setState(() {
-          _loginRequired = true;
-          _error = null;
-        });
-      } else {
-        setState(() => _error = e.toString());
-      }
-    } finally {
-      if (mounted) setState(() => _loading = false);
-    }
-  }
-
-  Future<void> _purchaseDraft() async {
-    setState(() {
-      _loading = true;
-      _error = null;
-      _purchaseDraftResult = null;
-      _purchaseUploadResult = null;
-    });
-
-    try {
-      final json = await widget.api.postJson('/api/purchase/draft', {
-        'limit': 200,
-      });
-      setState(() {
-        _purchaseDraftResult = (json['draft'] as Map?)?.cast<String, dynamic>();
-        _loginRequired = false;
-      });
-      unawaited(_refresh());
-    } catch (e) {
-      if (e is ApiException && e.isUnauthorized) {
-        setState(() {
-          _loginRequired = true;
-          _error = null;
-        });
-      } else {
-        setState(() => _error = e.toString());
-      }
-    } finally {
-      if (mounted) setState(() => _loading = false);
-    }
-  }
-
-  Future<void> _purchaseUpload() async {
-    setState(() {
-      _loading = true;
-      _error = null;
-      _purchaseUploadResult = null;
-    });
-
-    try {
-      final json = await widget.api.postJson('/api/purchase/upload', {
-        'vendors': ['domeme', 'domeggook'],
-      });
-      setState(() {
-        _purchaseUploadResult = (json as Map).cast<String, dynamic>();
-        _loginRequired = false;
-      });
-      unawaited(_refresh());
-    } catch (e) {
-      if (e is ApiException && e.isUnauthorized) {
-        setState(() {
-          _loginRequired = true;
-          _error = null;
-        });
-      } else {
-        setState(() => _error = e.toString());
-      }
-    } finally {
-      if (mounted) setState(() => _loading = false);
-    }
-  }
+  // 매입/벤더 업로드 기능은 추후 "주문" 탭으로 이동할 예정입니다.
 
   Future<void> _openExternal(String url) async {
     final u = url.trim();
@@ -1037,7 +909,8 @@ class _WorkScreenState extends State<WorkScreen> {
 
     final previewHistory = (dash?['previewHistory'] as List?) ?? const [];
     final purchaseLogs = (dash?['purchaseLogs'] as List?) ?? const [];
-    final payUrls = (dash?['payUrls'] as Map?) ?? {};
+    // 주문/결제 URL은 주문 탭으로 이동했습니다.
+    // final payUrls = (dash?['payUrls'] as Map?) ?? {};
 
     final preview = _preview;
     final previewDraft = (preview?['draft'] as Map?) ?? {};
@@ -1053,7 +926,7 @@ class _WorkScreenState extends State<WorkScreen> {
     final previewOptions = (preview?['options'] as List?) ?? const [];
 
     return AppScaffold(
-      title: '작업',
+      title: '상품 업로드',
       onRefresh: _refresh,
       actions: [
         IconButton(
@@ -1518,204 +1391,12 @@ class _WorkScreenState extends State<WorkScreen> {
           ),
           const SizedBox(height: 12),
           AppCard(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const SectionHeader('주문 (쿠팡 → 도매매 엑셀)'),
-                const SizedBox(height: 10),
-                Row(
-                  children: [
-                    Expanded(
-                      child: TextField(
-                        controller: _dateFrom,
-                        enabled: isAuthed && !_loading,
-                        decoration: const InputDecoration(
-                            labelText: '시작일 (YYYY-MM-DD)'),
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: TextField(
-                        controller: _dateTo,
-                        enabled: isAuthed && !_loading,
-                        decoration: const InputDecoration(
-                            labelText: '종료일 (YYYY-MM-DD)'),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                Row(
-                  children: [
-                    Expanded(
-                      child: OutlinedButton(
-                        onPressed:
-                            (!isAuthed || _loading) ? null : _ordersExport,
-                        child: const Text('엑셀 생성'),
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: FilledButton(
-                        onPressed:
-                            (!isAuthed || _loading) ? null : _ordersUpload,
-                        child: const Text('도매매 업로드'),
-                      ),
-                    ),
-                  ],
-                ),
-                if (_ordersExportResult != null) ...[
-                  const Divider(height: 28),
-                  KvRow(
-                      k: '파일 경로',
-                      v: (_ordersExportResult?['filePath'] ?? '-').toString()),
-                  KvRow(
-                      k: '내보내기 성공',
-                      v: (_ordersExportResult?['ok'] == true) ? '예' : '아니오'),
-                ],
-                if (_ordersUploadResult != null) ...[
-                  const Divider(height: 28),
-                  KvRow(
-                      k: '업로드 성공',
-                      v: (_ordersUploadResult?['ok'] == true) ? '예' : '아니오'),
-                  if ((_ordersUploadResult?['error'] ?? '')
-                      .toString()
-                      .isNotEmpty)
-                    KvRow(
-                        k: '오류',
-                        v: (_ordersUploadResult?['error'] ?? '').toString()),
-                ],
-              ],
-            ),
-          ),
-          const SizedBox(height: 12),
-          AppCard(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const SectionHeader('매입(결제 완료 → 벤더 업로드)'),
-                const SizedBox(height: 10),
-                Row(
-                  children: [
-                    Expanded(
-                      child: OutlinedButton(
-                        onPressed:
-                            (!isAuthed || _loading) ? null : _purchaseDraft,
-                        child: const Text('초안 생성'),
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: FilledButton(
-                        onPressed:
-                            (!isAuthed || _loading) ? null : _purchaseUpload,
-                        child: const Text('벤더 업로드'),
-                      ),
-                    ),
-                  ],
-                ),
-                if (_purchaseDraftResult != null) ...[
-                  const Divider(height: 28),
-                  KvRow(
-                      k: '결제완료 주문 수',
-                      v: (_purchaseDraftResult?['paidOrderCount'] ?? '-')
-                          .toString()),
-                ],
-                if (_purchaseUploadResult != null) ...[
-                  const Divider(height: 28),
-                  Text(
-                    '업로드 결과',
-                    style: TextStyle(
-                        fontWeight: FontWeight.w900,
-                        color: Theme.of(context).colorScheme.onSurface),
-                  ),
-                  const SizedBox(height: 8),
-                  ...(((_purchaseUploadResult?['results'] as List?) ??
-                          const []))
-                      .map((it) {
-                    final row = (it as Map?) ?? {};
-                    final vendor = (row['vendor'] ?? '').toString();
-                    final ok = row['ok'] == true;
-                    final payUrl = (row['payUrl'] ?? '').toString();
-                    return Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 6),
-                      child: Row(
-                        children: [
-                          InfoChip(
-                            label: vendor.isEmpty ? '-' : vendor,
-                            color: ok
-                                ? const Color(0xFF2F9E44)
-                                : const Color(0xFFE03131),
-                          ),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: Text(
-                              ok ? '성공' : (row['error'] ?? '실패').toString(),
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                          if (payUrl.startsWith('http'))
-                            TextButton.icon(
-                              onPressed: () => _openExternal(payUrl),
-                              icon: const Icon(Icons.open_in_new, size: 18),
-                              label: const Text('결제'),
-                            ),
-                        ],
-                      ),
-                    );
-                  }),
-                ],
-              ],
-            ),
-          ),
-          const SizedBox(height: 12),
-          AppCard(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const SectionHeader('결제 URL(벤더별 최신)'),
-                const SizedBox(height: 10),
-                if (!isAuthed)
-                  Text(
-                    '로그인 후 확인할 수 있어요.',
-                    style: TextStyle(
-                        color: Theme.of(context)
-                            .colorScheme
-                            .onSurface
-                            .withValues(alpha: 0.65)),
-                  )
-                else if (payUrls.isEmpty)
-                  Text(
-                    '아직 결제 URL이 없어요.',
-                    style: TextStyle(
-                        color: Theme.of(context)
-                            .colorScheme
-                            .onSurface
-                            .withValues(alpha: 0.65)),
-                  )
-                else
-                  ...payUrls.entries.map((e) {
-                    final vendor = e.key.toString();
-                    final url = e.value.toString();
-                    return Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 6),
-                      child: Row(
-                        children: [
-                          Expanded(
-                              child: Text(vendor,
-                                  style: const TextStyle(
-                                      fontWeight: FontWeight.w800))),
-                          TextButton.icon(
-                            onPressed: () => _openExternal(url),
-                            icon: const Icon(Icons.open_in_new, size: 18),
-                            label: const Text('열기'),
-                          ),
-                        ],
-                      ),
-                    );
-                  }),
-              ],
+            child: Text(
+              '주문 관련 기능은 이제 “주문” 탭에서 할 수 있어요.\n\n아래로 내려서 상품 미리보기/업로드만 진행해 주세요.',
+              style: TextStyle(
+                color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.8),
+                fontWeight: FontWeight.w700,
+              ),
             ),
           ),
           const SizedBox(height: 12),

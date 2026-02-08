@@ -80,7 +80,7 @@ class _RootTabsState extends State<RootTabs> {
               NavigationDestination(
                 icon: Icon(Icons.work_outline),
                 selectedIcon: Icon(Icons.work),
-                label: '작업',
+                label: '상품 업로드',
               ),
               NavigationDestination(
                 icon: Icon(Icons.inventory_2_outlined),

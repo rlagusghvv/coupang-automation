@@ -243,7 +243,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
           if (_orders.isEmpty && !_loading)
             AppCard(
               child: Text(
-                '아직 주문이 없어요.\n\n1) 위에서 “쿠팡 최신 상태 다시 가져오기”를 눌러 주세요.\n2) 그 다음 “엑셀 생성”을 누르면 됩니다.',
+                '아직 주문이 없어요.\n\n1) 더보기 탭에서 쿠팡 키를 먼저 넣어 주세요.\n2) 여기로 돌아와서 “쿠팡 최신 상태 다시 가져오기”를 눌러 주세요.\n3) 마지막으로 “엑셀 생성”을 누르면 됩니다.',
                 style: TextStyle(
                   color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.7),
                 ),
@@ -258,15 +258,22 @@ class _OrdersScreenState extends State<OrdersScreen> {
                   final o = _orders[i];
                   final id = (o['id'] ?? '').toString();
                   final status = (o['status'] ?? '').toString();
-                  final title = (o['title'] ?? o['itemName'] ?? '').toString();
-                  final qty = (o['qty'] ?? o['quantity'] ?? '').toString();
+
+                  // Server stores raw payload under `order`.
+                  final raw = (o['order'] as Map?)?.cast<String, dynamic>() ?? {};
+                  // sheet is available if needed later
+                  // final sheet = (raw['sheet'] as Map?)?.cast<String, dynamic>() ?? {};
+                  final item = (raw['item'] as Map?)?.cast<String, dynamic>() ?? {};
+
+                  final title = (item['vendorItemName'] ?? item['sellerProductName'] ?? '').toString();
+                  final qty = (item['shippingCount'] ?? '').toString();
 
                   return AppCard(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          title.isEmpty ? '(제목 없음)' : title,
+                          title.isEmpty ? '(상품명 없음)' : title,
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis,
                           style: const TextStyle(fontWeight: FontWeight.w900),
