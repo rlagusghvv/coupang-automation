@@ -1097,6 +1097,39 @@ app.get("/api/upload/preview/history", authRequired, async (req, res) => {
 app.get("/api/orders", authRequired, async (req, res) => {
   try {
     const limit = Number(req.query.limit || 50);
+
+    // Demo mode: return deterministic orders without needing real Coupang data.
+    if (String(process.env.CE_DEMO_MODE || '').trim() === '1') {
+      const now = new Date().toISOString();
+      const orders = Array.from({ length: Math.max(1, Math.min(30, limit || 10)) }).map((_, i) => ({
+        id: `demo-${i + 1}`,
+        at: now,
+        source: 'coupang',
+        status: i % 3 === 0 ? 'ACCEPT' : (i % 3 === 1 ? 'INSTRUCT' : 'DELIVERING'),
+        externalId: `demo-sheet-${Math.floor(i / 2) + 1}`,
+        externalSubId: String(i + 1),
+        order: {
+          sheet: {
+            orderId: `demo-order-${Math.floor(i / 2) + 1}`,
+            receiver: {
+              name: '홍길동',
+              postCode: '06236',
+              addr1: '서울 강남구 테헤란로 123',
+              addr2: '101동 1001호',
+              receiverNumber: '010-1234-5678',
+            },
+          },
+          item: {
+            vendorItemName: `데모 상품 ${i + 1}`,
+            sellerProductName: `데모 상품 ${i + 1}`,
+            shippingCount: (i % 4) + 1,
+          },
+        },
+      }));
+
+      return res.json({ ok: true, demoMode: true, orders });
+    }
+
     const orders = await listOrders(req.user.id, limit);
     return res.json({ ok: true, orders });
   } catch (e) {
@@ -1110,6 +1143,24 @@ app.post('/api/orders/shipping/refresh', authRequired, async (req, res) => {
     const dateFrom = String(req.body?.dateFrom || '').trim();
     const dateTo = String(req.body?.dateTo || '').trim();
     const status = String(req.body?.status || 'ACCEPT').trim();
+
+    // Demo mode: pretend refresh succeeded.
+    if (String(process.env.CE_DEMO_MODE || '').trim() === '1') {
+      return res.json({
+        ok: true,
+        demoMode: true,
+        result: {
+          ok: true,
+          mode: 'demo',
+          dateFrom,
+          dateTo,
+          status,
+          scannedSheets: 12,
+          processed: 24,
+          at: new Date().toISOString(),
+        },
+      });
+    }
 
     log(`[orders.refresh] user=${req.user.id} dateFrom=${dateFrom} dateTo=${dateTo} status=${status}`);
 
@@ -1139,11 +1190,6 @@ app.post('/api/orders/shipping/refresh', authRequired, async (req, res) => {
           details: result,
         });
       }
-      // If API call succeeded but no orders, treat as ok (not an error)
-      if (result?.ok === true && result?.inserted === 0) {
-        return res.json({ ok: true, result });
-      }
-
       return res.status(400).json({
         ok: false,
         error: '쿠팡에서 주문을 가져오지 못했어요. 잠시 후 다시 시도해 주세요.',
