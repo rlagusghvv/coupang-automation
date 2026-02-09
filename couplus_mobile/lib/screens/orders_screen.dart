@@ -1,4 +1,5 @@
 import 'package:couplus_mobile/api/api_client.dart';
+import 'package:couplus_mobile/screens/order_detail_screen.dart';
 import 'package:couplus_mobile/ui/widgets.dart';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -20,6 +21,11 @@ class _OrdersScreenState extends State<OrdersScreen> {
   final _dateFrom = TextEditingController();
   final _dateTo = TextEditingController();
 
+  // Search / filter
+  final _q = TextEditingController();
+  String _status = '';
+  bool _onlyTodo = false;
+
   Map<String, dynamic>? _lastExport;
   Map<String, dynamic>? _lastShippingRefresh;
 
@@ -39,6 +45,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
   void dispose() {
     _dateFrom.dispose();
     _dateTo.dispose();
+    _q.dispose();
     super.dispose();
   }
 
@@ -135,10 +142,48 @@ class _OrdersScreenState extends State<OrdersScreen> {
     }
   }
 
+  bool _isTodoStatus(String st) {
+    final s = st.trim().toUpperCase();
+    return s == 'ACCEPT' || s == 'INSTRUCT' || s == 'READY';
+  }
+
+  Widget _statusChip(BuildContext context, String value, String label) {
+    final active = _status == value;
+    final c = active
+        ? Theme.of(context).colorScheme.primary
+        : Theme.of(context).colorScheme.outline;
+    return InkWell(
+      borderRadius: BorderRadius.circular(999),
+      onTap: _loading
+          ? null
+          : () {
+              setState(() => _status = value);
+            },
+      child: InfoChip(label: label, color: c),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final last = _lastExport;
     final lastOk = last == null ? null : (last['ok'] == true);
+
+    final q = _q.text.trim().toLowerCase();
+    final filtered = _orders.where((o) {
+      final st = (o['status'] ?? '').toString();
+      if (_status.trim().isNotEmpty && st != _status) return false;
+      if (_onlyTodo && !_isTodoStatus(st)) return false;
+
+      if (q.isEmpty) return true;
+      final raw = (o['order'] as Map?)?.cast<String, dynamic>() ?? {};
+      final sheet = (raw['sheet'] as Map?)?.cast<String, dynamic>() ?? {};
+      final item = (raw['item'] as Map?)?.cast<String, dynamic>() ?? {};
+      final receiver = (sheet['receiver'] as Map?)?.cast<String, dynamic>() ?? {};
+
+      final title = (item['vendorItemName'] ?? item['sellerProductName'] ?? '').toString().toLowerCase();
+      final name = (receiver['name'] ?? '').toString().toLowerCase();
+      return title.contains(q) || name.contains(q);
+    }).toList();
 
     return AppScaffold(
       title: '주문',
@@ -155,6 +200,46 @@ class _OrdersScreenState extends State<OrdersScreen> {
           if (_error != null) ErrorBanner(message: _error!, onRetry: _refresh),
           if (_error != null) const SizedBox(height: 12),
 
+          TextField(
+            controller: _q,
+            onChanged: (_) => setState(() {}),
+            decoration: const InputDecoration(
+              labelText: '검색 (상품명 / 받는 사람)',
+              border: OutlineInputBorder(),
+            ),
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              Expanded(
+                child: SwitchListTile.adaptive(
+                  value: _onlyTodo,
+                  onChanged: _loading ? null : (v) => setState(() => _onlyTodo = v),
+                  title: const Text('해야 할 주문만 보기'),
+                  subtitle: const Text('접수/지시 같은 처리 전 상태만 보여줘요.'),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: [
+                _statusChip(context, '', '전체'),
+                const SizedBox(width: 8),
+                _statusChip(context, 'ACCEPT', '접수'),
+                const SizedBox(width: 8),
+                _statusChip(context, 'INSTRUCT', '지시'),
+                const SizedBox(width: 8),
+                _statusChip(context, 'DELIVERING', '배송중'),
+                const SizedBox(width: 8),
+                _statusChip(context, 'DONE', '완료'),
+              ],
+            ),
+          ),
+
+          const SizedBox(height: 12),
           AppCard(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -234,16 +319,18 @@ class _OrdersScreenState extends State<OrdersScreen> {
           Row(
             children: [
               InfoChip(
-                label: _loading ? '불러오는 중…' : '저장된 주문 ${_orders.length}건',
+                label: _loading ? '불러오는 중…' : '주문 ${filtered.length}건',
                 color: Theme.of(context).colorScheme.primary,
               ),
             ],
           ),
           const SizedBox(height: 12),
-          if (_orders.isEmpty && !_loading)
+          if (filtered.isEmpty && !_loading)
             AppCard(
               child: Text(
-                '아직 주문이 없어요.\n\n1) 더보기 탭에서 쿠팡 키를 먼저 넣어 주세요.\n2) 여기로 돌아와서 “쿠팡 최신 상태 다시 가져오기”를 눌러 주세요.\n3) 마지막으로 “엑셀 생성”을 누르면 됩니다.',
+                _orders.isEmpty
+                    ? '아직 주문이 없어요.\n\n1) 더보기 탭에서 쿠팡 키를 먼저 넣어 주세요.\n2) 여기로 돌아와서 “쿠팡 최신 상태 다시 가져오기”를 눌러 주세요.\n3) 마지막으로 “엑셀 생성”을 누르면 됩니다.'
+                    : '조건에 맞는 주문이 없어요.\n\n검색어/필터를 지우고 다시 확인해 주세요.',
                 style: TextStyle(
                   color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.7),
                 ),
@@ -252,10 +339,10 @@ class _OrdersScreenState extends State<OrdersScreen> {
           else
             Expanded(
               child: ListView.separated(
-                itemCount: _orders.length,
+                itemCount: filtered.length,
                 separatorBuilder: (_, __) => const SizedBox(height: 10),
                 itemBuilder: (ctx, i) {
-                  final o = _orders[i];
+                  final o = filtered[i];
                   final id = (o['id'] ?? '').toString();
                   final status = (o['status'] ?? '').toString();
 
@@ -269,6 +356,13 @@ class _OrdersScreenState extends State<OrdersScreen> {
                   final qty = (item['shippingCount'] ?? '').toString();
 
                   return AppCard(
+                    onTap: () {
+                      Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) => OrderDetailScreen(order: o),
+                        ),
+                      );
+                    },
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
@@ -283,9 +377,12 @@ class _OrdersScreenState extends State<OrdersScreen> {
                           spacing: 8,
                           runSpacing: 6,
                           children: [
-                            if (status.isNotEmpty) InfoChip(label: status, color: Theme.of(context).colorScheme.primary),
-                            if (qty.isNotEmpty) InfoChip(label: 'qty $qty', color: Theme.of(context).colorScheme.outline),
-                            if (id.isNotEmpty) InfoChip(label: id, color: Theme.of(context).colorScheme.outline),
+                            if (status.isNotEmpty)
+                              InfoChip(label: status, color: Theme.of(context).colorScheme.primary),
+                            if (qty.isNotEmpty)
+                              InfoChip(label: '수량 $qty', color: Theme.of(context).colorScheme.outline),
+                            if (id.isNotEmpty)
+                              InfoChip(label: id, color: Theme.of(context).colorScheme.outline),
                           ],
                         ),
                       ],
