@@ -50,20 +50,36 @@ export async function fetchDomeggookUrlsByKeyword({ keyword, limit = 40 }) {
   if (!r.ok) return [];
   const html = await r.text();
 
-  // Capture item numbers from links.
+  // Capture item numbers from links (be permissive; domeggook uses multiple URL patterns).
   const out = [];
   const seen = new Set();
-  const re = /(\/main\/item\/itemView\.php\?no=|https?:\/\/domeggook\.com\/)(\d{6,})/g;
+
+  const pushNo = (no) => {
+    const n = String(no || '').trim();
+    if (!/^\d{6,}$/.test(n)) return;
+    if (seen.has(n)) return;
+    seen.add(n);
+    out.push(`https://domeggook.com/${n}`);
+  };
+
+  // Pattern: itemView.php?no=63061255
+  const reNo = /[?&]no=(\d{6,})/g;
   let m;
-  while ((m = re.exec(html))) {
-    const no = m[2];
-    if (!no) continue;
-    if (seen.has(no)) continue;
-    seen.add(no);
-    out.push(`https://domeggook.com/${no}`);
+  while ((m = reNo.exec(html))) {
+    pushNo(m[1]);
     if (out.length >= limit) break;
   }
-  return out;
+
+  // Pattern: https://domeggook.com/63061255
+  if (out.length < limit) {
+    const reShort = /https?:\/\/domeggook\.com\/(\d{6,})/g;
+    while ((m = reShort.exec(html))) {
+      pushNo(m[1]);
+      if (out.length >= limit) break;
+    }
+  }
+
+  return out.slice(0, limit);
 }
 
 function containsBanKeyword(text, banList) {
