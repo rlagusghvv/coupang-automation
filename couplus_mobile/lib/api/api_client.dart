@@ -36,7 +36,7 @@ class ApiClient {
       return Uri.base.origin;
     }
     // Native default (can be changed in More 탭)
-    return 'http://macmini.tail4fbf54.ts.net:3000';
+    return 'https://app.splui.com';
   }
 
   final http.Client _client;
