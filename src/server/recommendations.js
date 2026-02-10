@@ -45,11 +45,11 @@ export function defaultKeywordSet() {
   ];
 }
 
-export async function fetchDomeggookUrlsByKeyword({ keyword, limit = 40, storageStatePath = '' }) {
+export async function fetchDomeggookUrlsByKeyword({ keyword, limit = 40, storageStatePath = '', maxPages = 4 }) {
   const q = String(keyword || '').trim();
   if (!q) return [];
 
-  const listUrl = `https://domeggook.com/main/item/itemList.php?sw=${encodeURIComponent(q)}&sf=ttl`;
+  const baseUrl = `https://domeggook.com/main/item/itemList.php?sw=${encodeURIComponent(q)}&sf=ttl`;
 
   const extractFromHtml = (html) => {
     const out = [];
@@ -84,19 +84,38 @@ export async function fetchDomeggookUrlsByKeyword({ keyword, limit = 40, storage
         if (out.length >= limit) break;
       }
     }
+
+    // Pattern: bare relative links like /63410895 or /63410895?...
+    if (out.length < limit) {
+      const reBare = /\/(\d{6,})(?:\?|\"|\')/g;
+      while ((m = reBare.exec(html))) {
+        pushNo(m[1]);
+        if (out.length >= limit) break;
+      }
+    }
+
     return out.slice(0, limit);
   };
 
-  // 1) Try plain fetch (best-effort; may be limited by bot mitigation)
+  const want = Math.max(1, Math.min(10, Number(maxPages) || 1));
+
+  // 1) Try plain fetch across pages (best-effort; may be limited by bot mitigation)
   try {
-    const r = await fetch(listUrl, {
-      headers: { 'User-Agent': 'Mozilla/5.0', 'Referer': 'https://domeggook.com/' },
-    });
-    if (r.ok) {
+    const all = [];
+    for (let pageNo = 1; pageNo <= want && all.length < limit; pageNo += 1) {
+      const listUrl = pageNo === 1 ? baseUrl : `${baseUrl}&page=${pageNo}`;
+      const r = await fetch(listUrl, {
+        headers: { 'User-Agent': 'Mozilla/5.0', 'Referer': 'https://domeggook.com/' },
+      });
+      if (!r.ok) break;
       const html = await r.text();
       const out = extractFromHtml(html);
-      if (out.length >= Math.min(10, limit)) return out;
+      for (const u of out) {
+        if (!all.includes(u)) all.push(u);
+        if (all.length >= limit) break;
+      }
     }
+    if (all.length >= Math.min(10, limit)) return all.slice(0, limit);
   } catch {}
 
   // 2) Fallback to Playwright with logged-in storageState (more reliable)
@@ -108,14 +127,22 @@ export async function fetchDomeggookUrlsByKeyword({ keyword, limit = 40, storage
     const browser = await chromium.launch();
     const context = hasState ? await browser.newContext({ storageState: storageStatePath }) : await browser.newContext();
     const page = await context.newPage();
-    await page.goto(listUrl, { waitUntil: 'domcontentloaded', timeout: 60_000 });
-    await page.waitForTimeout(1200);
 
-    const html = await page.content();
+    const all = [];
+    for (let pageNo = 1; pageNo <= want && all.length < limit; pageNo += 1) {
+      const listUrl = pageNo === 1 ? baseUrl : `${baseUrl}&page=${pageNo}`;
+      await page.goto(listUrl, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+      await page.waitForTimeout(1100);
+      const html = await page.content();
+      const out = extractFromHtml(html);
+      for (const u of out) {
+        if (!all.includes(u)) all.push(u);
+        if (all.length >= limit) break;
+      }
+    }
+
     await browser.close();
-
-    const out = extractFromHtml(html);
-    return out.slice(0, limit);
+    return all.slice(0, limit);
   } catch {
     return [];
   }
