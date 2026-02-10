@@ -476,115 +476,145 @@ class _WorkScreenState extends State<WorkScreen> {
                         ),
                       ],
                       const SizedBox(height: 12),
-                      if (images.isNotEmpty) ...[
-                        Row(
-                          children: [
-                            const Expanded(
-                              child: Text('이미지 미리보기',
-                                  style:
-                                      TextStyle(fontWeight: FontWeight.w900)),
-                            ),
-                            TextButton(
-                              onPressed: () async {
-                                final next = await Navigator.of(context)
-                                    .push<List<String>>(
-                                  MaterialPageRoute(
-                                    builder: (_) => ImageEditScreen(
-                                      initial: _imagesOverride ?? images,
-                                      all: images,
-                                      mapUrl: widget.api.proxyImageUrl,
-                                    ),
-                                  ),
-                                );
-                                if (next != null) {
-                                  setState(() => _imagesOverride = next);
-                                  setInner(() {});
-                                }
-                              },
-                              child: const Text('편집'),
-                            ),
-                          ],
+                      TextField(
+                        decoration: const InputDecoration(
+                          labelText: '제품명(선택)',
+                          hintText: '비우면 자동 추천 제목이 적용될 수 있어요',
                         ),
-                        const SizedBox(height: 8),
-                        SizedBox(
-                          height: 78,
-                          child: ListView.separated(
-                            scrollDirection: Axis.horizontal,
-                            itemCount:
-                                (_imagesOverride ?? images).take(12).length,
-                            separatorBuilder: (_, __) =>
-                                const SizedBox(width: 8),
-                            itemBuilder: (_, i) {
-                              final src = (_imagesOverride ?? images)[i];
-                              return InkWell(
-                                borderRadius: BorderRadius.circular(10),
-                                onTap: () {
-                                  Navigator.of(context).push(
-                                    MaterialPageRoute(
-                                      builder: (_) => ImageViewerScreen(
-                                        images: (_imagesOverride ?? images),
-                                        initialIndex: i,
-                                        title: '이미지 미리보기',
-                                        mapUrl: widget.api.proxyImageUrl,
-                                      ),
+                        controller: titleController,
+                        onChanged: (v) {
+                          _titleOverride = v;
+                          setInner(() {});
+                        },
+                      ),
+                      const SizedBox(height: 8),
+                      Theme(
+                        data: Theme.of(ctx).copyWith(dividerColor: Colors.transparent),
+                        child: ExpansionTile(
+                          tilePadding: EdgeInsets.zero,
+                          childrenPadding: EdgeInsets.zero,
+                          title: const Text('세부 설정', style: TextStyle(fontWeight: FontWeight.w900)),
+                          subtitle: Text(
+                            '추천 제목/이미지 편집',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Theme.of(ctx).colorScheme.onSurface.withValues(alpha: 0.65),
+                            ),
+                          ),
+                          children: [
+                            if (suggestions.isNotEmpty) ...[
+                              const SizedBox(height: 6),
+                              const Text('추천 제목(15자)',
+                                  style: TextStyle(fontWeight: FontWeight.w900)),
+                              const SizedBox(height: 6),
+                              Wrap(
+                                spacing: 6,
+                                runSpacing: 6,
+                                children: suggestions.take(3).map((t) {
+                                  final selected = titleController.text.trim() == t.trim();
+                                  return ActionChip(
+                                    label: Text(t),
+                                    onPressed: () {
+                                      titleController.text = t;
+                                      _titleOverride = t;
+                                      setInner(() {});
+                                    },
+                                    backgroundColor: selected
+                                        ? Theme.of(ctx).colorScheme.primary
+                                        : null,
+                                    labelStyle: TextStyle(
+                                      color: selected
+                                          ? Theme.of(ctx).colorScheme.onPrimary
+                                          : null,
                                     ),
                                   );
-                                },
-                                child: ClipRRect(
-                                  borderRadius: BorderRadius.circular(10),
-                                  child: AspectRatio(
-                                    aspectRatio: 1,
-                                    child: Image.network(
-                                      widget.api.proxyImageUrl(src),
-                                      fit: BoxFit.cover,
-                                      errorBuilder: (_, __, ___) => Container(
-                                        color: Theme.of(ctx)
-                                            .colorScheme
-                                            .surfaceContainerHighest,
-                                        child: Icon(Icons.broken_image,
-                                            color: Theme.of(ctx)
-                                                .colorScheme
-                                                .onSurface
-                                                .withValues(alpha: 0.5)),
-                                      ),
-                                    ),
+                                }).toList(),
+                              ),
+                              const SizedBox(height: 12),
+                            ],
+                            if (images.isNotEmpty) ...[
+                              Row(
+                                children: [
+                                  const Expanded(
+                                    child: Text('이미지',
+                                        style: TextStyle(fontWeight: FontWeight.w900)),
                                   ),
+                                  TextButton(
+                                    onPressed: () async {
+                                      final next = await Navigator.of(context)
+                                          .push<List<String>>(
+                                        MaterialPageRoute(
+                                          builder: (_) => ImageEditScreen(
+                                            initial: _imagesOverride ?? images,
+                                            all: images,
+                                            mapUrl: widget.api.proxyImageUrl,
+                                          ),
+                                        ),
+                                      );
+                                      if (next != null) {
+                                        setState(() => _imagesOverride = next);
+                                        setInner(() {});
+                                      }
+                                    },
+                                    child: const Text('편집'),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 8),
+                              SizedBox(
+                                height: 72,
+                                child: ListView.separated(
+                                  scrollDirection: Axis.horizontal,
+                                  itemCount: (_imagesOverride ?? images).take(12).length,
+                                  separatorBuilder: (_, __) => const SizedBox(width: 8),
+                                  itemBuilder: (_, i) {
+                                    final src = (_imagesOverride ?? images)[i];
+                                    return InkWell(
+                                      borderRadius: BorderRadius.circular(10),
+                                      onTap: () {
+                                        Navigator.of(context).push(
+                                          MaterialPageRoute(
+                                            builder: (_) => ImageViewerScreen(
+                                              images: (_imagesOverride ?? images),
+                                              initialIndex: i,
+                                              title: '이미지 미리보기',
+                                              mapUrl: widget.api.proxyImageUrl,
+                                            ),
+                                          ),
+                                        );
+                                      },
+                                      child: ClipRRect(
+                                        borderRadius: BorderRadius.circular(10),
+                                        child: AspectRatio(
+                                          aspectRatio: 1,
+                                          child: Image.network(
+                                            widget.api.proxyImageUrl(src),
+                                            fit: BoxFit.cover,
+                                            errorBuilder: (_, __, ___) => Container(
+                                              color: Theme.of(ctx)
+                                                  .colorScheme
+                                                  .surfaceContainerHighest,
+                                              child: Icon(
+                                                Icons.broken_image,
+                                                color: Theme.of(ctx)
+                                                    .colorScheme
+                                                    .onSurface
+                                                    .withValues(alpha: 0.5),
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    );
+                                  },
                                 ),
-                              );
-                            },
-                          ),
+                              ),
+                              const SizedBox(height: 10),
+                            ],
+                          ],
                         ),
-                        const SizedBox(height: 12),
-                      ],
-                      if (suggestions.isNotEmpty) ...[
-                        const Text('추천 제목(15자)',
-                            style: TextStyle(fontWeight: FontWeight.w900)),
-                        const SizedBox(height: 6),
-                        Wrap(
-                          spacing: 6,
-                          runSpacing: 6,
-                          children: suggestions.take(3).map((t) {
-                            final selected =
-                                titleController.text.trim() == t.trim();
-                            return ActionChip(
-                              label: Text(t),
-                              onPressed: () {
-                                titleController.text = t;
-                                _titleOverride = t;
-                                setInner(() {});
-                              },
-                              backgroundColor: selected
-                                  ? Theme.of(ctx).colorScheme.primary
-                                  : null,
-                              labelStyle: TextStyle(
-                                  color: selected
-                                      ? Theme.of(ctx).colorScheme.onPrimary
-                                      : null),
-                            );
-                          }).toList(),
-                        ),
-                        const SizedBox(height: 10),
-                      ],
+                      ),
+                      const SizedBox(height: 14),
                       TextField(
                         decoration: const InputDecoration(
                           labelText: '제품명(선택)',

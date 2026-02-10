@@ -36,15 +36,25 @@ export async function fetchWithRetry(url, opts = {}) {
     }
   })();
 
-  const spacingMs = Math.max(0, Number(opts?.spacingMs) || 0);
-  const retries = Math.max(0, Math.min(6, Number(opts?.retries ?? 3)));
-  const retryOn = Array.isArray(opts?.retryOn) ? opts.retryOn : [429, 503];
-  const baseDelayMs = Math.max(50, Number(opts?.baseDelayMs || 600));
-  const maxDelayMs = Math.max(baseDelayMs, Number(opts?.maxDelayMs || 8000));
+  // Strip custom retry/limit options so they don't leak into the native fetch init.
+  const {
+    spacingMs: _spacingMs,
+    retries: _retries,
+    retryOn: _retryOn,
+    baseDelayMs: _baseDelayMs,
+    maxDelayMs: _maxDelayMs,
+    ...fetchOpts
+  } = (opts && typeof opts === 'object') ? opts : {};
+
+  const spacingMs = Math.max(0, Number(_spacingMs) || 0);
+  const retries = Math.max(0, Math.min(6, Number(_retries ?? 3)));
+  const retryOn = Array.isArray(_retryOn) ? _retryOn : [429, 503];
+  const baseDelayMs = Math.max(50, Number(_baseDelayMs || 600));
+  const maxDelayMs = Math.max(baseDelayMs, Number(_maxDelayMs || 8000));
 
   const doFetch = async () => {
     // NOTE: node18+ fetch exists. Caller may pass signal.
-    return fetch(u, opts);
+    return fetch(u, fetchOpts);
   };
 
   let lastErr = null;
