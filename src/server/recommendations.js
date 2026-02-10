@@ -3,6 +3,11 @@ import crypto from 'node:crypto';
 import { previewUploadFromUrl } from '../pipeline/previewUploadFromUrl.js';
 import { dbAll, dbRun, openDb } from './storage_sqlite_internal.js';
 
+function dbGetOne(db, sql, params = []) {
+  return dbAll(db, sql, params).then((rows) => (rows && rows[0]) || null);
+}
+
+
 // NOTE: storage_sqlite.js doesn't currently export low-level db helpers.
 // We keep this module standalone by using the internal helper shim.
 
@@ -257,6 +262,75 @@ export async function replaceRecommendationsForUser({ userId, items }) {
   return { ok: true, count: items.length };
 }
 
+export async function upsertRecommendationsForUser({ userId, items, maxKeep = 60 }) {
+  const db = openDb();
+  const now = nowIso();
+
+  let inserted = 0;
+  for (const it of items) {
+    const id = crypto.randomUUID();
+    const r = await dbRun(
+      db,
+      `INSERT OR IGNORE INTO recommendations (
+        id, user_id, source_url, keyword, title, main_image_url,
+        source_price, shipping_fee, final_price, profit, margin_rate, score,
+        reason, payload_json, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        id,
+        userId,
+        it.sourceUrl,
+        it.keyword || '',
+        it.title || '',
+        it.mainImageUrl || '',
+        it.sourcePrice ?? null,
+        it.shippingFee ?? null,
+        it.finalPrice ?? null,
+        it.profit ?? null,
+        it.marginRate ?? null,
+        it.score ?? null,
+        it.reason || '',
+        JSON.stringify(it.payload || {}),
+        now,
+      ],
+    );
+    if (r && r.changes) inserted += 1;
+  }
+
+  // prune to maxKeep by score desc
+  const keep = Math.max(10, Math.min(200, Number(maxKeep) || 60));
+  await dbRun(
+    db,
+    `DELETE FROM recommendations
+     WHERE user_id = ?
+       AND id NOT IN (
+         SELECT id FROM recommendations WHERE user_id = ?
+         ORDER BY score DESC
+         LIMIT ?
+       )`,
+    [userId, userId, keep],
+  );
+
+  const row = await dbGetOne(db, 'SELECT COUNT(*) AS c FROM recommendations WHERE user_id = ?', [userId]);
+  db.close();
+  return { ok: true, inserted, count: Number(row?.c) || 0 };
+}
+
+async function getRecommendationsState(db, userId) {
+  const r = await dbGetOne(db, 'SELECT next_keyword_idx FROM recommendations_state WHERE user_id = ?', [userId]);
+  if (r) return { nextKeywordIdx: Number(r.next_keyword_idx) || 0 };
+  await dbRun(db, 'INSERT INTO recommendations_state (user_id, next_keyword_idx, updated_at) VALUES (?, ?, ?)', [userId, 0, nowIso()]);
+  return { nextKeywordIdx: 0 };
+}
+
+async function setRecommendationsState(db, userId, nextKeywordIdx) {
+  await dbRun(
+    db,
+    'INSERT INTO recommendations_state (user_id, next_keyword_idx, updated_at) VALUES (?, ?, ?) ON CONFLICT(user_id) DO UPDATE SET next_keyword_idx=excluded.next_keyword_idx, updated_at=excluded.updated_at',
+    [userId, Number(nextKeywordIdx) || 0, nowIso()],
+  );
+}
+
 export async function listRecommendations(userId, { limit = 50 } = {}) {
   const db = openDb();
   const lim = Math.max(1, Math.min(200, Number(limit) || 50));
@@ -352,11 +426,10 @@ function strictValidatePreview(preview, banKeywords = DEFAULT_BAN_KEYWORDS) {
   return { ok: true };
 }
 
-export async function generateRecommendationsForUser({ userId, settings, keywords, topN = 20, onProgress = null }) {
+async function generateRecommendationsBatch({ settings, keywords, topN = 20, excludeUrls = new Set(), onProgress = null }) {
   const seed = Array.isArray(keywords) && keywords.length > 0 ? keywords : defaultKeywordSet();
   const startedAt = Date.now();
 
-  // Fast stage: gather (title, price, url) from list pages.
   const candidates = [];
   for (const kw of seed.slice(0, 12)) {
     if (Date.now() - startedAt > 6 * 60_000) break;
@@ -372,12 +445,13 @@ export async function generateRecommendationsForUser({ userId, settings, keyword
         if (typeof onProgress === 'function') {
           try { onProgress({ stage: 'rate_limited', keyword: kw, candidates: candidates.length }); } catch {}
         }
-        break;
+        throw e;
       }
       list = [];
     }
 
     for (const it of list) {
+      if (excludeUrls.has(it.url)) continue;
       candidates.push({ keyword: kw, ...it });
       if (candidates.length >= 1200) break;
     }
@@ -387,20 +461,18 @@ export async function generateRecommendationsForUser({ userId, settings, keyword
     if (candidates.length >= 1200) break;
   }
 
-  // de-dupe
   const uniq = [];
   const seen = new Set();
   for (const c of candidates) {
+    if (excludeUrls.has(c.url)) continue;
     if (seen.has(c.url)) continue;
     seen.add(c.url);
     uniq.push(c);
   }
 
-  // Score stage (fast): use title+price only to get a big ranked pool.
   const scoredPool = [];
   for (const c of uniq) {
     if (Date.now() - startedAt > 8.5 * 60_000) break;
-
     if (containsBanKeyword(c.title, DEFAULT_BAN_KEYWORDS)) continue;
 
     const fakePreview = {
@@ -425,12 +497,12 @@ export async function generateRecommendationsForUser({ userId, settings, keyword
 
   scoredPool.sort((a, b) => (Number(b.score) || 0) - (Number(a.score) || 0));
 
-  // Strict stage: validate top candidates with Playwright-based preview.
   const final = [];
   let validated = 0;
   for (const cand of scoredPool) {
     if (final.length >= topN) break;
     if (Date.now() - startedAt > 12 * 60_000) break;
+    if (excludeUrls.has(cand.sourceUrl)) continue;
 
     const prev = await previewUploadFromUrl(cand.sourceUrl, {
       ...(settings || {}),
@@ -443,10 +515,7 @@ export async function generateRecommendationsForUser({ userId, settings, keyword
     }
 
     const v = strictValidatePreview(prev, DEFAULT_BAN_KEYWORDS);
-    if (!v.ok) {
-      // A-mode: drop invalid recommendations.
-      continue;
-    }
+    if (!v.ok) continue;
 
     final.push({
       ...cand,
@@ -454,8 +523,46 @@ export async function generateRecommendationsForUser({ userId, settings, keyword
     });
   }
 
-  await replaceRecommendationsForUser({ userId, items: final });
-  return { ok: true, count: final.length };
+  return { ok: true, items: final, validated };
+}
+
+export async function generateRecommendationsForUser({ userId, settings, keywords, topN = 20, onProgress = null }) {
+  const batch = await generateRecommendationsBatch({ settings, keywords, topN, excludeUrls: new Set(), onProgress });
+  await replaceRecommendationsForUser({ userId, items: batch.items });
+  return { ok: true, count: batch.items.length };
+}
+
+export async function fillRecommendationsForUser({ userId, settings, keywords, targetCount = 20, maxAddPerRun = 6, onProgress = null }) {
+  const db = openDb();
+  const seed = Array.isArray(keywords) && keywords.length > 0 ? keywords : defaultKeywordSet();
+
+  const existingRows = await dbAll(db, 'SELECT source_url FROM recommendations WHERE user_id = ?', [userId]);
+  const exclude = new Set(existingRows.map((r) => r.source_url));
+
+  const state = await getRecommendationsState(db, userId);
+  const idx = state.nextKeywordIdx % Math.max(1, seed.length);
+  const kw = seed[idx];
+  await setRecommendationsState(db, userId, idx + 1);
+
+  db.close();
+
+  if (typeof onProgress === 'function') {
+    try { onProgress({ stage: 'fill_start', keyword: kw, candidates: exclude.size }); } catch {}
+  }
+
+  const need = Math.max(0, Number(targetCount) - exclude.size);
+  if (need <= 0) return { ok: true, inserted: 0, count: exclude.size, keyword: kw };
+
+  const batch = await generateRecommendationsBatch({
+    settings,
+    keywords: [kw],
+    topN: Math.min(Math.max(1, need), Math.max(2, Number(maxAddPerRun) || 6)),
+    excludeUrls: exclude,
+    onProgress,
+  });
+
+  const up = await upsertRecommendationsForUser({ userId, items: batch.items, maxKeep: Math.max(60, Number(targetCount) || 20) });
+  return { ok: true, ...up, keyword: kw };
 }
 
 export function startRecommendationLoop({ getUsers, hour = 9, minute = 0, intervalMs = 60_000 }) {

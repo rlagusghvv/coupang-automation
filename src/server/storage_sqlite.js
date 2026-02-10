@@ -231,6 +231,15 @@ export async function initDb() {
     )`,
   );
 
+  await dbRun(
+    db,
+    `CREATE TABLE IF NOT EXISTS recommendations_state (
+      user_id TEXT PRIMARY KEY,
+      next_keyword_idx INTEGER NOT NULL DEFAULT 0,
+      updated_at TEXT NOT NULL
+    )`,
+  );
+
   // Catalog events (sync/change log)
   await dbRun(
     db,

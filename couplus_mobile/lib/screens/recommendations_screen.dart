@@ -47,7 +47,7 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
       _error = null;
     });
     try {
-      final json = await widget.api.postJson('/api/recommendations/run', {'topN': 20});
+      final json = await widget.api.postJson('/api/recommendations/fill', {'targetCount': 20});
       final job = (json['job'] as Map?)?.cast<String, dynamic>() ?? {};
       final jobId = (job['id'] ?? '').toString();
 

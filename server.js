@@ -62,6 +62,7 @@ import { syncOneCatalogProduct, syncAllCatalogProducts, startCatalogSyncLoop } f
 import {
   listRecommendations,
   generateRecommendationsForUser,
+  fillRecommendationsForUser,
   startRecommendationLoop,
   defaultKeywordSet,
 } from "./src/server/recommendations.js";
@@ -880,22 +881,20 @@ app.get('/api/recommendations', authRequired, async (req, res) => {
   }
 });
 
+// Legacy: full regenerate (may be rate-limited). Keep for debugging.
 app.post('/api/recommendations/run', authRequired, async (req, res) => {
   try {
     const topN = Math.max(1, Math.min(50, Number(req.body?.topN || 20) || 20));
     const keywords = Array.isArray(req.body?.keywords) ? req.body.keywords : defaultKeywordSet();
 
-    // Prevent duplicate long-running jobs.
     const active = await getActiveJobByKind(req.user.id, 'recommendations', ['queued', 'running']);
     if (active) {
-      // If it's too old, treat as stale and allow a new run.
       const ageMs = Date.now() - Date.parse(active.createdAt || '');
       if (Number.isFinite(ageMs) && ageMs < 20 * 60_000) {
         return res.json({ ok: true, job: active, deduped: true });
       }
     }
 
-    // Run as background job to avoid Cloudflare timeouts.
     const job = await createJob({ userId: req.user.id, kind: 'recommendations', inputUrl: '', force: '0', catalogId: null });
 
     setTimeout(async () => {
@@ -919,12 +918,6 @@ app.post('/api/recommendations/run', authRequired, async (req, res) => {
           },
         });
         await updateJob({ id: job.id, patch: { status: 'success', resultJson: { result: r, progress } } });
-        await notifyUser(req.user.id, {
-          title: '추천 생성 완료',
-          body: `추천 ${r?.count ?? 0}개 생성했어요.`,
-          tag: 'recommendations',
-          url: '/',
-        });
       } catch (e) {
         try {
           await updateJob({
@@ -932,6 +925,79 @@ app.post('/api/recommendations/run', authRequired, async (req, res) => {
             patch: {
               status: 'failed',
               errorCode: 'recommendations_failed',
+              errorMessage: String(e?.message || e),
+            },
+          });
+        } catch {}
+      }
+    }, 0);
+
+    return res.json({ ok: true, job });
+  } catch (e) {
+    return res.status(400).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+// New: fill cache (append-only upsert) — safer under 429.
+app.post('/api/recommendations/fill', authRequired, async (req, res) => {
+  try {
+    const targetCount = Math.max(1, Math.min(60, Number(req.body?.targetCount || 20) || 20));
+    const keywords = Array.isArray(req.body?.keywords) ? req.body.keywords : defaultKeywordSet();
+
+    const active = await getActiveJobByKind(req.user.id, 'recommendations_fill', ['queued', 'running']);
+    if (active) {
+      const ageMs = Date.now() - Date.parse(active.createdAt || '');
+      if (Number.isFinite(ageMs) && ageMs < 20 * 60_000) {
+        return res.json({ ok: true, job: active, deduped: true });
+      }
+    }
+
+    const job = await createJob({ userId: req.user.id, kind: 'recommendations_fill', inputUrl: '', force: '0', catalogId: null });
+
+    setTimeout(async () => {
+      try {
+        await updateJob({ id: job.id, patch: { status: 'running' } });
+
+        const progress = { stage: 'start', candidates: 0, validated: 0, kept: 0, target: targetCount, keyword: '' };
+        const lastPush = { t: 0 };
+
+        let tries = 0;
+        let last = null;
+        while (tries < 6) {
+          tries += 1;
+          last = await fillRecommendationsForUser({
+            userId: req.user.id,
+            settings: req.user.settings || {},
+            keywords,
+            targetCount,
+            maxAddPerRun: 6,
+            onProgress: (p) => {
+              Object.assign(progress, p || {});
+              const now = Date.now();
+              if (now - lastPush.t > 1500) {
+                lastPush.t = now;
+                updateJob({ id: job.id, patch: { resultJson: { progress } } }).catch(() => {});
+              }
+            },
+          });
+
+          progress.kept = Number(last?.count) || progress.kept;
+          progress.keyword = String(last?.keyword || progress.keyword);
+
+          if ((Number(last?.count) || 0) >= targetCount) break;
+          if ((Number(last?.inserted) || 0) <= 0) break;
+
+          await new Promise((r) => setTimeout(r, 1500));
+        }
+
+        await updateJob({ id: job.id, patch: { status: 'success', resultJson: { result: last || { ok: true }, progress } } });
+      } catch (e) {
+        try {
+          await updateJob({
+            id: job.id,
+            patch: {
+              status: 'failed',
+              errorCode: 'recommendations_fill_failed',
               errorMessage: String(e?.message || e),
             },
           });
