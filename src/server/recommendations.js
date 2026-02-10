@@ -302,6 +302,16 @@ async function fetchFastCandidatesFromList({ keyword, limit = 80, storageStatePa
   return out;
 }
 
+function strictValidatePreview(preview, banKeywords = DEFAULT_BAN_KEYWORDS) {
+  if (!preview?.ok) return { ok: false, reason: 'preview_failed' };
+  const title = String(preview?.draft?.title || '');
+  if (!title) return { ok: false, reason: 'no_title' };
+  if (containsBanKeyword(title, banKeywords)) return { ok: false, reason: 'banned_keyword' };
+  const contentImageCount = Number(preview?.computed?.contentImageCount) || 0;
+  if (contentImageCount < 1) return { ok: false, reason: 'detail_images_too_few', contentImageCount };
+  return { ok: true };
+}
+
 export async function generateRecommendationsForUser({ userId, settings, keywords, topN = 20 }) {
   const seed = Array.isArray(keywords) && keywords.length > 0 ? keywords : defaultKeywordSet();
   const startedAt = Date.now();
@@ -332,10 +342,10 @@ export async function generateRecommendationsForUser({ userId, settings, keyword
     uniq.push(c);
   }
 
-  // Score stage (still fast): use title+price only. This is enough to get a top list.
-  const scored = [];
+  // Score stage (fast): use title+price only to get a big ranked pool.
+  const scoredPool = [];
   for (const c of uniq) {
-    if (Date.now() - startedAt > 11.5 * 60_000) break;
+    if (Date.now() - startedAt > 8.5 * 60_000) break;
 
     if (containsBanKeyword(c.title, DEFAULT_BAN_KEYWORDS)) continue;
 
@@ -349,20 +359,43 @@ export async function generateRecommendationsForUser({ userId, settings, keyword
     const s = scoreRecommendation({ preview: fakePreview, minProfit: 3000, minMarginRate: 0.30, banKeywords: DEFAULT_BAN_KEYWORDS });
     if (!s.ok) continue;
 
-    scored.push({
+    scoredPool.push({
       sourceUrl: c.url,
       keyword: c.keyword,
       ...s,
       payload: { fast: true },
     });
 
-    if (scored.length >= 500) break;
+    if (scoredPool.length >= 500) break;
   }
 
-  scored.sort((a, b) => (Number(b.score) || 0) - (Number(a.score) || 0));
-  const top = scored.slice(0, topN);
-  await replaceRecommendationsForUser({ userId, items: top });
-  return { ok: true, count: top.length };
+  scoredPool.sort((a, b) => (Number(b.score) || 0) - (Number(a.score) || 0));
+
+  // Strict stage: validate top candidates with Playwright-based preview.
+  const final = [];
+  for (const cand of scoredPool) {
+    if (final.length >= topN) break;
+    if (Date.now() - startedAt > 12 * 60_000) break;
+
+    const prev = await previewUploadFromUrl(cand.sourceUrl, {
+      ...(settings || {}),
+      maxContentImages: 30,
+    }).catch(() => null);
+
+    const v = strictValidatePreview(prev, DEFAULT_BAN_KEYWORDS);
+    if (!v.ok) {
+      // A-mode: drop invalid recommendations.
+      continue;
+    }
+
+    final.push({
+      ...cand,
+      payload: { ...cand.payload, preview: { url: prev.url, draft: prev.draft, computed: prev.computed } },
+    });
+  }
+
+  await replaceRecommendationsForUser({ userId, items: final });
+  return { ok: true, count: final.length };
 }
 
 export function startRecommendationLoop({ getUsers, hour = 9, minute = 0, intervalMs = 60_000 }) {

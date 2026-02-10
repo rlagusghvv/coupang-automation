@@ -105,7 +105,7 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
               ),
               const Spacer(),
               Text(
-                '기준: 순마진≥3,000원 / 마진율≥30%',
+                '기준: 순마진≥3,000원 / 마진율≥30% (검증 통과만 노출)',
                 style: TextStyle(
                   color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6),
                   fontSize: 12,
