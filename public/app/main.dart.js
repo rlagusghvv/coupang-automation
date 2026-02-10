@@ -47907,7 +47907,7 @@ q=3
 a1=t.N
 a2=t.z
 s=6
-return A.z(n.a.c.dW("/api/recommendations/run",A.al(["topN",20],a1,a2)),$async$oK)
+return A.z(n.a.c.dW("/api/recommendations/fill",A.al(["targetCount",20],a1,a2)),$async$oK)
 case 6:m=b1
 a3=t.Y
 a4=a3.a(J.W(m,"job"))
