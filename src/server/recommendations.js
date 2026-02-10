@@ -248,22 +248,95 @@ export async function listRecommendations(userId, { limit = 50 } = {}) {
   }));
 }
 
+function parseWon(text) {
+  const s = String(text || '');
+  const m = s.match(/(\d[\d,]{2,})\s*원/);
+  if (!m) return null;
+  const n = Number(String(m[1]).replace(/,/g, ''));
+  return Number.isFinite(n) ? n : null;
+}
+
+async function fetchFastCandidatesFromList({ keyword, limit = 80, storageStatePath = '' }) {
+  const q = String(keyword || '').trim();
+  if (!q) return [];
+
+  const listUrl = `https://domeggook.com/main/item/itemList.php?sw=${encodeURIComponent(q)}`;
+
+  const { chromium } = await import('playwright');
+  const fs = await import('node:fs');
+
+  const hasState = storageStatePath && fs.existsSync(storageStatePath);
+  const browser = await chromium.launch();
+  const context = hasState ? await browser.newContext({ storageState: storageStatePath }) : await browser.newContext();
+  const page = await context.newPage();
+  await page.goto(listUrl, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+  await page.waitForTimeout(900);
+
+  const rows = await page.evaluate(() => {
+    const anchors = Array.from(document.querySelectorAll('a[href]'))
+      .map((a) => ({ href: a.getAttribute('href') || '', text: (a.textContent || '').trim(), el: a }))
+      .filter((a) => /[?&]no=\d{6,}/.test(a.href));
+
+    const out = [];
+    const seen = new Set();
+
+    const findBlob = (el) => {
+      const root = el.closest('li, tr, .item, .goods, .prd, .product, .list, .box') || el.parentElement;
+      const txt = (root?.innerText || '').replace(/\s+/g, ' ').trim();
+      return txt;
+    };
+
+    for (const a of anchors) {
+      const m = String(a.href).match(/[?&]no=(\d{6,})/);
+      const no = m && m[1] ? m[1] : null;
+      if (!no) continue;
+      if (seen.has(no)) continue;
+      seen.add(no);
+      out.push({ no, title: a.text, blob: findBlob(a.el) });
+      if (out.length >= 400) break;
+    }
+    return out;
+  });
+
+  await browser.close();
+
+  const out = [];
+  const seen = new Set();
+  for (const r of (rows || [])) {
+    const no = String(r.no || '').trim();
+    if (!/^\d{6,}$/.test(no)) continue;
+    if (seen.has(no)) continue;
+
+    const title = String(r.title || '').trim();
+    const price = parseWon(r.blob);
+    if (!title || !price) continue;
+
+    seen.add(no);
+    out.push({ url: `https://domeggook.com/${no}`, title, price });
+    if (out.length >= limit) break;
+  }
+  return out;
+}
+
 export async function generateRecommendationsForUser({ userId, settings, keywords, topN = 20 }) {
   const seed = Array.isArray(keywords) && keywords.length > 0 ? keywords : defaultKeywordSet();
-  const candidates = [];
+  const startedAt = Date.now();
 
-  // Keep v0 fast: limit candidate set size.
+  // Fast stage: gather (title, price, url) from list pages.
+  const candidates = [];
   for (const kw of seed.slice(0, 40)) {
-    const urls = await fetchDomeggookUrlsByKeyword({
+    if (Date.now() - startedAt > 6 * 60_000) break;
+    const list = await fetchFastCandidatesFromList({
       keyword: kw,
-      limit: 50,
+      limit: 60,
       storageStatePath: String(settings?.domeggookStorageStatePath || ''),
     }).catch(() => []);
-    for (const u of urls) {
-      candidates.push({ keyword: kw, url: u });
-      if (candidates.length >= 600) break;
+
+    for (const it of list) {
+      candidates.push({ keyword: kw, ...it });
+      if (candidates.length >= 1200) break;
     }
-    if (candidates.length >= 600) break;
+    if (candidates.length >= 1200) break;
   }
 
   // de-dupe
@@ -275,37 +348,31 @@ export async function generateRecommendationsForUser({ userId, settings, keyword
     uniq.push(c);
   }
 
+  // Score stage (still fast): use title+price only. This is enough to get a top list.
   const scored = [];
-  const startedAt = Date.now();
   for (const c of uniq) {
-    // Hard budget to avoid hanging the whole run (manual + daily run). User allows ~10-15 min.
-    if (Date.now() - startedAt > 12 * 60_000) break;
+    if (Date.now() - startedAt > 11.5 * 60_000) break;
 
-    const prev = await previewUploadFromUrl(c.url, {
-      ...(settings || {}),
-      maxContentImages: 30,
-      // ensure we compute finalPrice using existing margin settings
-      marginRate: settings?.marginRate ?? 0.5,
-      marginAdd: settings?.marginAdd ?? 0,
-    }).catch(() => null);
+    if (containsBanKeyword(c.title, DEFAULT_BAN_KEYWORDS)) continue;
 
-    if (!prev?.ok) continue;
-    const s = scoreRecommendation({
-      preview: prev,
-      minProfit: 3000,
-      minMarginRate: 0.30,
-      banKeywords: DEFAULT_BAN_KEYWORDS,
-    });
+    const fakePreview = {
+      ok: true,
+      url: c.url,
+      draft: { title: c.title, price: c.price, shippingFee: null, imageUrl: '' },
+      computed: { contentImageCount: 1 },
+    };
+
+    const s = scoreRecommendation({ preview: fakePreview, minProfit: 3000, minMarginRate: 0.30, banKeywords: DEFAULT_BAN_KEYWORDS });
     if (!s.ok) continue;
 
     scored.push({
       sourceUrl: c.url,
       keyword: c.keyword,
       ...s,
-      payload: { preview: { url: prev.url, draft: prev.draft, computed: prev.computed } },
+      payload: { fast: true },
     });
 
-    if (scored.length >= 200) break;
+    if (scored.length >= 500) break;
   }
 
   scored.sort((a, b) => (Number(b.score) || 0) - (Number(a.score) || 0));
