@@ -756,7 +756,18 @@ app.post('/api/catalog/:id/deploy', authRequired, async (req, res) => {
               const data = obj?.data || obj || null;
               const displayCategoryCode = data?.displayCategoryCode ?? data?.displayCategoryId ?? null;
               const items = Array.isArray(data?.items) ? data.items : [];
-              const content = items?.[0]?.content || items?.[0]?.contentText || items?.[0]?.contentHtml || '';
+              const item0 = items?.[0] || {};
+              const content =
+                item0?.content ||
+                item0?.contentText ||
+                item0?.contentHtml ||
+                // Coupang API often returns detail under items[0].contents[].contentDetails[].content
+                (Array.isArray(item0?.contents)
+                  ? item0.contents
+                      .flatMap((c) => (Array.isArray(c?.contentDetails) ? c.contentDetails : []))
+                      .map((d) => d?.content || '')
+                      .join('\n')
+                  : '');
               if (!content || String(content).trim().length < 20) {
                 validation.ok = false;
                 validation.errors.push('detail_empty');
