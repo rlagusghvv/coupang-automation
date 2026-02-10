@@ -114,6 +114,14 @@ function containsBanKeyword(text, banList) {
   return (banList || []).some((k) => t.includes(String(k || '').toLowerCase()));
 }
 
+function roundToKrw900(p) {
+  const x = Number(p);
+  if (!Number.isFinite(x)) return null;
+  // Round UP to prices ending with 900 (e.g. 9,900 / 12,900 / 19,900)
+  const k = Math.ceil((x + 100) / 1000);
+  return Math.max(900, k * 1000 - 100);
+}
+
 export function scoreRecommendation({ preview, minProfit = 3000, minMarginRate = 0.30, banKeywords = DEFAULT_BAN_KEYWORDS }) {
   const draft = preview?.draft || {};
   const computed = preview?.computed || {};
@@ -123,13 +131,22 @@ export function scoreRecommendation({ preview, minProfit = 3000, minMarginRate =
   if (containsBanKeyword(title, banKeywords)) return { ok: false, reason: 'banned_keyword' };
 
   const sourcePrice = Number(draft.price);
-  const finalPrice = Number(computed.finalPrice);
-  if (!Number.isFinite(sourcePrice) || !Number.isFinite(finalPrice) || sourcePrice <= 0 || finalPrice <= 0) {
+  if (!Number.isFinite(sourcePrice) || sourcePrice <= 0) {
     return { ok: false, reason: 'bad_price' };
   }
 
-  // Profit heuristic v0: treat shipping as pass-through (user charges shipping anyway).
-  // So we don't subtract shipping here; we only require an absolute profit >= minProfit.
+  // Choose a recommended selling price that satisfies BOTH:
+  // - profit >= minProfit
+  // - marginRate >= minMarginRate
+  const needByProfit = sourcePrice + Number(minProfit || 0);
+  const needByMargin = sourcePrice / (1 - Number(minMarginRate || 0));
+  const need = Math.max(needByProfit, needByMargin);
+  const finalPrice = roundToKrw900(need);
+  if (!Number.isFinite(finalPrice) || finalPrice <= 0) {
+    return { ok: false, reason: 'bad_price' };
+  }
+
+  // Profit heuristic: treat shipping as pass-through.
   const profit = finalPrice - sourcePrice;
   const marginRate = profit / finalPrice;
 
@@ -142,7 +159,7 @@ export function scoreRecommendation({ preview, minProfit = 3000, minMarginRate =
 
   // Simple score: favor higher profit and sufficient detail images.
   const score = profit + Math.min(2000, contentImageCount * 200);
-  const reason = `profit≈${Math.round(profit)} / margin≈${Math.round(marginRate * 100)}% / detailImages=${contentImageCount}`;
+  const reason = `recommend≈${Math.round(finalPrice)} / profit≈${Math.round(profit)} / margin≈${Math.round(marginRate * 100)}% / detailImages=${contentImageCount}`;
 
   return {
     ok: true,

@@ -203,7 +203,7 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
                                     color: Theme.of(context).colorScheme.outline,
                                   ),
                                 InfoChip(
-                                  label: '판매가 ${(finalPrice as num).round()}',
+                                  label: '권장가 ${(finalPrice as num).round()}',
                                   color: Theme.of(context).colorScheme.primary,
                                 ),
                                 InfoChip(
