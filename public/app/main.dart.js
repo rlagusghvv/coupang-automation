@@ -45300,7 +45300,7 @@ $icG:1}
 A.KP.prototype={
 Df(a){var s,r=B.c.an(a)
 if(!B.c.bf(r,"http"))return r
-if(B.c.n(r,"domeggook.com")){s=A.kW()
+if(B.c.n(r,"domeggook.com")||B.c.n(r,"coupangcdn.com")){s=A.kW()
 return s.gkh(s)+"/api/image-proxy?url="+A.J2(2,r,B.ab,!1)}return r},
 Vh(a,b){var s=B.c.bf(a,"/")?a:"/"+a,r=A.kW()
 return A.hD(r.gkh(r),0,null).a0s(0,s,b)},
