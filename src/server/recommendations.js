@@ -107,8 +107,10 @@ export async function fetchDomeggookUrlsByKeyword({ keyword, limit = 40, storage
       const r = await fetch(listUrl, {
         headers: { 'User-Agent': 'Mozilla/5.0', 'Referer': 'https://domeggook.com/' },
       });
+      if (r.status === 429) throw new Error('domeggook_rate_limited');
       if (!r.ok) break;
       const html = await r.text();
+      await new Promise((r) => setTimeout(r, 450));
       const out = extractFromHtml(html);
       for (const u of out) {
         if (!all.includes(u)) all.push(u);
@@ -133,6 +135,7 @@ export async function fetchDomeggookUrlsByKeyword({ keyword, limit = 40, storage
       const listUrl = pageNo === 1 ? baseUrl : `${baseUrl}&page=${pageNo}`;
       await page.goto(listUrl, { waitUntil: 'domcontentloaded', timeout: 60_000 });
       await page.waitForTimeout(1100);
+      await page.waitForTimeout(350);
       const html = await page.content();
       const out = extractFromHtml(html);
       for (const u of out) {
@@ -311,6 +314,7 @@ async function fetchFastCandidatesFromList({ keyword, limit = 80, storageStatePa
       clearTimeout(t);
       if (!r.ok) continue;
       const html = await r.text();
+      await new Promise((r) => setTimeout(r, 200));
 
       const title = (() => {
         const m = html.match(/<meta property=["']og:title["'] content=["']([^"']+)["']/i);
@@ -354,13 +358,24 @@ export async function generateRecommendationsForUser({ userId, settings, keyword
 
   // Fast stage: gather (title, price, url) from list pages.
   const candidates = [];
-  for (const kw of seed.slice(0, 40)) {
+  for (const kw of seed.slice(0, 12)) {
     if (Date.now() - startedAt > 6 * 60_000) break;
-    const list = await fetchFastCandidatesFromList({
-      keyword: kw,
-      limit: 60,
-      storageStatePath: String(settings?.domeggookStorageStatePath || ''),
-    }).catch(() => []);
+    let list = [];
+    try {
+      list = await fetchFastCandidatesFromList({
+        keyword: kw,
+        limit: 40,
+        storageStatePath: String(settings?.domeggookStorageStatePath || ''),
+      });
+    } catch (e) {
+      if (String(e?.message || e).includes('rate_limited')) {
+        if (typeof onProgress === 'function') {
+          try { onProgress({ stage: 'rate_limited', keyword: kw, candidates: candidates.length }); } catch {}
+        }
+        break;
+      }
+      list = [];
+    }
 
     for (const it of list) {
       candidates.push({ keyword: kw, ...it });
