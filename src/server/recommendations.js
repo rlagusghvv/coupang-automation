@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 
 import { previewUploadFromUrl } from '../pipeline/previewUploadFromUrl.js';
 import { dbAll, dbRun, openDb } from './storage_sqlite_internal.js';
+import { fetchWithRetry } from './net_limit.js';
 
 function dbGetOne(db, sql, params = []) {
   return dbAll(db, sql, params).then((rows) => (rows && rows[0]) || null);
@@ -114,8 +115,14 @@ export async function fetchDomeggookUrlsByKeyword({ keyword, limit = 40, storage
     const all = [];
     for (let pageNo = 1; pageNo <= want && all.length < limit; pageNo += 1) {
       const listUrl = pageNo === 1 ? baseUrl : `${baseUrl}&page=${pageNo}`;
-      const r = await fetch(listUrl, {
+      const r = await fetchWithRetry(listUrl, {
         headers: { 'User-Agent': 'Mozilla/5.0', 'Referer': 'https://domeggook.com/' },
+        // Domeggook is sensitive: space requests and retry on 429
+        spacingMs: 650,
+        retries: 3,
+        retryOn: [429, 503],
+        baseDelayMs: 650,
+        maxDelayMs: 8000,
       });
       if (r.status === 429) throw new Error('domeggook_rate_limited');
       if (!r.ok) break;
@@ -446,9 +453,14 @@ async function fetchFastCandidatesFromList({ keyword, limit = 80, storageStatePa
     try {
       const controller = new AbortController();
       const t = setTimeout(() => controller.abort(), 12000);
-      const r = await fetch(u, {
+      const r = await fetchWithRetry(u, {
         signal: controller.signal,
         headers: { 'User-Agent': 'Mozilla/5.0', 'Referer': 'https://domeggook.com/' },
+        spacingMs: 650,
+        retries: 2,
+        retryOn: [429, 503],
+        baseDelayMs: 650,
+        maxDelayMs: 8000,
       });
       clearTimeout(t);
       if (r.status === 429) throw new Error('domeggook_rate_limited');

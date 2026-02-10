@@ -257,8 +257,8 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
           ),
         IconButton(
           onPressed: _loading ? null : _runNow,
-          icon: const Icon(Icons.play_arrow),
-          tooltip: '지금 추천 생성',
+          icon: const Icon(Icons.auto_awesome),
+          tooltip: '추천 채우기',
         ),
         IconButton(
           onPressed: _loading ? null : _refresh,
@@ -291,13 +291,10 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
                 label: _loading ? '불러오는 중…' : '총 ${_items.length}개',
                 color: Theme.of(context).colorScheme.primary,
               ),
-              const Spacer(),
-              Text(
-                '기준: 순마진≥3,000원 / 마진율≥30% (검증 통과만 노출)',
-                style: TextStyle(
-                  color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6),
-                  fontSize: 12,
-                ),
+              const SizedBox(width: 8),
+              InfoChip(
+                label: '순마진≥3천 · 마진≥30%',
+                color: Theme.of(context).colorScheme.outline,
               ),
             ],
           ),
