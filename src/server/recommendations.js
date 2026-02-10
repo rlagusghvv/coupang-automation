@@ -11,8 +11,10 @@ function nowIso() {
 }
 
 export const DEFAULT_BAN_KEYWORDS = [
-  // regulated
-  '식품', '건기식', '건강기능', '의약', '의료', '치료', '진단',
+  // regulated (food etc)
+  '식품', '먹거리', '음료', '건기식', '건강기능',
+  '올리브유', '식초', '발사믹', '꿀', '차', '커피', '과자',
+  '의약', '의료', '치료', '진단',
   '화장품', '미백', '주름', '탈모',
   // batteries/electric
   '배터리', '충전기', '전동', '전기', '220v', '110v',
@@ -232,14 +234,14 @@ export async function generateRecommendationsForUser({ userId, settings, keyword
   for (const kw of seed.slice(0, 25)) {
     const urls = await fetchDomeggookUrlsByKeyword({
       keyword: kw,
-      limit: 12,
+      limit: 30,
       storageStatePath: String(settings?.domeggookStorageStatePath || ''),
     }).catch(() => []);
     for (const u of urls) {
       candidates.push({ keyword: kw, url: u });
-      if (candidates.length >= 120) break;
+      if (candidates.length >= 240) break;
     }
-    if (candidates.length >= 120) break;
+    if (candidates.length >= 240) break;
   }
 
   // de-dupe
@@ -255,7 +257,7 @@ export async function generateRecommendationsForUser({ userId, settings, keyword
   const startedAt = Date.now();
   for (const c of uniq) {
     // Hard budget to avoid hanging the whole run.
-    if (Date.now() - startedAt > 2.5 * 60_000) break;
+    if (Date.now() - startedAt > 4.0 * 60_000) break;
 
     const prev = await previewUploadFromUrl(c.url, {
       ...(settings || {}),
@@ -281,7 +283,7 @@ export async function generateRecommendationsForUser({ userId, settings, keyword
       payload: { preview: { url: prev.url, draft: prev.draft, computed: prev.computed } },
     });
 
-    if (scored.length >= 40) break;
+    if (scored.length >= 80) break;
   }
 
   scored.sort((a, b) => (Number(b.score) || 0) - (Number(a.score) || 0));
