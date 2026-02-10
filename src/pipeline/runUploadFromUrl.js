@@ -26,6 +26,7 @@ import { downloadImagesWithPlaywright } from "../utils/playwrightImageDownload.j
 import { deployPagesAssets } from "../utils/pagesDeploy.js";
 import { downloadImageBufferWithPlaywright } from "../utils/downloadImage.js";
 import { uploadMarketplaceImage } from "../coupang/api/uploadMarketplaceImage.js";
+import { fetchWithRetry } from "../server/net_limit.js";
 
 const OUTBOUND_SHIPPING_PLACE_CODE = "24093380";
 const DISPLAY_CATEGORY_CODE = 77723;
@@ -358,7 +359,7 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
     if (imageUrl === draft.imageUrl) {
       const mappedMain = downloaded.urlMap[draft.imageUrl];
       if (!mappedMain) {
-        return { ok: false, skipped: false, error: "main image download failed" };
+        return { ok: false, skipped: false, error: "main_image_download_failed" };
       }
 
       const imageReachable = await isUrlReachable(mappedMain, IMAGE_CHECK_TIMEOUT_MS);
@@ -679,6 +680,7 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
 async function getPublicIp() {
   for (const url of IP_CHECK_URLS) {
     try {
+      // Best-effort: avoid spamming the IP check providers.
       const res = await fetch(url, { method: "GET" });
       if (!res.ok) continue;
       const text = (await res.text()).trim();
@@ -690,18 +692,26 @@ async function getPublicIp() {
 
 async function isUrlReachable(url, timeoutMs = 8000) {
   if (!url) return false;
+
+  // Cloudflare Pages or our static out hosting can be a bit flaky right after write.
+  // Retry a few times.
   const shouldRetry = url.includes(".pages.dev") || url.includes("/couplus-out/");
-  const maxAttempts = shouldRetry ? 3 : 1;
+  const maxAttempts = shouldRetry ? 4 : 2;
+
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
+
     try {
+      // Prefer HEAD (cheap)
       const res = await fetch(url, { method: "HEAD", signal: controller.signal });
       if (res.ok) {
         clearTimeout(timer);
         return true;
       }
+      // Some hosts reject HEAD; fall back to GET.
     } catch {}
+
     try {
       const res = await fetch(url, { method: "GET", signal: controller.signal });
       if (res.ok) {
@@ -709,11 +719,17 @@ async function isUrlReachable(url, timeoutMs = 8000) {
         return true;
       }
     } catch {}
+
     clearTimeout(timer);
+
+    // Backoff with jitter
     if (attempt < maxAttempts - 1) {
-      await new Promise((r) => setTimeout(r, 2000));
+      const base = 650 * Math.pow(2, attempt);
+      const jitter = Math.floor(Math.random() * 250);
+      await new Promise((r) => setTimeout(r, Math.min(8000, base + jitter)));
     }
   }
+
   return false;
 }
 
