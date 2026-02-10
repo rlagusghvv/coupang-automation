@@ -41,6 +41,57 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
     }
   }
 
+  Future<void> _uploadNow(String url) async {
+    final u = url.trim();
+    if (u.isEmpty) return;
+
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+
+    try {
+      final json = await widget.api.postJson('/api/jobs/start', {
+        'kind': 'upload',
+        'url': u,
+        'force': '0',
+      });
+      final job = (json['job'] as Map?)?.cast<String, dynamic>() ?? {};
+      final jobId = (job['id'] ?? '').toString();
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('업로드를 시작했어요. (백그라운드 작업)')),
+        );
+      }
+
+      if (jobId.isNotEmpty) {
+        // Poll job for up to ~10 minutes.
+        for (var i = 0; i < 300; i += 1) {
+          await Future<void>.delayed(const Duration(seconds: 2));
+          final j = await widget.api.getJson('/api/jobs/$jobId');
+          final job = (j['job'] as Map?)?.cast<String, dynamic>() ?? {};
+          final status = (job['status'] ?? '').toString();
+          if (status == 'success') {
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('업로드 완료!')),
+              );
+            }
+            break;
+          }
+          if (status == 'failed') {
+            throw Exception(job['errorMessage'] ?? '업로드 실패');
+          }
+        }
+      }
+    } catch (e) {
+      setState(() => _error = e.toString());
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
   Future<void> _runNow() async {
     setState(() {
       _loading = true;
@@ -162,7 +213,7 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
                   onTap: url.isEmpty
                       ? null
                       : () {
-                          // For now: copy URL.
+                          // Tap: copy URL.
                           Clipboard.setData(ClipboardData(text: url));
                           ScaffoldMessenger.of(context).showSnackBar(
                             const SnackBar(content: Text('URL을 복사했어요.')),
@@ -227,6 +278,29 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
                                 InfoChip(
                                   label: '마진 ${(((marginRate as num)) * 100).round()}%',
                                   color: const Color(0xFF2F9E44),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 8),
+                            Row(
+                              children: [
+                                FilledButton.tonalIcon(
+                                  onPressed: (url.isEmpty || _loading) ? null : () => _uploadNow(url),
+                                  icon: const Icon(Icons.cloud_upload_outlined, size: 18),
+                                  label: const Text('업로드'),
+                                ),
+                                const SizedBox(width: 8),
+                                TextButton.icon(
+                                  onPressed: url.isEmpty
+                                      ? null
+                                      : () {
+                                          Clipboard.setData(ClipboardData(text: url));
+                                          ScaffoldMessenger.of(context).showSnackBar(
+                                            const SnackBar(content: Text('URL을 복사했어요.')),
+                                          );
+                                        },
+                                  icon: const Icon(Icons.copy, size: 18),
+                                  label: const Text('복사'),
                                 ),
                               ],
                             ),
