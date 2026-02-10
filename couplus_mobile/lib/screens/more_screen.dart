@@ -919,10 +919,29 @@ class _MoreScreenState extends State<MoreScreen> {
               children: [
                 const SectionHeader('Server'),
                 const SizedBox(height: 10),
-                KvRow(k: 'Base URL', v: ApiClient.defaultBaseUrl),
+                KvRow(k: '현재 서버 주소', v: widget.api.baseUrl),
+                const SizedBox(height: 10),
+                TextField(
+                  enabled: true,
+                  decoration: const InputDecoration(
+                    labelText: '서버 주소 바꾸기 (예: https://xxxx.trycloudflare.com)',
+                    border: OutlineInputBorder(),
+                  ),
+                  onSubmitted: (v) async {
+                    await widget.api.setBaseUrl(v);
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('서버 주소를 저장했어요.')),
+                      );
+                    }
+                    if (context.mounted) setState(() {});
+                  },
+                ),
+                const SizedBox(height: 10),
                 KvRow(
-                    k: 'Dashboard',
-                    v: '${ApiClient.defaultBaseUrl}/api/dashboard'),
+                  k: 'Dashboard',
+                  v: '${widget.api.baseUrl}/api/dashboard',
+                ),
                 const Divider(height: 24),
                 SizedBox(
                   width: double.infinity,
@@ -933,7 +952,7 @@ class _MoreScreenState extends State<MoreScreen> {
                         MaterialPageRoute(
                           builder: (_) => WebviewScreen(
                             title: 'Web Dashboard',
-                            url: ApiClient.defaultBaseUrl,
+                            url: widget.api.baseUrl,
                           ),
                         ),
                       );

@@ -27,7 +27,7 @@ class ApiException implements Exception {
 class ApiClient {
   ApiClient({http.Client? client, String? baseUrl, SessionStore? sessionStore})
       : _client = client ?? http.Client(),
-        baseUrl = baseUrl ?? defaultBaseUrl,
+        _baseUrl = baseUrl ?? defaultBaseUrl,
         _sessionStore = sessionStore ?? SessionStore();
 
   static String get defaultBaseUrl {
@@ -35,12 +35,15 @@ class ApiClient {
     if (kIsWeb) {
       return Uri.base.origin;
     }
+    // Native default (can be changed in More 탭)
     return 'http://macmini.tail4fbf54.ts.net:3000';
   }
 
   final http.Client _client;
-  final String baseUrl;
+  String _baseUrl;
   final SessionStore _sessionStore;
+
+  String get baseUrl => kIsWeb ? Uri.base.origin : _baseUrl;
 
   String? _cookie; // e.g. "session=..."
   bool _loaded = false;
@@ -53,6 +56,12 @@ class ApiClient {
   Future<void> init() async {
     if (_loaded) return;
     _cookie = await _sessionStore.loadCookie();
+    if (!kIsWeb) {
+      final savedBaseUrl = await _sessionStore.loadBaseUrl();
+      if (savedBaseUrl != null && savedBaseUrl.trim().isNotEmpty) {
+        _baseUrl = savedBaseUrl.trim();
+      }
+    }
     _loaded = true;
   }
 
@@ -68,6 +77,13 @@ class ApiClient {
     _cookie = null;
     _loaded = true;
     await _sessionStore.clear();
+  }
+
+  Future<void> setBaseUrl(String next) async {
+    final v = next.trim();
+    if (v.isEmpty) return;
+    _baseUrl = v;
+    await _sessionStore.saveBaseUrl(v);
   }
 
   Map<String, String> _headers({Map<String, String>? extra}) {
