@@ -16,6 +16,7 @@ class RecommendationsScreen extends StatefulWidget {
 class _RecommendationsScreenState extends State<RecommendationsScreen> {
   bool _loading = false;
   String? _error;
+  String? _progress;
   List<Map<String, dynamic>> _items = const [];
   final Set<String> _selected = <String>{};
 
@@ -29,6 +30,7 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
     setState(() {
       _loading = true;
       _error = null;
+      _progress = null;
     });
     try {
       final json = await widget.api.getJson('/api/recommendations', query: {
@@ -50,6 +52,7 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
     setState(() {
       _loading = true;
       _error = null;
+      _progress = null;
     });
 
     try {
@@ -84,7 +87,7 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
           if (progress.isNotEmpty && mounted) {
             final stage = (progress['stage'] ?? '').toString();
             setState(() {
-              _error = stage.isEmpty ? null : '업로드 진행중: $stage';
+              _progress = stage.isEmpty ? null : '업로드 진행중: $stage';
             });
           }
 
@@ -145,6 +148,7 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
     setState(() {
       _loading = true;
       _error = null;
+      _progress = null;
     });
 
     try {
@@ -159,7 +163,7 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
         started += 1;
         if (mounted) {
           setState(() {
-            _error = '다중 업로드 시작중… ($started/${urls.length})';
+            _progress = '다중 업로드 시작중… ($started/${urls.length})';
           });
         }
         await Future<void>.delayed(const Duration(milliseconds: 350));
@@ -185,6 +189,7 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
     setState(() {
       _loading = true;
       _error = null;
+      _progress = null;
     });
     try {
       final json = await widget.api.postJson('/api/recommendations/fill', {'targetCount': 20});
@@ -213,7 +218,7 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
             final kept = (progress['kept'] ?? 0).toString();
             final target = (progress['target'] ?? 0).toString();
             setState(() {
-              _error = '진행중: $stage (후보 $candidates / 검증 $validated / 유지 $kept/$target)';
+              _progress = '추천 생성중: $stage (후보 $candidates / 검증 $validated / 유지 $kept/$target)';
             });
           }
 
@@ -263,6 +268,8 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          if (_loading) const LinearProgressIndicator(minHeight: 2),
+          if (_loading) const SizedBox(height: 12),
           if (selectedCount > 0) ...[
             AppCard(
               child: Row(
@@ -294,6 +301,34 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
               ),
             ],
           ),
+          if (_progress != null) ...[
+            const SizedBox(height: 12),
+            AppCard(
+              child: Row(
+                children: [
+                  Icon(Icons.hourglass_top,
+                      color: Theme.of(context)
+                          .colorScheme
+                          .onSurface
+                          .withValues(alpha: 0.7)),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      _progress!,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: Theme.of(context)
+                            .colorScheme
+                            .onSurface
+                            .withValues(alpha: 0.8),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
           if (_error != null) ...[
             const SizedBox(height: 12),
             ErrorBanner(message: _error!, onRetry: _refresh),

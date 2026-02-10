@@ -1051,51 +1051,68 @@ class _WorkScreenState extends State<WorkScreen> {
                   ],
                 ),
                 const SizedBox(height: 10),
-                Row(
-                  children: [
-                    Switch(
-                      value: _forceUpload,
-                      onChanged: (!isAuthed || _loading)
-                          ? null
-                          : (v) => setState(() => _forceUpload = v),
-                    ),
-                    const SizedBox(width: 6),
-                    Expanded(
-                      child: Text(
-                        '강제 재업로드(중복 허용)',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: Theme.of(context)
-                              .colorScheme
-                              .onSurface
-                              .withValues(alpha: 0.65),
-                        ),
+                Theme(
+                  data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+                  child: ExpansionTile(
+                    tilePadding: EdgeInsets.zero,
+                    childrenPadding: EdgeInsets.zero,
+                    title: const Text('고급 옵션', style: TextStyle(fontWeight: FontWeight.w900)),
+                    subtitle: Text(
+                      '중복 허용/컨펌 생략 같은 옵션',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.65),
                       ),
                     ),
-                  ],
-                ),
-                Row(
-                  children: [
-                    Switch(
-                      value: _skipPreviewBeforeUpload,
-                      onChanged: (!isAuthed || _loading)
-                          ? null
-                          : (v) => setState(() => _skipPreviewBeforeUpload = v),
-                    ),
-                    const SizedBox(width: 6),
-                    Expanded(
-                      child: Text(
-                        '바로 업로드(미리보기/컨펌 생략)',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: Theme.of(context)
-                              .colorScheme
-                              .onSurface
-                              .withValues(alpha: 0.65),
-                        ),
+                    children: [
+                      Row(
+                        children: [
+                          Switch(
+                            value: _forceUpload,
+                            onChanged: (!isAuthed || _loading)
+                                ? null
+                                : (v) => setState(() => _forceUpload = v),
+                          ),
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: Text(
+                              '강제 재업로드(중복 허용)',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Theme.of(context)
+                                    .colorScheme
+                                    .onSurface
+                                    .withValues(alpha: 0.65),
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
-                    ),
-                  ],
+                      Row(
+                        children: [
+                          Switch(
+                            value: _skipPreviewBeforeUpload,
+                            onChanged: (!isAuthed || _loading)
+                                ? null
+                                : (v) => setState(() => _skipPreviewBeforeUpload = v),
+                          ),
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: Text(
+                              '바로 업로드(미리보기/컨펌 생략)',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Theme.of(context)
+                                    .colorScheme
+                                    .onSurface
+                                    .withValues(alpha: 0.65),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
                 ),
                 if (_activeJob != null) ...[
                   const SizedBox(height: 6),
