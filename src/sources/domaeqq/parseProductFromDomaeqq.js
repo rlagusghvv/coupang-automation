@@ -2,6 +2,7 @@ import { chromium } from "playwright";
 import fs from "node:fs";
 import path from "node:path";
 import { makeDraft } from "../../domain/productDraft.js";
+import { fetchWithRetry } from "../../server/net_limit.js";
 
 function floorTo10Won(n) {
   const x = Number(n);
@@ -1121,11 +1122,16 @@ export async function parseProductFromDomaeqq(url) {
     let finalContentHtml = contentHtml;
     if (detailHtmlUrl) {
       try {
-        const res = await fetch(detailHtmlUrl, {
+        const res = await fetchWithRetry(detailHtmlUrl, {
           headers: {
             Referer: url,
             "User-Agent": "Mozilla/5.0",
           },
+          spacingMs: 350,
+          retries: 2,
+          retryOn: [429, 500, 502, 503, 504],
+          baseDelayMs: 600,
+          maxDelayMs: 8000,
         });
         if (res.ok) {
           const html = await res.text();
@@ -1152,11 +1158,16 @@ export async function parseProductFromDomaeqq(url) {
       const looksTooSmall = imgCount < 8;
       const alreadyHasProductCdn = /coupangcdn\.com/i.test(String(finalContentHtml || ""));
       if (looksTooSmall && !alreadyHasProductCdn) {
-        const res = await fetch(url, {
+        const res = await fetchWithRetry(url, {
           headers: {
             Referer: "https://domeggook.com/",
             "User-Agent": "Mozilla/5.0",
           },
+          spacingMs: 350,
+          retries: 2,
+          retryOn: [429, 500, 502, 503, 504],
+          baseDelayMs: 600,
+          maxDelayMs: 8000,
         });
         if (res.ok) {
           const raw = await res.text();

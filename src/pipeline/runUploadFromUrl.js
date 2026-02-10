@@ -681,7 +681,14 @@ async function getPublicIp() {
   for (const url of IP_CHECK_URLS) {
     try {
       // Best-effort: avoid spamming the IP check providers.
-      const res = await fetch(url, { method: "GET" });
+      const res = await fetchWithRetry(url, {
+        method: "GET",
+        spacingMs: 250,
+        retries: 2,
+        retryOn: [429, 500, 502, 503, 504],
+        baseDelayMs: 500,
+        maxDelayMs: 4000,
+      });
       if (!res.ok) continue;
       const text = (await res.text()).trim();
       if (text && text.length < 80) return text;
@@ -704,7 +711,15 @@ async function isUrlReachable(url, timeoutMs = 8000) {
 
     try {
       // Prefer HEAD (cheap)
-      const res = await fetch(url, { method: "HEAD", signal: controller.signal });
+      const res = await fetchWithRetry(url, {
+        method: "HEAD",
+        signal: controller.signal,
+        spacingMs: 250,
+        retries: shouldRetry ? 2 : 1,
+        retryOn: [429, 500, 502, 503, 504],
+        baseDelayMs: 500,
+        maxDelayMs: 6000,
+      });
       if (res.ok) {
         clearTimeout(timer);
         return true;
@@ -713,7 +728,15 @@ async function isUrlReachable(url, timeoutMs = 8000) {
     } catch {}
 
     try {
-      const res = await fetch(url, { method: "GET", signal: controller.signal });
+      const res = await fetchWithRetry(url, {
+        method: "GET",
+        signal: controller.signal,
+        spacingMs: 250,
+        retries: shouldRetry ? 2 : 1,
+        retryOn: [429, 500, 502, 503, 504],
+        baseDelayMs: 500,
+        maxDelayMs: 6000,
+      });
       if (res.ok) {
         clearTimeout(timer);
         return true;

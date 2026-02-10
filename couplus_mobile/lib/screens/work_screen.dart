@@ -336,6 +336,8 @@ class _WorkScreenState extends State<WorkScreen> {
         return '쿠팡 상품 생성에 실패했습니다.';
       case 'image_host_unreachable':
         return '이미지 호스트에 접근할 수 없어 업로드를 중단했습니다.';
+      case 'main_image_download_failed':
+        return '대표 이미지 다운로드에 실패했습니다. (원본/이미지 호스트 상태 확인 필요)';
       default:
         return '업로드 실패: $code';
     }

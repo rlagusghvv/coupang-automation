@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { fetchWithRetry } from "../server/net_limit.js";
 
 const BASE_URL = "https://api.searchad.naver.com";
 
@@ -49,10 +50,15 @@ export async function naverSearchAdRequest({
   };
 
   try {
-    const res = await fetch(url, {
+    const res = await fetchWithRetry(url, {
       method: String(method || "GET").toUpperCase(),
       headers,
       body: body == null ? undefined : JSON.stringify(body),
+      spacingMs: 350,
+      retries: 3,
+      retryOn: [429, 500, 502, 503, 504],
+      baseDelayMs: 700,
+      maxDelayMs: 9000,
     });
     const text = await res.text();
     let json = null;
@@ -61,9 +67,24 @@ export async function naverSearchAdRequest({
     } catch {
       json = null;
     }
-    return { ok: res.ok, status: res.status, body: json ?? text };
+
+    if (!res.ok) {
+      return {
+        ok: false,
+        status: res.status,
+        error: `http_${res.status}`,
+        body: json ?? text,
+      };
+    }
+
+    return { ok: true, status: res.status, body: json ?? text };
   } catch (e) {
-    return { ok: false, status: 0, error: String(e?.message || e) };
+    return {
+      ok: false,
+      status: 0,
+      error: "network_error",
+      message: String(e?.message || e),
+    };
   }
 }
 
