@@ -38,48 +38,97 @@ export function defaultKeywordSet() {
   ];
 }
 
-export async function fetchDomeggookUrlsByKeyword({ keyword, limit = 40 }) {
+export async function fetchDomeggookUrlsByKeyword({ keyword, limit = 40, storageStatePath = '' }) {
   const q = String(keyword || '').trim();
   if (!q) return [];
 
-  // Domeggook list page (best-effort)
-  const url = `https://domeggook.com/main/item/itemList.php?sw=${encodeURIComponent(q)}`;
-  const r = await fetch(url, {
-    headers: { 'User-Agent': 'Mozilla/5.0', 'Referer': 'https://domeggook.com/' },
-  });
-  if (!r.ok) return [];
-  const html = await r.text();
+  const listUrl = `https://domeggook.com/main/item/itemList.php?sw=${encodeURIComponent(q)}`;
 
-  // Capture item numbers from links (be permissive; domeggook uses multiple URL patterns).
-  const out = [];
-  const seen = new Set();
+  const extractFromHtml = (html) => {
+    const out = [];
+    const seen = new Set();
+    const pushNo = (no) => {
+      const n = String(no || '').trim();
+      if (!/^\d{6,}$/.test(n)) return;
+      if (seen.has(n)) return;
+      seen.add(n);
+      out.push(`https://domeggook.com/${n}`);
+    };
 
-  const pushNo = (no) => {
-    const n = String(no || '').trim();
-    if (!/^\d{6,}$/.test(n)) return;
-    if (seen.has(n)) return;
-    seen.add(n);
-    out.push(`https://domeggook.com/${n}`);
-  };
-
-  // Pattern: itemView.php?no=63061255
-  const reNo = /[?&]no=(\d{6,})/g;
-  let m;
-  while ((m = reNo.exec(html))) {
-    pushNo(m[1]);
-    if (out.length >= limit) break;
-  }
-
-  // Pattern: https://domeggook.com/63061255
-  if (out.length < limit) {
-    const reShort = /https?:\/\/domeggook\.com\/(\d{6,})/g;
-    while ((m = reShort.exec(html))) {
+    const reNo = /[?&]no=(\d{6,})/g;
+    let m;
+    while ((m = reNo.exec(html))) {
       pushNo(m[1]);
       if (out.length >= limit) break;
     }
-  }
+    if (out.length < limit) {
+      const reShort = /https?:\/\/domeggook\.com\/(\d{6,})/g;
+      while ((m = reShort.exec(html))) {
+        pushNo(m[1]);
+        if (out.length >= limit) break;
+      }
+    }
+    return out.slice(0, limit);
+  };
 
-  return out.slice(0, limit);
+  // 1) Try plain fetch (best-effort; may be limited by bot mitigation)
+  try {
+    const r = await fetch(listUrl, {
+      headers: { 'User-Agent': 'Mozilla/5.0', 'Referer': 'https://domeggook.com/' },
+    });
+    if (r.ok) {
+      const html = await r.text();
+      const out = extractFromHtml(html);
+      if (out.length >= Math.min(10, limit)) return out;
+    }
+  } catch {}
+
+  // 2) Fallback to Playwright with logged-in storageState (more reliable)
+  try {
+    const { chromium } = await import('playwright');
+    const fs = await import('node:fs');
+
+    const hasState = storageStatePath && fs.existsSync(storageStatePath);
+    const browser = await chromium.launch();
+    const context = hasState ? await browser.newContext({ storageState: storageStatePath }) : await browser.newContext();
+    const page = await context.newPage();
+    await page.goto(listUrl, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+    await page.waitForTimeout(1200);
+
+    const nos = await page.evaluate(() => {
+      const hrefs = Array.from(document.querySelectorAll('a'))
+        .map((a) => a.getAttribute('href') || '')
+        .filter(Boolean);
+      const out = [];
+      const seen = new Set();
+      for (const h of hrefs) {
+        const m = String(h).match(/[?&]no=(\d{6,})/);
+        const no = m && m[1] ? m[1] : null;
+        if (!no) continue;
+        if (seen.has(no)) continue;
+        seen.add(no);
+        out.push(no);
+        if (out.length >= 120) break;
+      }
+      return out;
+    });
+
+    await browser.close();
+
+    const urls = [];
+    const seen = new Set();
+    for (const no of (nos || [])) {
+      const n = String(no || '').trim();
+      if (!/^\d{6,}$/.test(n)) continue;
+      if (seen.has(n)) continue;
+      seen.add(n);
+      urls.push(`https://domeggook.com/${n}`);
+      if (urls.length >= limit) break;
+    }
+    return urls;
+  } catch {
+    return [];
+  }
 }
 
 function containsBanKeyword(text, banList) {
@@ -205,7 +254,11 @@ export async function generateRecommendationsForUser({ userId, settings, keyword
   const candidates = [];
 
   for (const kw of seed.slice(0, 60)) {
-    const urls = await fetchDomeggookUrlsByKeyword({ keyword: kw, limit: 30 }).catch(() => []);
+    const urls = await fetchDomeggookUrlsByKeyword({
+      keyword: kw,
+      limit: 30,
+      storageStatePath: String(settings?.domeggookStorageStatePath || ''),
+    }).catch(() => []);
     for (const u of urls) {
       candidates.push({ keyword: kw, url: u });
       if (candidates.length >= 400) break;
