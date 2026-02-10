@@ -10,10 +10,13 @@
 - Server periodically updates `jobs.result_json.progress` while running recommendation jobs.
 - App polls job status and displays a lightweight progress string.
 
-### 2) Fix candidate URL extraction from Domeggook list pages
+### 2) Fix candidate extraction from Domeggook list pages
 - Domeggook list pages often include product links as relative paths like:
   - `/63410895?advcnt=...`
-- Extractor updated to recognize relative numeric IDs and paginate across `page=2..N`.
+- **Important**: fetching each item page quickly hits 429.
+- Updated approach:
+  - extract `(id,title,price)` directly from the **list page DOM** via Playwright (far fewer requests)
+  - fallback to per-item HTML fetch only if list extraction fails
 
 ### 3) New cache-first architecture (fill instead of regenerate)
 - Introduced **append/upsert** flow that fills the cache gradually instead of replacing.

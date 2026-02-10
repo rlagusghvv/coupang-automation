@@ -370,10 +370,70 @@ function parseWon(text) {
 }
 
 async function fetchFastCandidatesFromList({ keyword, limit = 80, storageStatePath = '' }) {
-  // v0 speed-up: get URLs via list-page parsing, then fetch each item HTML (no Playwright per item)
+  // v1: Prefer extracting (url,title,price) directly from list pages (far fewer requests).
+  // Fallback: fetch individual item HTML only when needed.
   const q = String(keyword || '').trim();
   if (!q) return [];
 
+  // 1) Playwright list-page extraction
+  try {
+    const { chromium } = await import('playwright');
+    const fs = await import('node:fs');
+
+    const hasState = storageStatePath && fs.existsSync(storageStatePath);
+    const browser = await chromium.launch();
+    const context = hasState ? await browser.newContext({ storageState: storageStatePath }) : await browser.newContext();
+    const page = await context.newPage();
+
+    const listUrl = `https://domeggook.com/main/item/itemList.php?sw=${encodeURIComponent(q)}&sf=ttl`;
+    await page.goto(listUrl, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+    await page.waitForTimeout(1800);
+
+    const rows = await page.evaluate(() => {
+      const parseWon = (s) => {
+        const m = String(s || '').match(/(\d[\d,]{2,})\s*원/);
+        if (!m) return null;
+        const n = Number(String(m[1]).replace(/,/g, ''));
+        return Number.isFinite(n) ? n : null;
+      };
+
+      const out = [];
+      const seen = new Set();
+      const anchors = [...document.querySelectorAll('a[href^="/"]')];
+
+      for (const a of anchors) {
+        const href = a.getAttribute('href') || '';
+        const m = href.match(/^\/(\d{6,})(?:\?|$)/);
+        if (!m) continue;
+        const id = m[1];
+        if (seen.has(id)) continue;
+
+        const card = a.closest('li, article, div, td') || a.parentElement;
+        const text = (card?.innerText || a.innerText || '').replace(/\s+/g, ' ').trim();
+        const price = parseWon(text);
+        if (!price) continue;
+
+        const title = text.replace(/\d[\d,]{2,}\s*원/g, '').trim().slice(0, 80);
+        if (!title) continue;
+
+        seen.add(id);
+        out.push({ url: `https://domeggook.com/${id}`, title, price });
+        if (out.length >= 120) break;
+      }
+
+      return out;
+    });
+
+    await browser.close();
+
+    if (rows && rows.length) {
+      return rows.slice(0, Math.max(1, Math.min(200, Number(limit) || 80)));
+    }
+  } catch {
+    // ignore and fallback
+  }
+
+  // 2) Fallback: get URLs then fetch each item HTML (may hit 429)
   const urls = await fetchDomeggookUrlsByKeyword({ keyword: q, limit, storageStatePath }).catch(() => []);
   const out = [];
 
@@ -386,6 +446,7 @@ async function fetchFastCandidatesFromList({ keyword, limit = 80, storageStatePa
         headers: { 'User-Agent': 'Mozilla/5.0', 'Referer': 'https://domeggook.com/' },
       });
       clearTimeout(t);
+      if (r.status === 429) throw new Error('domeggook_rate_limited');
       if (!r.ok) continue;
       const html = await r.text();
       await new Promise((r) => setTimeout(r, 200));
@@ -398,7 +459,6 @@ async function fetchFastCandidatesFromList({ keyword, limit = 80, storageStatePa
       })();
 
       const price = (() => {
-        // common patterns
         const m1 = html.match(/(\d[\d,]{2,})\s*원/);
         if (!m1) return null;
         const n = Number(String(m1[1]).replace(/,/g, ''));
@@ -408,9 +468,11 @@ async function fetchFastCandidatesFromList({ keyword, limit = 80, storageStatePa
       if (!title || !price) continue;
       out.push({ url: u, title, price });
       if (out.length >= limit) break;
-    } catch {
-      // ignore
+    } catch (e) {
+      if (String(e?.message || e).includes('rate_limited')) throw e;
     }
+
+    await new Promise((r) => setTimeout(r, 180));
   }
 
   return out;
