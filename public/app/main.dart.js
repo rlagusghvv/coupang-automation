@@ -47906,7 +47906,7 @@ $S:387}
 A.axK.prototype={
 $0(){var s=0,r=A.G(t.H),q=this,p
 var $async$$0=A.H(function(a,b){if(a===1)return A.D(b,r)
-for(;;)switch(s){case 0:p=A.anD("https://www.coupang.com/vp/products/"+q.a)
+for(;;)switch(s){case 0:p=A.anD("https://www.coupang.com/vp/products/"+q.a+"?failRedirectApp=true")
 s=p!=null?2:3
 break
 case 2:s=4
