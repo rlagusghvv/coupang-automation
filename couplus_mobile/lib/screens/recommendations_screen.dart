@@ -359,11 +359,30 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
 
                 final selected = url.isNotEmpty && _selected.contains(url);
 
+                Future<void> openExternal() async {
+                  final uri = Uri.tryParse(url);
+                  if (uri != null) {
+                    await launchUrl(uri, mode: LaunchMode.externalApplication);
+                  }
+                }
+
+                void copyUrl() {
+                  Clipboard.setData(ClipboardData(text: url));
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('URL을 복사했어요.')),
+                  );
+                }
+
+                Future<void> uploadWithRename() async {
+                  final nextTitle = await _promptRename(initial: title);
+                  if (nextTitle == null) return;
+                  await _uploadNow(url, titleOverride: nextTitle);
+                }
+
                 return AppCard(
                   onTap: url.isEmpty
                       ? null
                       : () {
-                          // Tap: toggle select (more useful than copy).
                           setState(() {
                             if (_selected.contains(url)) {
                               _selected.remove(url);
@@ -372,141 +391,180 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
                             }
                           });
                         },
-                  child: Row(
+                  child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Padding(
-                        padding: const EdgeInsets.only(top: 4),
-                        child: Checkbox(
-                          value: selected,
-                          onChanged: url.isEmpty
-                              ? null
-                              : (v) {
-                                  setState(() {
-                                    if (v == true) {
-                                      _selected.add(url);
-                                    } else {
-                                      _selected.remove(url);
-                                    }
-                                  });
-                                },
-                        ),
-                      ),
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(10),
-                        child: img.isEmpty
-                            ? Container(
-                                width: 66,
-                                height: 66,
-                                color: Theme.of(context).colorScheme.surfaceContainerHighest,
-                                child: Icon(Icons.image_outlined,
-                                    color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.5)),
-                              )
-                            : Image.network(
-                                widget.api.proxyImageUrl(img),
-                                width: 66,
-                                height: 66,
-                                fit: BoxFit.cover,
-                                errorBuilder: (_, __, ___) => Container(
-                                  width: 66,
-                                  height: 66,
-                                  color: Theme.of(context).colorScheme.surfaceContainerHighest,
-                                  child: Icon(Icons.broken_image,
-                                      color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.5)),
-                                ),
-                              ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              title.isEmpty ? '(제목 없음)' : title,
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(fontWeight: FontWeight.w900),
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Padding(
+                            padding: const EdgeInsets.only(top: 2),
+                            child: Checkbox(
+                              value: selected,
+                              onChanged: url.isEmpty
+                                  ? null
+                                  : (v) {
+                                      setState(() {
+                                        if (v == true) {
+                                          _selected.add(url);
+                                        } else {
+                                          _selected.remove(url);
+                                        }
+                                      });
+                                    },
                             ),
-                            const SizedBox(height: 6),
-                            Wrap(
-                              spacing: 8,
-                              runSpacing: 6,
-                              children: [
-                                if (keyword.isNotEmpty)
-                                  InfoChip(
-                                    label: keyword,
-                                    color: Theme.of(context).colorScheme.outline,
+                          ),
+                          ClipRRect(
+                            borderRadius: BorderRadius.circular(10),
+                            child: img.isEmpty
+                                ? Container(
+                                    width: 60,
+                                    height: 60,
+                                    color: Theme.of(context)
+                                        .colorScheme
+                                        .surfaceContainerHighest,
+                                    child: Icon(
+                                      Icons.image_outlined,
+                                      color: Theme.of(context)
+                                          .colorScheme
+                                          .onSurface
+                                          .withValues(alpha: 0.5),
+                                    ),
+                                  )
+                                : Image.network(
+                                    widget.api.proxyImageUrl(img),
+                                    width: 60,
+                                    height: 60,
+                                    fit: BoxFit.cover,
+                                    errorBuilder: (_, __, ___) => Container(
+                                      width: 60,
+                                      height: 60,
+                                      color: Theme.of(context)
+                                          .colorScheme
+                                          .surfaceContainerHighest,
+                                      child: Icon(
+                                        Icons.broken_image,
+                                        color: Theme.of(context)
+                                            .colorScheme
+                                            .onSurface
+                                            .withValues(alpha: 0.5),
+                                      ),
+                                    ),
                                   ),
-                                InfoChip(
-                                  label: '권장가 ${(finalPrice as num).round()}',
-                                  color: Theme.of(context).colorScheme.primary,
-                                ),
-                                InfoChip(
-                                  label: '순마진 ${(profit as num).round()}',
-                                  color: const Color(0xFF2F9E44),
-                                ),
-                                InfoChip(
-                                  label: '마진 ${(((marginRate as num)) * 100).round()}%',
-                                  color: const Color(0xFF2F9E44),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 8),
-                            Row(
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                FilledButton.tonalIcon(
-                                  onPressed: (url.isEmpty || _loading)
-                                      ? null
-                                      : () async {
-                                          final nextTitle = await _promptRename(initial: title);
-                                          if (nextTitle == null) return;
-                                          await _uploadNow(url, titleOverride: nextTitle);
-                                        },
-                                  icon: const Icon(Icons.cloud_upload_outlined, size: 18),
-                                  label: const Text('업로드'),
+                                Row(
+                                  children: [
+                                    Expanded(
+                                      child: Text(
+                                        title.isEmpty ? '(제목 없음)' : title,
+                                        maxLines: 2,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: const TextStyle(
+                                            fontWeight: FontWeight.w900),
+                                      ),
+                                    ),
+                                    PopupMenuButton<String>(
+                                      enabled: url.isNotEmpty,
+                                      onSelected: (v) async {
+                                        if (v == 'upload') {
+                                          await uploadWithRename();
+                                        } else if (v == 'open') {
+                                          await openExternal();
+                                        } else if (v == 'copy') {
+                                          copyUrl();
+                                        }
+                                      },
+                                      itemBuilder: (ctx) => [
+                                        const PopupMenuItem(
+                                            value: 'upload', child: Text('업로드')),
+                                        const PopupMenuItem(
+                                            value: 'open', child: Text('도매꾹 열기')),
+                                        const PopupMenuItem(
+                                            value: 'copy', child: Text('URL 복사')),
+                                      ],
+                                    ),
+                                  ],
                                 ),
-                                const SizedBox(width: 8),
-                                TextButton.icon(
-                                  onPressed: url.isEmpty
-                                      ? null
-                                      : () async {
-                                          final uri = Uri.tryParse(url);
-                                          if (uri != null) {
-                                            await launchUrl(uri, mode: LaunchMode.externalApplication);
-                                          }
-                                        },
-                                  icon: const Icon(Icons.open_in_new, size: 18),
-                                  label: const Text('도매꾹'),
-                                ),
-                                const SizedBox(width: 4),
-                                TextButton.icon(
-                                  onPressed: url.isEmpty
-                                      ? null
-                                      : () {
-                                          Clipboard.setData(ClipboardData(text: url));
-                                          ScaffoldMessenger.of(context).showSnackBar(
-                                            const SnackBar(content: Text('URL을 복사했어요.')),
-                                          );
-                                        },
-                                  icon: const Icon(Icons.copy, size: 18),
-                                  label: const Text('복사'),
+                                const SizedBox(height: 8),
+                                Wrap(
+                                  spacing: 8,
+                                  runSpacing: 6,
+                                  children: [
+                                    if (keyword.isNotEmpty)
+                                      InfoChip(
+                                        label: keyword,
+                                        color: Theme.of(context)
+                                            .colorScheme
+                                            .outline,
+                                      ),
+                                    InfoChip(
+                                      label:
+                                          '권장가 ${(finalPrice as num).round()}',
+                                      color:
+                                          Theme.of(context).colorScheme.primary,
+                                    ),
+                                    InfoChip(
+                                      label: '순마진 ${(profit as num).round()}',
+                                      color: const Color(0xFF2F9E44),
+                                    ),
+                                    InfoChip(
+                                      label:
+                                          '마진 ${(((marginRate as num)) * 100).round()}%',
+                                      color: const Color(0xFF2F9E44),
+                                    ),
+                                  ],
                                 ),
                               ],
                             ),
-                            if (reason.isNotEmpty) ...[
-                              const SizedBox(height: 6),
-                              Text(
-                                reason,
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6),
-                                  fontSize: 12,
-                                ),
-                              ),
-                            ],
-                          ],
+                          ),
+                        ],
+                      ),
+                      if (reason.isNotEmpty) ...[
+                        const SizedBox(height: 10),
+                        Text(
+                          reason,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: Theme.of(context)
+                                .colorScheme
+                                .onSurface
+                                .withValues(alpha: 0.6),
+                            fontSize: 12,
+                          ),
                         ),
+                      ],
+                      const SizedBox(height: 10),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: FilledButton.tonalIcon(
+                              onPressed: (url.isEmpty || _loading)
+                                  ? null
+                                  : () async => uploadWithRename(),
+                              icon: const Icon(Icons.cloud_upload_outlined,
+                                  size: 18),
+                              label: const Text('업로드'),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          IconButton(
+                            tooltip: '도매꾹 열기',
+                            onPressed:
+                                (url.isEmpty) ? null : () async => openExternal(),
+                            icon: const Icon(Icons.open_in_new),
+                          ),
+                          IconButton(
+                            tooltip: 'URL 복사',
+                            onPressed: (url.isEmpty) ? null : copyUrl,
+                            icon: const Icon(Icons.copy),
+                          ),
+                        ],
                       ),
                     ],
                   ),
