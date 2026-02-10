@@ -6,11 +6,13 @@ class ImageViewerScreen extends StatefulWidget {
     required this.images,
     this.initialIndex = 0,
     this.title,
+    this.mapUrl,
   });
 
   final List<String> images;
   final int initialIndex;
   final String? title;
+  final String Function(String raw)? mapUrl;
 
   @override
   State<ImageViewerScreen> createState() => _ImageViewerScreenState();
@@ -50,7 +52,8 @@ class _ImageViewerScreenState extends State<ImageViewerScreen> {
         itemCount: images.length,
         onPageChanged: (i) => setState(() => _index = i),
         itemBuilder: (_, i) {
-          final src = images[i];
+          final raw = images[i];
+          final src = widget.mapUrl?.call(raw) ?? raw;
           return InteractiveViewer(
             minScale: 1,
             maxScale: 4,
@@ -76,7 +79,7 @@ class _ImageViewerScreenState extends State<ImageViewerScreen> {
                       ),
                       const SizedBox(height: 6),
                       Text(
-                        src,
+                        raw,
                         style: const TextStyle(
                             color: Colors.white38, fontSize: 12),
                         maxLines: 2,

@@ -35,11 +35,13 @@ class ImageEditScreen extends StatefulWidget {
     required this.initial,
     required this.all,
     this.title = '이미지 편집',
+    this.mapUrl,
   });
 
   final List<String> initial;
   final List<String> all;
   final String title;
+  final String Function(String raw)? mapUrl;
 
   @override
   State<ImageEditScreen> createState() => _ImageEditScreenState();
@@ -250,6 +252,7 @@ class _ImageEditScreenState extends State<ImageEditScreen> {
                               images: _list,
                               initialIndex: i,
                               title: '이미지 크게 보기',
+                              mapUrl: widget.mapUrl,
                             ),
                           ),
                         );
@@ -260,7 +263,7 @@ class _ImageEditScreenState extends State<ImageEditScreen> {
                           width: 62,
                           height: 62,
                           child: Image.network(
-                            src,
+                            widget.mapUrl?.call(src) ?? src,
                             fit: BoxFit.cover,
                             errorBuilder: (_, __, ___) => Container(
                               color: Theme.of(ctx)

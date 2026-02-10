@@ -310,6 +310,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                                   builder: (_) => ImageViewerScreen(
                                     title: '상세 이미지',
                                     images: _detailImages,
+                                    mapUrl: widget.api.proxyImageUrl,
                                   ),
                                 ),
                               );

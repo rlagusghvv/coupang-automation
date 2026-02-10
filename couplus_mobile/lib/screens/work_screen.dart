@@ -490,6 +490,7 @@ class _WorkScreenState extends State<WorkScreen> {
                                     builder: (_) => ImageEditScreen(
                                       initial: _imagesOverride ?? images,
                                       all: images,
+                                      mapUrl: widget.api.proxyImageUrl,
                                     ),
                                   ),
                                 );
@@ -522,6 +523,7 @@ class _WorkScreenState extends State<WorkScreen> {
                                         images: (_imagesOverride ?? images),
                                         initialIndex: i,
                                         title: '이미지 미리보기',
+                                        mapUrl: widget.api.proxyImageUrl,
                                       ),
                                     ),
                                   );
@@ -531,7 +533,7 @@ class _WorkScreenState extends State<WorkScreen> {
                                   child: AspectRatio(
                                     aspectRatio: 1,
                                     child: Image.network(
-                                      src,
+                                      widget.api.proxyImageUrl(src),
                                       fit: BoxFit.cover,
                                       errorBuilder: (_, __, ___) => Container(
                                         color: Theme.of(ctx)
