@@ -121,6 +121,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
           title: '상세 이미지 편집',
           initial: _detailImages,
           all: _detailImages,
+          mapUrl: widget.api.proxyImageUrl,
         ),
       ),
     );
