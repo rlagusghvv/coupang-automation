@@ -227,17 +227,18 @@ export async function generateRecommendationsForUser({ userId, settings, keyword
   const seed = Array.isArray(keywords) && keywords.length > 0 ? keywords : defaultKeywordSet();
   const candidates = [];
 
-  for (const kw of seed.slice(0, 60)) {
+  // Keep v0 fast: limit candidate set size.
+  for (const kw of seed.slice(0, 25)) {
     const urls = await fetchDomeggookUrlsByKeyword({
       keyword: kw,
-      limit: 30,
+      limit: 12,
       storageStatePath: String(settings?.domeggookStorageStatePath || ''),
     }).catch(() => []);
     for (const u of urls) {
       candidates.push({ keyword: kw, url: u });
-      if (candidates.length >= 400) break;
+      if (candidates.length >= 120) break;
     }
-    if (candidates.length >= 400) break;
+    if (candidates.length >= 120) break;
   }
 
   // de-dupe
@@ -250,7 +251,11 @@ export async function generateRecommendationsForUser({ userId, settings, keyword
   }
 
   const scored = [];
+  const startedAt = Date.now();
   for (const c of uniq) {
+    // Hard budget to avoid hanging the whole run.
+    if (Date.now() - startedAt > 2.5 * 60_000) break;
+
     const prev = await previewUploadFromUrl(c.url, {
       ...(settings || {}),
       maxContentImages: 30,
@@ -275,7 +280,7 @@ export async function generateRecommendationsForUser({ userId, settings, keyword
       payload: { preview: { url: prev.url, draft: prev.draft, computed: prev.computed } },
     });
 
-    if (scored.length >= 120) break;
+    if (scored.length >= 40) break;
   }
 
   scored.sort((a, b) => (Number(b.score) || 0) - (Number(a.score) || 0));
