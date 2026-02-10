@@ -48,8 +48,8 @@ class ApiClient {
   String proxyImageUrl(String rawUrl) {
     final u = rawUrl.trim();
     if (!u.startsWith('http')) return u;
-    // Proxy domeggook CDN images to avoid loading failures on some platforms.
-    if (u.contains('domeggook.com')) {
+    // Proxy some CDNs to avoid loading failures on some platforms (hotlink/CORS/etc).
+    if (u.contains('domeggook.com') || u.contains('coupangcdn.com')) {
       return '$baseUrl/api/image-proxy?url=${Uri.encodeComponent(u)}';
     }
     return u;

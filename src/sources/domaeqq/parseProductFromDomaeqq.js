@@ -1047,12 +1047,28 @@ export async function parseProductFromDomaeqq(url) {
     }
 
     // ✅ 상세 HTML 추출(스크립트/스타일 제거 + img src 정리 + 업그레이드)
+    // Some pages fill #contentsBuffer (textarea) asynchronously.
+    try {
+      await page.waitForFunction(() => {
+        const el = document.querySelector('#contentsBuffer');
+        const v = el && (el.value || el.textContent || '');
+        return v && String(v).trim().length > 200;
+      }, { timeout: 5000 });
+    } catch {}
+
     const contentHtml = await page.evaluate(() => {
       const normHtml = (html) =>
         String(html || "")
           .replace(/<script[\s\S]*?<\/script>/gi, "")
           .replace(/<style[\s\S]*?<\/style>/gi, "")
           .trim();
+
+      // Some pages store the detail HTML inside a hidden textarea.
+      const buf = document.querySelector('#contentsBuffer');
+      const bufHtml = buf && (buf.value || buf.textContent || '');
+      if (bufHtml && String(bufHtml).trim().length > 200) {
+        return normHtml(String(bufHtml));
+      }
 
       const blocks = Array.from(document.querySelectorAll("div, section, article"))
         .map((el) => {
@@ -1128,6 +1144,31 @@ export async function parseProductFromDomaeqq(url) {
         // fallback to contentHtml
       }
     }
+
+    // ✅ Fallback: some pages embed detail HTML inside a hidden textarea in the raw HTML.
+    // Playwright DOM may not contain it (server-side variant), so fetch raw HTML directly.
+    try {
+      const imgCount = extractImageUrlsFromHtml(finalContentHtml, url).length;
+      const looksTooSmall = imgCount < 8;
+      const alreadyHasProductCdn = /coupangcdn\.com/i.test(String(finalContentHtml || ""));
+      if (looksTooSmall && !alreadyHasProductCdn) {
+        const res = await fetch(url, {
+          headers: {
+            Referer: "https://domeggook.com/",
+            "User-Agent": "Mozilla/5.0",
+          },
+        });
+        if (res.ok) {
+          const raw = await res.text();
+          const m = String(raw).match(/<textarea[^>]*id=["']contentsBuffer["'][^>]*>([\s\S]*?)<\/textarea>/i);
+          const bufHtml = m && m[1] ? String(m[1]).trim() : "";
+          const bufImgs = extractImageUrlsFromHtml(bufHtml, url);
+          if (bufHtml.length > 200 && bufImgs.length >= 2) {
+            finalContentHtml = sanitizeHtml(bufHtml, url) || finalContentHtml;
+          }
+        }
+      }
+    } catch {}
 
     const categoryText = await page.evaluate(() => {
       const pick = (sel) =>

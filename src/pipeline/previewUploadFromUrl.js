@@ -25,8 +25,8 @@ function isLikelyProductImage(url) {
       "/sns/",
       "/upload/event/",
       "/upload/banner/",
-      "/image/",
-      "/images/",
+      // NOTE: don't block generic /image/ paths (e.g. image.coupangcdn.com)
+
       "_stt_",
       "ico_",
       "bnr_",
@@ -46,7 +46,12 @@ function isLikelyProductImage(url) {
     if (isDomeggook && isUploadPath && isProductUpload) return true;
 
     // Some sellers host detail images on external CDNs (e.g. esmplus). Allow a small allowlist.
-    const allowedExternalHosts = ["gi.esmplus.com", "story-img.kakaocdn.net"];
+    const allowedExternalHosts = [
+      "gi.esmplus.com",
+      "story-img.kakaocdn.net",
+      // Domeggook detail pages sometimes embed Coupang CDN images in the description.
+      "image.coupangcdn.com",
+    ];
     const ext = (p.split("?")[0].split("#")[0].match(/\.(jpg|jpeg|png|webp|gif)$/i) || [])[0];
 
     // Filter common non-product banners/notices hosted on external CDNs
