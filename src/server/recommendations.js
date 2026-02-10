@@ -257,64 +257,48 @@ function parseWon(text) {
 }
 
 async function fetchFastCandidatesFromList({ keyword, limit = 80, storageStatePath = '' }) {
+  // v0 speed-up: get URLs via list-page parsing, then fetch each item HTML (no Playwright per item)
   const q = String(keyword || '').trim();
   if (!q) return [];
 
-  const listUrl = `https://domeggook.com/main/item/itemList.php?sw=${encodeURIComponent(q)}`;
-
-  const { chromium } = await import('playwright');
-  const fs = await import('node:fs');
-
-  const hasState = storageStatePath && fs.existsSync(storageStatePath);
-  const browser = await chromium.launch();
-  const context = hasState ? await browser.newContext({ storageState: storageStatePath }) : await browser.newContext();
-  const page = await context.newPage();
-  await page.goto(listUrl, { waitUntil: 'domcontentloaded', timeout: 60_000 });
-  await page.waitForTimeout(900);
-
-  const rows = await page.evaluate(() => {
-    const anchors = Array.from(document.querySelectorAll('a[href]'))
-      .map((a) => ({ href: a.getAttribute('href') || '', text: (a.textContent || '').trim(), el: a }))
-      .filter((a) => /[?&]no=\d{6,}/.test(a.href));
-
-    const out = [];
-    const seen = new Set();
-
-    const findBlob = (el) => {
-      const root = el.closest('li, tr, .item, .goods, .prd, .product, .list, .box') || el.parentElement;
-      const txt = (root?.innerText || '').replace(/\s+/g, ' ').trim();
-      return txt;
-    };
-
-    for (const a of anchors) {
-      const m = String(a.href).match(/[?&]no=(\d{6,})/);
-      const no = m && m[1] ? m[1] : null;
-      if (!no) continue;
-      if (seen.has(no)) continue;
-      seen.add(no);
-      out.push({ no, title: a.text, blob: findBlob(a.el) });
-      if (out.length >= 400) break;
-    }
-    return out;
-  });
-
-  await browser.close();
-
+  const urls = await fetchDomeggookUrlsByKeyword({ keyword: q, limit, storageStatePath }).catch(() => []);
   const out = [];
-  const seen = new Set();
-  for (const r of (rows || [])) {
-    const no = String(r.no || '').trim();
-    if (!/^\d{6,}$/.test(no)) continue;
-    if (seen.has(no)) continue;
 
-    const title = String(r.title || '').trim();
-    const price = parseWon(r.blob);
-    if (!title || !price) continue;
+  for (const u of urls) {
+    try {
+      const controller = new AbortController();
+      const t = setTimeout(() => controller.abort(), 12000);
+      const r = await fetch(u, {
+        signal: controller.signal,
+        headers: { 'User-Agent': 'Mozilla/5.0', 'Referer': 'https://domeggook.com/' },
+      });
+      clearTimeout(t);
+      if (!r.ok) continue;
+      const html = await r.text();
 
-    seen.add(no);
-    out.push({ url: `https://domeggook.com/${no}`, title, price });
-    if (out.length >= limit) break;
+      const title = (() => {
+        const m = html.match(/<meta property=["']og:title["'] content=["']([^"']+)["']/i);
+        if (m && m[1]) return m[1].trim();
+        const t2 = html.match(/<title>([\s\S]*?)<\/title>/i);
+        return t2 && t2[1] ? t2[1].replace(/\s+/g, ' ').trim() : '';
+      })();
+
+      const price = (() => {
+        // common patterns
+        const m1 = html.match(/(\d[\d,]{2,})\s*원/);
+        if (!m1) return null;
+        const n = Number(String(m1[1]).replace(/,/g, ''));
+        return Number.isFinite(n) ? n : null;
+      })();
+
+      if (!title || !price) continue;
+      out.push({ url: u, title, price });
+      if (out.length >= limit) break;
+    } catch {
+      // ignore
+    }
   }
+
   return out;
 }
 
