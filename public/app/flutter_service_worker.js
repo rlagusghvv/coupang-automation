@@ -3,11 +3,11 @@ const MANIFEST = 'flutter-app-manifest';
 const TEMP = 'flutter-temp-cache';
 const CACHE_NAME = 'flutter-app-cache';
 
-const RESOURCES = {"flutter_bootstrap.js": "0ba4f55a8311acfb442ee89c0b911277",
-"version.json": "9956261269b6467651ff21e9b103c545",
+const RESOURCES = {"flutter_bootstrap.js": "eeb1706757d49299a5a18447ec5a714d",
+"version.json": "9e55a305267d779c535043c4f308b940",
 "index.html": "e42ed36cfb12451bb435be9b70c1799f",
 "/": "e42ed36cfb12451bb435be9b70c1799f",
-"main.dart.js": "4bd1cbe81df2b5ee0d6c0be423226b72",
+"main.dart.js": "066ea0c5f9cafa346d037eba8744ac79",
 "flutter.js": "24bc71911b75b5f8135c949e27a2984e",
 "favicon.png": "5dcef449791fa27946b3d35ad8803796",
 "icons/Icon-192.png": "ac9a721a12bbc803b44f645561ecb1e1",
@@ -23,7 +23,7 @@ const RESOURCES = {"flutter_bootstrap.js": "0ba4f55a8311acfb442ee89c0b911277",
 "assets/lib/assets/splash/elephant_splash.png": "64bb50f8c69a4c35cd34e607f88eb6b7",
 "assets/lib/assets/icon/elephant_1024.png": "4fae03846dbb14a961f186e60219c6ee",
 "assets/AssetManifest.bin": "40e736aeaa43d6d0ecd8b1b139a57ee4",
-"assets/fonts/MaterialIcons-Regular.otf": "e2f5c01a407f81f3ba65fb1139aaa09a",
+"assets/fonts/MaterialIcons-Regular.otf": "27cdcad6eae01573447dac319278e942",
 "canvaskit/skwasm.js": "8060d46e9a4901ca9991edd3a26be4f0",
 "canvaskit/skwasm_heavy.js": "740d43a6b8240ef9e23eed8c48840da4",
 "canvaskit/skwasm.js.symbols": "3a4aadf4e8141f284bd524976b1d6bdc",
