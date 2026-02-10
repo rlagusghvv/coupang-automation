@@ -86,8 +86,9 @@ export function scoreRecommendation({ preview, minProfit = 3000, minMarginRate =
     return { ok: false, reason: 'bad_price' };
   }
 
-  const shippingSurcharge = Number(computed.shippingSurcharge) || 0;
-  const profit = finalPrice - sourcePrice - shippingSurcharge;
+  // Profit heuristic v0: treat shipping as pass-through (user charges shipping anyway).
+  // So we don't subtract shipping here; we only require an absolute profit >= minProfit.
+  const profit = finalPrice - sourcePrice;
   const marginRate = profit / finalPrice;
 
   if (!Number.isFinite(profit) || profit < minProfit) return { ok: false, reason: 'profit_too_low', profit, marginRate };
