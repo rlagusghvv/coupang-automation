@@ -95,37 +95,11 @@ export async function fetchDomeggookUrlsByKeyword({ keyword, limit = 40, storage
     await page.goto(listUrl, { waitUntil: 'domcontentloaded', timeout: 60_000 });
     await page.waitForTimeout(1200);
 
-    const nos = await page.evaluate(() => {
-      const hrefs = Array.from(document.querySelectorAll('a'))
-        .map((a) => a.getAttribute('href') || '')
-        .filter(Boolean);
-      const out = [];
-      const seen = new Set();
-      for (const h of hrefs) {
-        const m = String(h).match(/[?&]no=(\d{6,})/);
-        const no = m && m[1] ? m[1] : null;
-        if (!no) continue;
-        if (seen.has(no)) continue;
-        seen.add(no);
-        out.push(no);
-        if (out.length >= 120) break;
-      }
-      return out;
-    });
-
+    const html = await page.content();
     await browser.close();
 
-    const urls = [];
-    const seen = new Set();
-    for (const no of (nos || [])) {
-      const n = String(no || '').trim();
-      if (!/^\d{6,}$/.test(n)) continue;
-      if (seen.has(n)) continue;
-      seen.add(n);
-      urls.push(`https://domeggook.com/${n}`);
-      if (urls.length >= limit) break;
-    }
-    return urls;
+    const out = extractFromHtml(html);
+    return out.slice(0, limit);
   } catch {
     return [];
   }
