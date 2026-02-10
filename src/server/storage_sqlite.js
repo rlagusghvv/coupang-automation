@@ -523,7 +523,8 @@ export async function deleteApnsToken({ userId, deviceToken }) {
 export async function createJob({ userId, kind, inputUrl, force = '0', catalogId = null }) {
   if (!userId) throw new Error('userId required');
   if (!kind) throw new Error('kind required');
-  if (!inputUrl) throw new Error('inputUrl required');
+  // inputUrl is optional for some background jobs (e.g. recommendations)
+  if (inputUrl == null) throw new Error('inputUrl required');
   const db = openDb();
   const id = crypto.randomUUID();
   const nowIso = new Date().toISOString();
