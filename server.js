@@ -34,6 +34,9 @@ import {
   deleteCatalogProduct,
   listCatalogEvents,
   listUsersForSync,
+  listUsersWithPushTargets,
+  getRecommendationsNotifyState,
+  setRecommendationsLastNotifiedAt,
   getActiveJobByKind,
 } from "./src/server/storage_sqlite.js";
 import {
@@ -995,6 +998,27 @@ app.post('/api/recommendations/fill', authRequired, async (req, res) => {
         }
 
         await updateJob({ id: job.id, patch: { status: 'success', resultJson: { result: last || { ok: true }, progress } } });
+
+        // If new items were inserted, send a push notification (throttled)
+        const inserted = Number(last?.inserted) || 0;
+        if (inserted > 0) {
+          const notifyCooldownMin = Number(process.env.CE_RECO_NOTIFY_COOLDOWN_MIN || 30);
+          const notifyCooldownMs = Math.max(60_000, Math.floor(notifyCooldownMin * 60_000));
+          try {
+            const st = await getRecommendationsNotifyState(req.user.id);
+            const lastAt = st?.lastNotifiedAt ? Date.parse(st.lastNotifiedAt) : 0;
+            const now = Date.now();
+            if (!Number.isFinite(lastAt) || now - lastAt >= notifyCooldownMs) {
+              await notifyUser(req.user.id, {
+                title: '추천 상품 업데이트',
+                body: `추천 상품 ${inserted}개 추가됨 (${String(last?.keyword || '').trim() || '키워드'})`,
+                kind: 'recommendations',
+                inserted,
+              });
+              await setRecommendationsLastNotifiedAt(req.user.id, new Date().toISOString());
+            }
+          } catch {}
+        }
       } catch (e) {
         try {
           await updateJob({
@@ -2235,12 +2259,62 @@ app.listen(PORT, HOST, async () => {
     log(`catalog sync loop enabled: every ${intervalMin} min`);
   }
 
-  // Daily recommendations loop (09:00 Asia/Seoul; best-effort)
-  startRecommendationLoop({
-    getUsers: async () => await listUsersForSync(),
-    hour: 9,
-    minute: 0,
-    intervalMs: 60_000,
-  });
-  log('recommendations loop enabled: daily 09:00');
+  // Recommendations auto-fill loop + push notify (opt-out via settings.recommendationsAutoFill=false)
+  const recoIntervalMin = Number(process.env.CE_RECO_FILL_INTERVAL_MIN || 10);
+  const recoIntervalMs = Math.max(60_000, Math.floor(recoIntervalMin * 60_000));
+  const notifyCooldownMin = Number(process.env.CE_RECO_NOTIFY_COOLDOWN_MIN || 30);
+  const notifyCooldownMs = Math.max(60_000, Math.floor(notifyCooldownMin * 60_000));
+
+  let recoRunning = false;
+  const tickReco = async () => {
+    if (recoRunning) return;
+    recoRunning = true;
+    try {
+      const users = await listUsersWithPushTargets();
+      for (const u of users) {
+        const autoFill = u?.settings?.recommendationsAutoFill;
+        if (autoFill === false) continue;
+
+        const targetCount = Math.max(5, Math.min(60, Number(u?.settings?.recommendationsTargetCount || 20) || 20));
+        try {
+          const r = await fillRecommendationsForUser({
+            userId: u.id,
+            settings: u.settings || {},
+            keywords: defaultKeywordSet(),
+            targetCount,
+            maxAddPerRun: 6,
+          });
+
+          const inserted = Number(r?.inserted) || 0;
+          if (inserted > 0) {
+            const st = await getRecommendationsNotifyState(u.id);
+            const lastAt = st?.lastNotifiedAt ? Date.parse(st.lastNotifiedAt) : 0;
+            const now = Date.now();
+            if (!Number.isFinite(lastAt) || now - lastAt >= notifyCooldownMs) {
+              await notifyUser(u.id, {
+                title: '추천 상품 업데이트',
+                body: `추천 상품 ${inserted}개 추가됨 (${String(r?.keyword || '').trim() || '키워드'})`,
+                kind: 'recommendations',
+                inserted,
+              });
+              await setRecommendationsLastNotifiedAt(u.id, new Date().toISOString());
+            }
+          }
+        } catch {}
+
+        // small spacing to avoid request bursts
+        await new Promise((r) => setTimeout(r, 1500));
+      }
+    } catch (e) {
+      log('reco auto-fill loop error', e?.message || e);
+    } finally {
+      recoRunning = false;
+    }
+  };
+
+  setInterval(tickReco, recoIntervalMs).unref?.();
+  // Kick once after boot
+  setTimeout(tickReco, 10_000).unref?.();
+
+  log(`recommendations auto-fill enabled: every ${recoIntervalMin} min (notify cooldown ${notifyCooldownMin} min)`);
 });

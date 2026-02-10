@@ -236,6 +236,7 @@ export async function initDb() {
     `CREATE TABLE IF NOT EXISTS recommendations_state (
       user_id TEXT PRIMARY KEY,
       next_keyword_idx INTEGER NOT NULL DEFAULT 0,
+      last_notified_at TEXT,
       updated_at TEXT NOT NULL
     )`,
   );
@@ -259,6 +260,7 @@ export async function initDb() {
   try { await ensureColumn(db, 'jobs', 'catalog_id', 'TEXT'); } catch {}
   try { await ensureColumn(db, 'catalog_products', 'last_source_snapshot_json', "TEXT NOT NULL DEFAULT '{}'" ); } catch {}
   try { await ensureColumn(db, 'catalog_products', 'last_synced_at', 'TEXT'); } catch {}
+  try { await ensureColumn(db, 'recommendations_state', 'last_notified_at', 'TEXT'); } catch {}
 
   db.close();
 }
@@ -363,6 +365,48 @@ export async function listUsersForSync() {
     try { settings = JSON.parse(r.settings_json || '{}'); } catch {}
     return { id: r.id, settings };
   });
+}
+
+// Users who have at least one push target (Web Push subscription or APNs token)
+export async function listUsersWithPushTargets() {
+  const db = openDb();
+  const rows = await dbAll(
+    db,
+    `SELECT u.id, u.settings_json
+     FROM users u
+     WHERE EXISTS (SELECT 1 FROM push_subscriptions ps WHERE ps.user_id = u.id)
+        OR EXISTS (SELECT 1 FROM apns_tokens at WHERE at.user_id = u.id)`,
+    [],
+  );
+  db.close();
+  return rows.map((r) => {
+    let settings = {};
+    try { settings = JSON.parse(r.settings_json || '{}'); } catch {}
+    return { id: r.id, settings };
+  });
+}
+
+export async function getRecommendationsNotifyState(userId) {
+  const db = openDb();
+  const row = await dbGet(db, 'SELECT last_notified_at FROM recommendations_state WHERE user_id = ?', [userId]);
+  db.close();
+  return {
+    lastNotifiedAt: row?.last_notified_at ? String(row.last_notified_at) : '',
+  };
+}
+
+export async function setRecommendationsLastNotifiedAt(userId, iso) {
+  const db = openDb();
+  const now = new Date().toISOString();
+  // Ensure row exists; keep next_keyword_idx as-is
+  await dbRun(
+    db,
+    `INSERT INTO recommendations_state (user_id, next_keyword_idx, last_notified_at, updated_at)
+     VALUES (?, 0, ?, ?)
+     ON CONFLICT(user_id) DO UPDATE SET last_notified_at = excluded.last_notified_at, updated_at = excluded.updated_at`,
+    [userId, String(iso || now), now],
+  );
+  db.close();
 }
 
 export async function addPreviewHistory({
