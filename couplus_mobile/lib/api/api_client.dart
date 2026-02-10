@@ -45,6 +45,16 @@ class ApiClient {
 
   String get baseUrl => kIsWeb ? Uri.base.origin : _baseUrl;
 
+  String proxyImageUrl(String rawUrl) {
+    final u = rawUrl.trim();
+    if (!u.startsWith('http')) return u;
+    // Proxy domeggook CDN images to avoid loading failures on some platforms.
+    if (u.contains('domeggook.com')) {
+      return '$baseUrl/api/image-proxy?url=${Uri.encodeComponent(u)}';
+    }
+    return u;
+  }
+
   String? _cookie; // e.g. "session=..."
   bool _loaded = false;
 

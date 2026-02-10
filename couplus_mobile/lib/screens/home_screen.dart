@@ -243,6 +243,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         await Navigator.of(context).push(
                           MaterialPageRoute(
                             builder: (_) => PreviewDetailScreen(
+                              api: widget.api,
                               url: url,
                               preview: preview,
                             ),

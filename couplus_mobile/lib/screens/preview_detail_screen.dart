@@ -1,3 +1,4 @@
+import 'package:couplus_mobile/api/api_client.dart';
 import 'package:couplus_mobile/ui/widgets.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -5,10 +6,12 @@ import 'package:flutter/material.dart';
 class PreviewDetailScreen extends StatelessWidget {
   const PreviewDetailScreen({
     super.key,
+    required this.api,
     required this.url,
     required this.preview,
   });
 
+  final ApiClient api;
   final String url;
   final Map<String, dynamic> preview;
 
@@ -271,7 +274,7 @@ class PreviewDetailScreen extends StatelessWidget {
     final optionsRaw = (preview['options'] as List?) ?? const [];
 
     final title = _s(draft['title'], fallback: '(제목 없음)');
-    final imageUrl = _s(draft['imageUrl']);
+    final imageUrl = api.proxyImageUrl(_s(draft['imageUrl']));
 
     final optionMaps = optionsRaw
         .map((e) => (e as Map?)?.cast<String, dynamic>() ?? <String, dynamic>{})

@@ -47,6 +47,7 @@ import { uploadDomemeExcel } from "./src/pipeline/uploadDomemeExcel.js";
 import { exportPaidOrdersToVendors } from "./src/pipeline/exportPaidOrdersToVendor.js";
 import { uploadVendorPurchaseExcel } from "./src/pipeline/uploadVendorPurchaseExcel.js";
 import { spawn } from "node:child_process";
+import { Readable } from "node:stream";
 import webpush from "web-push";
 import apn from "apn";
 import { newSessionFlag, touchFlag } from "./src/server/session_control.js";
@@ -382,6 +383,49 @@ app.get("/api/version", (req, res) => {
 app.get("/api/ip", async (req, res) => {
   const ip = await getPublicIp().catch(() => "");
   return res.json({ ok: true, ip: ip || "" });
+});
+
+// Image proxy (for CDNs that require referer/UA or block direct loading)
+app.get('/api/image-proxy', async (req, res) => {
+  try {
+    const url = String(req.query.url || '').trim();
+    if (!url.startsWith('http')) return res.status(400).send('bad_url');
+
+    const controller = new AbortController();
+    const t = setTimeout(() => controller.abort(), 20000);
+
+    const r = await fetch(url, {
+      signal: controller.signal,
+      headers: {
+        'User-Agent': 'Mozilla/5.0',
+        'Referer': 'https://domeggook.com',
+        'Accept': 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8',
+      },
+    });
+    clearTimeout(t);
+
+    if (!r.ok) {
+      return res.status(502).send('fetch_failed');
+    }
+
+    const ct = r.headers.get('content-type') || 'application/octet-stream';
+    res.setHeader('Content-Type', ct);
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+
+    // stream (node-fetch v3 uses Web ReadableStream)
+    if (r.body) {
+      const nodeStream = Readable.fromWeb(r.body);
+      nodeStream.pipe(res);
+      return;
+    }
+
+    const buf = Buffer.from(await r.arrayBuffer());
+    return res.end(buf);
+  } catch (e) {
+    console.error('[image-proxy] error', e);
+    return res.status(500).send('proxy_error');
+  }
 });
 
 // ✅ 모바일/대시보드용: 세션상태 + 최근 히스토리 + 최근 구매로그 + payUrl 요약

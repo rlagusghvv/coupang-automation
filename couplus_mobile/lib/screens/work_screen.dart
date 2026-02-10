@@ -1115,6 +1115,7 @@ class _WorkScreenState extends State<WorkScreen> {
                       Navigator.of(context).push(
                         MaterialPageRoute(
                           builder: (_) => PreviewDetailScreen(
+                            api: widget.api,
                             url:
                                 (preview['url'] ?? _url.text).toString().trim(),
                             preview: preview,
@@ -1467,6 +1468,7 @@ class _WorkScreenState extends State<WorkScreen> {
                           Navigator.of(context).push(
                             MaterialPageRoute(
                               builder: (_) => PreviewDetailScreen(
+                                api: widget.api,
                                 url: url.trim(),
                                 preview: previewPayload,
                               ),
@@ -1478,7 +1480,7 @@ class _WorkScreenState extends State<WorkScreen> {
                           child: Row(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              _Thumb(url: imageUrl),
+                              _Thumb(url: widget.api.proxyImageUrl(imageUrl)),
                               const SizedBox(width: 12),
                               Expanded(
                                 child: Column(
