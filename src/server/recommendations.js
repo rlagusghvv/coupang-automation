@@ -15,6 +15,11 @@ function nowIso() {
   return new Date().toISOString();
 }
 
+function withTimeout(promise, ms, label = 'timeout') {
+  const t = new Promise((_, reject) => setTimeout(() => reject(new Error(label)), ms));
+  return Promise.race([promise, t]);
+}
+
 export const DEFAULT_BAN_KEYWORDS = [
   // regulated (food etc)
   '식품', '먹거리', '음료', '건기식', '건강기능', '홍삼', '비타민', '영양',
@@ -566,10 +571,14 @@ async function generateRecommendationsBatch({ settings, keywords, topN = 20, exc
     if (Date.now() - startedAt > 12 * 60_000) break;
     if (excludeUrls.has(cand.sourceUrl)) continue;
 
-    const prev = await previewUploadFromUrl(cand.sourceUrl, {
-      ...(settings || {}),
-      maxContentImages: 30,
-    }).catch(() => null);
+    const prev = await withTimeout(
+      previewUploadFromUrl(cand.sourceUrl, {
+        ...(settings || {}),
+        maxContentImages: 30,
+      }),
+      45_000,
+      'preview_timeout',
+    ).catch(() => null);
 
     validated += 1;
     if (typeof onProgress === 'function' && validated % 3 === 0) {
