@@ -58,14 +58,28 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
       }
 
       if (jobId.isNotEmpty) {
-        // Poll job for up to ~2 minutes.
-        for (var i = 0; i < 60; i += 1) {
+        // Poll job for up to ~15 minutes and show progress if available.
+        for (var i = 0; i < 450; i += 1) {
           await Future<void>.delayed(const Duration(seconds: 2));
           final j = await widget.api.getJson('/api/jobs/$jobId');
-          final status = (j['job']?['status'] ?? '').toString();
+          final job = (j['job'] as Map?)?.cast<String, dynamic>() ?? {};
+          final status = (job['status'] ?? '').toString();
+          final progress = (job['result']?['progress'] as Map?)?.cast<String, dynamic>() ?? {};
+
+          if (progress.isNotEmpty && mounted) {
+            final stage = (progress['stage'] ?? '').toString();
+            final candidates = (progress['candidates'] ?? 0).toString();
+            final validated = (progress['validated'] ?? 0).toString();
+            final kept = (progress['kept'] ?? 0).toString();
+            final target = (progress['target'] ?? 0).toString();
+            setState(() {
+              _error = '진행중: $stage (후보 $candidates / 검증 $validated / 유지 $kept/$target)';
+            });
+          }
+
           if (status == 'success') break;
           if (status == 'failed') {
-            throw Exception(j['job']?['errorMessage'] ?? '추천 생성 실패');
+            throw Exception(job['errorMessage'] ?? '추천 생성 실패');
           }
         }
       }

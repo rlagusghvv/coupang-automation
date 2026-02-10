@@ -75,6 +75,15 @@ export async function fetchDomeggookUrlsByKeyword({ keyword, limit = 40, storage
         if (out.length >= limit) break;
       }
     }
+
+    // Pattern: relative links like /63410895?advcnt=...
+    if (out.length < limit) {
+      const reRel = /\/(\d{6,})\?advcnt=/g;
+      while ((m = reRel.exec(html))) {
+        pushNo(m[1]);
+        if (out.length >= limit) break;
+      }
+    }
     return out.slice(0, limit);
   };
 
@@ -312,7 +321,7 @@ function strictValidatePreview(preview, banKeywords = DEFAULT_BAN_KEYWORDS) {
   return { ok: true };
 }
 
-export async function generateRecommendationsForUser({ userId, settings, keywords, topN = 20 }) {
+export async function generateRecommendationsForUser({ userId, settings, keywords, topN = 20, onProgress = null }) {
   const seed = Array.isArray(keywords) && keywords.length > 0 ? keywords : defaultKeywordSet();
   const startedAt = Date.now();
 
@@ -329,6 +338,9 @@ export async function generateRecommendationsForUser({ userId, settings, keyword
     for (const it of list) {
       candidates.push({ keyword: kw, ...it });
       if (candidates.length >= 1200) break;
+    }
+    if (typeof onProgress === 'function') {
+      try { onProgress({ stage: 'collect', keyword: kw, candidates: candidates.length }); } catch {}
     }
     if (candidates.length >= 1200) break;
   }
@@ -373,6 +385,7 @@ export async function generateRecommendationsForUser({ userId, settings, keyword
 
   // Strict stage: validate top candidates with Playwright-based preview.
   const final = [];
+  let validated = 0;
   for (const cand of scoredPool) {
     if (final.length >= topN) break;
     if (Date.now() - startedAt > 12 * 60_000) break;
@@ -381,6 +394,11 @@ export async function generateRecommendationsForUser({ userId, settings, keyword
       ...(settings || {}),
       maxContentImages: 30,
     }).catch(() => null);
+
+    validated += 1;
+    if (typeof onProgress === 'function' && validated % 3 === 0) {
+      try { onProgress({ stage: 'validate', validated, kept: final.length, target: topN }); } catch {}
+    }
 
     const v = strictValidatePreview(prev, DEFAULT_BAN_KEYWORDS);
     if (!v.ok) {

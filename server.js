@@ -901,13 +901,24 @@ app.post('/api/recommendations/run', authRequired, async (req, res) => {
     setTimeout(async () => {
       try {
         await updateJob({ id: job.id, patch: { status: 'running' } });
+        const progress = { stage: 'start', candidates: 0, validated: 0, kept: 0, target: topN };
+        const lastPush = { t: 0 };
+
         const r = await generateRecommendationsForUser({
           userId: req.user.id,
           settings: req.user.settings || {},
           keywords,
           topN,
+          onProgress: (p) => {
+            Object.assign(progress, p || {});
+            const now = Date.now();
+            if (now - lastPush.t > 1500) {
+              lastPush.t = now;
+              updateJob({ id: job.id, patch: { resultJson: { progress } } }).catch(() => {});
+            }
+          },
         });
-        await updateJob({ id: job.id, patch: { status: 'success', resultJson: { result: r } } });
+        await updateJob({ id: job.id, patch: { status: 'success', resultJson: { result: r, progress } } });
         await notifyUser(req.user.id, {
           title: '추천 생성 완료',
           body: `추천 ${r?.count ?? 0}개 생성했어요.`,
