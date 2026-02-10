@@ -919,8 +919,8 @@ class _MoreScreenState extends State<MoreScreen> {
               children: [
                 const SectionHeader('Server'),
                 const SizedBox(height: 10),
-                const KvRow(k: 'Base URL', v: ApiClient.defaultBaseUrl),
-                const KvRow(
+                KvRow(k: 'Base URL', v: ApiClient.defaultBaseUrl),
+                KvRow(
                     k: 'Dashboard',
                     v: '${ApiClient.defaultBaseUrl}/api/dashboard'),
                 const Divider(height: 24),
@@ -931,7 +931,7 @@ class _MoreScreenState extends State<MoreScreen> {
                     onPressed: () {
                       Navigator.of(context).push(
                         MaterialPageRoute(
-                          builder: (_) => const WebviewScreen(
+                          builder: (_) => WebviewScreen(
                             title: 'Web Dashboard',
                             url: ApiClient.defaultBaseUrl,
                           ),

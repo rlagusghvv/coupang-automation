@@ -72,6 +72,16 @@ app.use("/couplus-out", express.static(path.join(process.cwd(), "out")));
 app.use("/tmp", express.static(path.join(process.cwd(), "out"))); // /tmp/tmp_main.jpg 같은 형태로도 접근 가능
 app.use(express.static(path.join(process.cwd(), "public")));
 
+// Flutter Web app (served from public/app)
+app.get('/app/*', (req, res, next) => {
+  try {
+    const p = path.join(process.cwd(), 'public', 'app', 'index.html');
+    return res.sendFile(p);
+  } catch {
+    return next();
+  }
+});
+
 const PORT = Number(process.env.PORT || 3000);
 
 const TOKENS_PATH =

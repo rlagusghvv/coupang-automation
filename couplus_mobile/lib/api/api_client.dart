@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:couplus_mobile/api/session_store.dart';
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
 class ApiException implements Exception {
@@ -29,7 +30,13 @@ class ApiClient {
         baseUrl = baseUrl ?? defaultBaseUrl,
         _sessionStore = sessionStore ?? SessionStore();
 
-  static const String defaultBaseUrl = 'http://macmini.tail4fbf54.ts.net:3000';
+  static String get defaultBaseUrl {
+    // On web, use the same origin (so the app works from any hostname).
+    if (kIsWeb) {
+      return Uri.base.origin;
+    }
+    return 'http://macmini.tail4fbf54.ts.net:3000';
+  }
 
   final http.Client _client;
   final String baseUrl;
