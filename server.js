@@ -883,13 +883,41 @@ app.post('/api/recommendations/run', authRequired, async (req, res) => {
   try {
     const topN = Math.max(1, Math.min(50, Number(req.body?.topN || 20) || 20));
     const keywords = Array.isArray(req.body?.keywords) ? req.body.keywords : defaultKeywordSet();
-    const r = await generateRecommendationsForUser({
-      userId: req.user.id,
-      settings: req.user.settings || {},
-      keywords,
-      topN,
-    });
-    return res.json({ ok: true, result: r });
+
+    // Run as background job to avoid Cloudflare timeouts.
+    const job = await createJob({ userId: req.user.id, kind: 'recommendations', inputUrl: '', force: '0', catalogId: null });
+
+    setTimeout(async () => {
+      try {
+        await updateJob({ id: job.id, patch: { status: 'running' } });
+        const r = await generateRecommendationsForUser({
+          userId: req.user.id,
+          settings: req.user.settings || {},
+          keywords,
+          topN,
+        });
+        await updateJob({ id: job.id, patch: { status: 'success', resultJson: { result: r } } });
+        await notifyUser(req.user.id, {
+          title: '추천 생성 완료',
+          body: `추천 ${r?.count ?? 0}개 생성했어요.`,
+          tag: 'recommendations',
+          url: '/',
+        });
+      } catch (e) {
+        try {
+          await updateJob({
+            id: job.id,
+            patch: {
+              status: 'failed',
+              errorCode: 'recommendations_failed',
+              errorMessage: String(e?.message || e),
+            },
+          });
+        } catch {}
+      }
+    }, 0);
+
+    return res.json({ ok: true, job });
   } catch (e) {
     return res.status(400).json({ ok: false, error: String(e?.message || e) });
   }

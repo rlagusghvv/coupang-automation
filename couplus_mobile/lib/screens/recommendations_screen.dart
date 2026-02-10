@@ -47,7 +47,29 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
       _error = null;
     });
     try {
-      await widget.api.postJson('/api/recommendations/run', {'topN': 20});
+      final json = await widget.api.postJson('/api/recommendations/run', {'topN': 20});
+      final job = (json['job'] as Map?)?.cast<String, dynamic>() ?? {};
+      final jobId = (job['id'] ?? '').toString();
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('추천 생성 시작했어요. 잠시만 기다려주세요…')),
+        );
+      }
+
+      if (jobId.isNotEmpty) {
+        // Poll job for up to ~2 minutes.
+        for (var i = 0; i < 60; i += 1) {
+          await Future<void>.delayed(const Duration(seconds: 2));
+          final j = await widget.api.getJson('/api/jobs/$jobId');
+          final status = (j['job']?['status'] ?? '').toString();
+          if (status == 'success') break;
+          if (status == 'failed') {
+            throw Exception(j['job']?['errorMessage'] ?? '추천 생성 실패');
+          }
+        }
+      }
+
       await _refresh();
     } catch (e) {
       setState(() => _error = e.toString());

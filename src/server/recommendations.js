@@ -134,7 +134,8 @@ export function scoreRecommendation({ preview, minProfit = 3000, minMarginRate =
   if (!Number.isFinite(marginRate) || marginRate < minMarginRate) return { ok: false, reason: 'margin_too_low', profit, marginRate };
 
   const contentImageCount = Number(computed.contentImageCount) || 0;
-  if (contentImageCount < 2) return { ok: false, reason: 'detail_images_too_few', contentImageCount };
+  // v0: allow 1+ detail images (some listings have short descriptions).
+  if (contentImageCount < 1) return { ok: false, reason: 'detail_images_too_few', contentImageCount };
 
   // Simple score: favor higher profit and sufficient detail images.
   const score = profit + Math.min(2000, contentImageCount * 200);
