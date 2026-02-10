@@ -596,6 +596,39 @@ export async function getJob(userId, id) {
   };
 }
 
+export async function getActiveJobByKind(userId, kind, activeStatuses = ['queued', 'running']) {
+  if (!userId) throw new Error('userId required');
+  if (!kind) throw new Error('kind required');
+  const db = openDb();
+  const statuses = Array.isArray(activeStatuses) && activeStatuses.length > 0 ? activeStatuses : ['queued', 'running'];
+  const placeholders = statuses.map(() => '?').join(', ');
+  const row = await dbGet(
+    db,
+    `SELECT id, user_id, kind, status, input_url, force, result_json, error_code, error_message, created_at, updated_at
+     FROM jobs
+     WHERE user_id = ? AND kind = ? AND status IN (${placeholders})
+     ORDER BY created_at DESC
+     LIMIT 1`,
+    [String(userId), String(kind), ...statuses.map(String)],
+  );
+  db.close();
+  if (!row) return null;
+  let result = {};
+  try { result = JSON.parse(row.result_json || '{}'); } catch {}
+  return {
+    id: row.id,
+    kind: row.kind,
+    status: row.status,
+    inputUrl: row.input_url,
+    force: row.force,
+    result,
+    errorCode: row.error_code,
+    errorMessage: row.error_message,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
 export async function listApnsTokens(userId) {
   if (!userId) throw new Error("userId required");
   const db = openDb();

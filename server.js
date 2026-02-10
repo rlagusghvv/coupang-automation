@@ -34,6 +34,7 @@ import {
   deleteCatalogProduct,
   listCatalogEvents,
   listUsersForSync,
+  getActiveJobByKind,
 } from "./src/server/storage_sqlite.js";
 import {
   listPresets,
@@ -883,6 +884,10 @@ app.post('/api/recommendations/run', authRequired, async (req, res) => {
   try {
     const topN = Math.max(1, Math.min(50, Number(req.body?.topN || 20) || 20));
     const keywords = Array.isArray(req.body?.keywords) ? req.body.keywords : defaultKeywordSet();
+
+    // Prevent duplicate long-running jobs.
+    const active = await getActiveJobByKind(req.user.id, 'recommendations', ['queued', 'running']);
+    if (active) return res.json({ ok: true, job: active, deduped: true });
 
     // Run as background job to avoid Cloudflare timeouts.
     const job = await createJob({ userId: req.user.id, kind: 'recommendations', inputUrl: '', force: '0', catalogId: null });
