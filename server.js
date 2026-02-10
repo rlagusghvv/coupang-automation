@@ -1175,6 +1175,33 @@ app.post("/api/jobs/start", authRequired, async (req, res) => {
           },
         });
 
+        // If upload succeeded, also upsert into "내 상품" catalog.
+        if (ok) {
+          try {
+            const confirmedTitle = String(settingsSnapshot?.titleOverride || result?.draft?.title || "").trim();
+            const mainImageUrl = String(result?.draft?.imageUrl || "").trim();
+            const detailImages = Array.isArray(settingsSnapshot?.imagesOverride) ? settingsSnapshot.imagesOverride : [];
+
+            const p = await upsertCatalogProduct({
+              userId,
+              sourceUrl: c.url,
+              confirmedTitle,
+              mainImageUrl,
+              detailImages,
+              presetId: presetId || null,
+              categoryOverride: settingsSnapshot?.displayCategoryCode ?? null,
+              status: 'deployed',
+            });
+
+            if (p?.id) {
+              await updateCatalogProduct(userId, p.id, {
+                sellerProductId: result?.create?.sellerProductId || null,
+                deployedAt: new Date().toISOString(),
+              });
+            }
+          } catch {}
+        }
+
         await notifyUser(userId, {
           title: ok ? "업로드 완료" : "업로드 실패",
           body: `${ok ? "업로드 완료" : "업로드 실패"}: ${String(result?.draft?.title || "상품").slice(0, 40)}`,
