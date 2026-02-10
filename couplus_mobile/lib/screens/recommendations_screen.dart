@@ -2,6 +2,7 @@ import 'package:couplus_mobile/api/api_client.dart';
 import 'package:couplus_mobile/ui/widgets.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 class RecommendationsScreen extends StatefulWidget {
   const RecommendationsScreen({super.key, required this.api});
@@ -78,6 +79,15 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
           final j = await widget.api.getJson('/api/jobs/$jobId');
           final job = (j['job'] as Map?)?.cast<String, dynamic>() ?? {};
           final status = (job['status'] ?? '').toString();
+          final progress = (job['result']?['progress'] as Map?)?.cast<String, dynamic>() ?? {};
+
+          if (progress.isNotEmpty && mounted) {
+            final stage = (progress['stage'] ?? '').toString();
+            setState(() {
+              _error = stage.isEmpty ? null : '업로드 진행중: $stage';
+            });
+          }
+
           if (status == 'success') {
             if (mounted) {
               ScaffoldMessenger.of(context).showSnackBar(
@@ -424,6 +434,19 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
                                   label: const Text('업로드'),
                                 ),
                                 const SizedBox(width: 8),
+                                TextButton.icon(
+                                  onPressed: url.isEmpty
+                                      ? null
+                                      : () async {
+                                          final uri = Uri.tryParse(url);
+                                          if (uri != null) {
+                                            await launchUrl(uri, mode: LaunchMode.externalApplication);
+                                          }
+                                        },
+                                  icon: const Icon(Icons.open_in_new, size: 18),
+                                  label: const Text('도매꾹'),
+                                ),
+                                const SizedBox(width: 4),
                                 TextButton.icon(
                                   onPressed: url.isEmpty
                                       ? null

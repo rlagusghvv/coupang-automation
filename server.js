@@ -746,6 +746,10 @@ app.post('/api/catalog/:id/deploy', authRequired, async (req, res) => {
           ...(product.categoryOverride != null ? { displayCategoryCode: Number(product.categoryOverride) } : {}),
         };
 
+        try {
+          await updateJob({ id: job.id, patch: { resultJson: { progress: { stage: 'upload', url: product.sourceUrl } } } });
+        } catch {}
+
         const result = await runUploadFromUrl(product.sourceUrl, { ...settingsSnapshot, force: false });
         const ok = Boolean(result?.ok);
 
@@ -1129,9 +1133,12 @@ app.post("/api/jobs/start", authRequired, async (req, res) => {
     // Run in background
     setTimeout(async () => {
       try {
-        await updateJob({ id: job.id, patch: { status: "running" } });
+        await updateJob({ id: job.id, patch: { status: "running", resultJson: { progress: { stage: "start", kind } } } });
 
         if (kind === "preview") {
+          try {
+            await updateJob({ id: job.id, patch: { resultJson: { progress: { stage: "preview", url: c.url } } } });
+          } catch {}
           const preview = await previewUploadFromUrl(c.url, settingsSnapshot);
           if (!preview.ok) {
             await updateJob({
@@ -1175,7 +1182,7 @@ app.post("/api/jobs/start", authRequired, async (req, res) => {
             status: ok ? "success" : "failed",
             errorCode: ok ? null : String(result?.error || "upload_failed"),
             errorMessage: ok ? null : "업로드에 실패했습니다.",
-            resultJson: { result },
+            resultJson: { result, progress: { stage: ok ? "done" : "failed" } },
           },
         });
 
