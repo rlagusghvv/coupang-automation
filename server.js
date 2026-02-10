@@ -887,7 +887,13 @@ app.post('/api/recommendations/run', authRequired, async (req, res) => {
 
     // Prevent duplicate long-running jobs.
     const active = await getActiveJobByKind(req.user.id, 'recommendations', ['queued', 'running']);
-    if (active) return res.json({ ok: true, job: active, deduped: true });
+    if (active) {
+      // If it's too old, treat as stale and allow a new run.
+      const ageMs = Date.now() - Date.parse(active.createdAt || '');
+      if (Number.isFinite(ageMs) && ageMs < 20 * 60_000) {
+        return res.json({ ok: true, job: active, deduped: true });
+      }
+    }
 
     // Run as background job to avoid Cloudflare timeouts.
     const job = await createJob({ userId: req.user.id, kind: 'recommendations', inputUrl: '', force: '0', catalogId: null });

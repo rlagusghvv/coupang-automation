@@ -12,8 +12,8 @@ function nowIso() {
 
 export const DEFAULT_BAN_KEYWORDS = [
   // regulated (food etc)
-  '식품', '먹거리', '음료', '건기식', '건강기능',
-  '올리브유', '카놀라', '카놀라유', '식용유', '오일', '식초', '발사믹', '꿀', '차', '커피', '과자', '간식',
+  '식품', '먹거리', '음료', '건기식', '건강기능', '홍삼', '비타민', '영양',
+  '올리브유', '카놀라', '카놀라유', '식용유', '오일', '식초', '발사믹', '꿀', '차', '커피', '과자', '간식', '스틱',
   '한우', '소고기', '돼지고기', '닭고기', '축산', '수산', '김치', '라면',
   '의약', '의료', '치료', '진단',
   '화장품', '미백', '주름', '탈모',
@@ -49,7 +49,7 @@ export async function fetchDomeggookUrlsByKeyword({ keyword, limit = 40, storage
   const q = String(keyword || '').trim();
   if (!q) return [];
 
-  const listUrl = `https://domeggook.com/main/item/itemList.php?sw=${encodeURIComponent(q)}`;
+  const listUrl = `https://domeggook.com/main/item/itemList.php?sw=${encodeURIComponent(q)}&sf=ttl`;
 
   const extractFromHtml = (html) => {
     const out = [];
