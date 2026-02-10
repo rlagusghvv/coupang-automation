@@ -26,18 +26,22 @@ export const DEFAULT_BAN_KEYWORDS = [
 ];
 
 export function defaultKeywordSet() {
-  // v0: compact but broad. We'll expand/learn later.
+  // v0: focus on pet + car/desk convenience items (higher perceived value, lower brand lock-in)
   return [
-    // storage/organizing
-    '수납', '정리', '서랍정리', '케이블정리', '옷정리', '주방정리', '냉장고정리', '욕실정리',
-    // party/season
-    '생일 파티', '풍선 세트', '가랜드', '케이크 토퍼', '포장 리본', '포장 스티커',
-    // desk/car
-    '차량 수납', '차량 거치대', '책상 정리', '노트북 거치대',
-    // hobby/diy
-    '키링', '스티커', '다꾸', 'DIY 세트', '취미 공구',
-    // pet (low risk items)
-    '강아지 장난감', '고양이 장난감', '배변 봉투', '펫 브러쉬',
+    // car
+    '차량 수납', '차량 정리', '차량 거치대', '차량 핸드폰 거치대', '차량 송풍구 거치대',
+    '차량 틈새 수납', '차량 시트 훅', '차량 케이블 정리', '차량 컵홀더',
+    // desk/office
+    '책상 정리', '케이블 정리', '멀티탭 정리', '노트북 거치대', '모니터 받침대',
+    '서랍 정리', '정리 트레이',
+    // pet (avoid food/medicine)
+    '강아지 장난감', '고양이 장난감', '고양이 낚시대', '노즈워크',
+    '배변 봉투', '배변패드', '펫 브러쉬', '고양이 빗',
+    '강아지 목줄', '리드줄', '하네스', '가슴줄',
+    '급수기', '물병', '물그릇',
+    '스크래쳐', '캣닢 장난감',
+    // general organizing (still useful)
+    '수납', '정리', '후크', '클립', '라벨 스티커',
   ];
 }
 
@@ -249,17 +253,17 @@ export async function generateRecommendationsForUser({ userId, settings, keyword
   const candidates = [];
 
   // Keep v0 fast: limit candidate set size.
-  for (const kw of seed.slice(0, 25)) {
+  for (const kw of seed.slice(0, 40)) {
     const urls = await fetchDomeggookUrlsByKeyword({
       keyword: kw,
-      limit: 30,
+      limit: 50,
       storageStatePath: String(settings?.domeggookStorageStatePath || ''),
     }).catch(() => []);
     for (const u of urls) {
       candidates.push({ keyword: kw, url: u });
-      if (candidates.length >= 240) break;
+      if (candidates.length >= 600) break;
     }
-    if (candidates.length >= 240) break;
+    if (candidates.length >= 600) break;
   }
 
   // de-dupe
@@ -274,8 +278,8 @@ export async function generateRecommendationsForUser({ userId, settings, keyword
   const scored = [];
   const startedAt = Date.now();
   for (const c of uniq) {
-    // Hard budget to avoid hanging the whole run.
-    if (Date.now() - startedAt > 4.0 * 60_000) break;
+    // Hard budget to avoid hanging the whole run (manual + daily run). User allows ~10-15 min.
+    if (Date.now() - startedAt > 12 * 60_000) break;
 
     const prev = await previewUploadFromUrl(c.url, {
       ...(settings || {}),
@@ -301,7 +305,7 @@ export async function generateRecommendationsForUser({ userId, settings, keyword
       payload: { preview: { url: prev.url, draft: prev.draft, computed: prev.computed } },
     });
 
-    if (scored.length >= 80) break;
+    if (scored.length >= 200) break;
   }
 
   scored.sort((a, b) => (Number(b.score) || 0) - (Number(a.score) || 0));
