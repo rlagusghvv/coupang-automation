@@ -16,6 +16,7 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
   bool _loading = false;
   String? _error;
   List<Map<String, dynamic>> _items = const [];
+  final Set<String> _selected = <String>{};
 
   @override
   void initState() {
@@ -41,7 +42,7 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
     }
   }
 
-  Future<void> _uploadNow(String url) async {
+  Future<void> _uploadNow(String url, {String? titleOverride}) async {
     final u = url.trim();
     if (u.isEmpty) return;
 
@@ -51,11 +52,16 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
     });
 
     try {
-      final json = await widget.api.postJson('/api/jobs/start', {
+      final payload = <String, dynamic>{
         'kind': 'upload',
         'url': u,
         'force': '0',
-      });
+      };
+      if (titleOverride != null && titleOverride.trim().isNotEmpty) {
+        payload['titleOverride'] = titleOverride.trim();
+      }
+
+      final json = await widget.api.postJson('/api/jobs/start', payload);
       final job = (json['job'] as Map?)?.cast<String, dynamic>() ?? {};
       final jobId = (job['id'] ?? '').toString();
 
@@ -85,6 +91,79 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
           }
         }
       }
+    } catch (e) {
+      setState(() => _error = e.toString());
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<String?> _promptRename({required String initial}) async {
+    final c = TextEditingController(text: initial);
+    return showDialog<String>(
+      context: context,
+      builder: (ctx) {
+        return AlertDialog(
+          title: const Text('상품명 수정'),
+          content: TextField(
+            controller: c,
+            autofocus: true,
+            decoration: const InputDecoration(
+              hintText: '업로드할 상품명',
+            ),
+            onSubmitted: (_) => Navigator.of(ctx).pop(c.text),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(null),
+              child: const Text('취소'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(ctx).pop(c.text),
+              child: const Text('적용'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> _uploadSelected() async {
+    final urls = _selected.toList();
+    if (urls.isEmpty) return;
+
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+
+    try {
+      int started = 0;
+      for (final u in urls) {
+        // Start job (do not block on completion for bulk)
+        await widget.api.postJson('/api/jobs/start', {
+          'kind': 'upload',
+          'url': u,
+          'force': '0',
+        });
+        started += 1;
+        if (mounted) {
+          setState(() {
+            _error = '다중 업로드 시작중… ($started/${urls.length})';
+          });
+        }
+        await Future<void>.delayed(const Duration(milliseconds: 350));
+      }
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('선택한 ${urls.length}개 업로드 작업을 시작했어요.')),
+        );
+      }
+
+      setState(() {
+        _selected.clear();
+      });
     } catch (e) {
       setState(() => _error = e.toString());
     } finally {
@@ -145,10 +224,22 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final selectedCount = _selected.length;
+
     return AppScaffold(
-      title: '추천',
+      title: selectedCount > 0 ? '추천 (선택 $selectedCount)' : '추천',
       onRefresh: _refresh,
       actions: [
+        if (selectedCount > 0)
+          IconButton(
+            onPressed: _loading
+                ? null
+                : () {
+                    setState(() => _selected.clear());
+                  },
+            icon: const Icon(Icons.clear_all),
+            tooltip: '선택 해제',
+          ),
         IconButton(
           onPressed: _loading ? null : _runNow,
           icon: const Icon(Icons.play_arrow),
@@ -162,6 +253,21 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          if (selectedCount > 0) ...[
+            AppCard(
+              child: Row(
+                children: [
+                  Expanded(child: Text('선택한 $selectedCount개')),
+                  FilledButton.tonalIcon(
+                    onPressed: _loading ? null : _uploadSelected,
+                    icon: const Icon(Icons.cloud_upload_outlined, size: 18),
+                    label: const Text('선택 업로드'),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 10),
+          ],
           Row(
             children: [
               InfoChip(
@@ -209,19 +315,41 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
                 final reason = (it['reason'] ?? '').toString();
                 final url = (it['sourceUrl'] ?? '').toString();
 
+                final selected = url.isNotEmpty && _selected.contains(url);
+
                 return AppCard(
                   onTap: url.isEmpty
                       ? null
                       : () {
-                          // Tap: copy URL.
-                          Clipboard.setData(ClipboardData(text: url));
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(content: Text('URL을 복사했어요.')),
-                          );
+                          // Tap: toggle select (more useful than copy).
+                          setState(() {
+                            if (_selected.contains(url)) {
+                              _selected.remove(url);
+                            } else {
+                              _selected.add(url);
+                            }
+                          });
                         },
                   child: Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
+                      Padding(
+                        padding: const EdgeInsets.only(top: 4),
+                        child: Checkbox(
+                          value: selected,
+                          onChanged: url.isEmpty
+                              ? null
+                              : (v) {
+                                  setState(() {
+                                    if (v == true) {
+                                      _selected.add(url);
+                                    } else {
+                                      _selected.remove(url);
+                                    }
+                                  });
+                                },
+                        ),
+                      ),
                       ClipRRect(
                         borderRadius: BorderRadius.circular(10),
                         child: img.isEmpty
@@ -285,7 +413,13 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
                             Row(
                               children: [
                                 FilledButton.tonalIcon(
-                                  onPressed: (url.isEmpty || _loading) ? null : () => _uploadNow(url),
+                                  onPressed: (url.isEmpty || _loading)
+                                      ? null
+                                      : () async {
+                                          final nextTitle = await _promptRename(initial: title);
+                                          if (nextTitle == null) return;
+                                          await _uploadNow(url, titleOverride: nextTitle);
+                                        },
                                   icon: const Icon(Icons.cloud_upload_outlined, size: 18),
                                   label: const Text('업로드'),
                                 ),
