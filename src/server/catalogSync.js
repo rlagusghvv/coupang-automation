@@ -8,6 +8,8 @@ import {
   addCatalogEvent,
 } from './storage_sqlite.js';
 
+import { getSellerProduct } from '../coupang/api/getSellerProduct.js';
+
 function safeNum(n) {
   const x = Number(n);
   return Number.isFinite(x) ? x : null;
@@ -66,9 +68,79 @@ function diffSnapshots(prev, next) {
   return diff;
 }
 
+function extractCoupangDetailHtml(item0) {
+  if (!item0) return '';
+  if (item0.content || item0.contentText || item0.contentHtml) {
+    return String(item0.content || item0.contentText || item0.contentHtml || '');
+  }
+  if (Array.isArray(item0.contents)) {
+    return item0.contents
+      .flatMap((c) => (Array.isArray(c?.contentDetails) ? c.contentDetails : []))
+      .map((d) => d?.content || '')
+      .join('\n');
+  }
+  return '';
+}
+
+async function revalidateIfNeeded({ userId, product, userSettings }) {
+  const status = String(product?.status || '');
+  const spid = String(product?.sellerProductId || '').trim();
+  if (!spid) return null;
+
+  // Only attempt revalidation when previously marked invalid.
+  if (status !== 'deployed_invalid') return null;
+
+  const accessKey = String(userSettings?.coupangAccessKey || '').trim();
+  const secretKey = String(userSettings?.coupangSecretKey || '').trim();
+  if (!accessKey || !secretKey) return null;
+
+  const r = await getSellerProduct({ sellerProductId: spid, accessKey, secretKey });
+  if (r?.status !== 200) return null;
+
+  let obj = null;
+  try {
+    obj = typeof r?.body === 'string' ? JSON.parse(r.body) : r?.body;
+  } catch {
+    obj = null;
+  }
+  const data = obj?.data || obj || null;
+  const items = Array.isArray(data?.items) ? data.items : [];
+  const item0 = items?.[0] || null;
+  const html = extractCoupangDetailHtml(item0);
+
+  const validation = {
+    ok: true,
+    checkedAt: new Date().toISOString(),
+    errors: [],
+  };
+  if (!html || String(html).trim().length < 20) {
+    validation.ok = false;
+    validation.errors.push('detail_empty');
+  }
+
+  await updateCatalogProduct(userId, product.id, {
+    validation,
+    status: validation.ok ? 'deployed' : 'deployed_invalid',
+  });
+
+  await addCatalogEvent({
+    userId,
+    catalogId: product.id,
+    type: 'REVALIDATED',
+    severity: validation.ok ? 'info' : 'warn',
+    message: validation.ok ? '검증 OK로 갱신됨' : `검증 실패 유지: ${validation.errors.join(',')}`,
+    data: { sellerProductId: spid, validation },
+  });
+
+  return validation;
+}
+
 export async function syncOneCatalogProduct({ userId, catalogId, userSettings = {} }) {
   const product = await getCatalogProductById(userId, catalogId);
   if (!product) throw new Error('not_found');
+
+  // If this product was marked invalid, revalidate against Coupang first.
+  await revalidateIfNeeded({ userId, product, userSettings });
 
   const preview = await previewUploadFromUrl(product.sourceUrl, {
     ...(userSettings || {}),

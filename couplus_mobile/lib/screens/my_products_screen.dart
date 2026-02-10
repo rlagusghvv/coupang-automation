@@ -286,7 +286,7 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
                                   ),
                                 )
                               : Image.network(
-                                  img,
+                                  widget.api.proxyImageUrl(img),
                                   width: 66,
                                   height: 66,
                                   fit: BoxFit.cover,
