@@ -48023,7 +48023,7 @@ if(r.length!==0){i=A.q(l).ax
 h=i.ry
 if(h==null){h=i.t
 i=h==null?i.k3:h}else i=h
-j.push(new A.di(r,i,g))}j.push(new A.di("\ud310\ub9e4\uac00 "+B.d.aJ(A.en(o)),A.q(l).ax.b,g))
+j.push(new A.di(r,i,g))}j.push(new A.di("\uad8c\uc7a5\uac00 "+B.d.aJ(A.en(o)),A.q(l).ax.b,g))
 j.push(new A.di("\uc21c\ub9c8\uc9c4 "+B.d.aJ(A.en(q)),B.cp,g))
 j.push(new A.di("\ub9c8\uc9c4 "+B.d.aJ(A.en(p)*100)+"%",B.cp,g))
 c=A.b([c,B.aN,A.wG(j,6,8)],k)
