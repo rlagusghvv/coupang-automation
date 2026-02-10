@@ -72,7 +72,7 @@ function containsBanKeyword(text, banList) {
   return (banList || []).some((k) => t.includes(String(k || '').toLowerCase()));
 }
 
-export function scoreRecommendation({ preview, minProfit = 3000, minMarginRate = 0.35, banKeywords = DEFAULT_BAN_KEYWORDS }) {
+export function scoreRecommendation({ preview, minProfit = 3000, minMarginRate = 0.30, banKeywords = DEFAULT_BAN_KEYWORDS }) {
   const draft = preview?.draft || {};
   const computed = preview?.computed || {};
 
@@ -219,7 +219,7 @@ export async function generateRecommendationsForUser({ userId, settings, keyword
     const s = scoreRecommendation({
       preview: prev,
       minProfit: 3000,
-      minMarginRate: 0.35,
+      minMarginRate: 0.30,
       banKeywords: DEFAULT_BAN_KEYWORDS,
     });
     if (!s.ok) continue;
