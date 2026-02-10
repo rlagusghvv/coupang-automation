@@ -1639,12 +1639,26 @@ class _Thumb extends StatelessWidget {
 
   final String url;
 
+  String _normalize(String raw) {
+    final s = raw.trim();
+    if (s.isEmpty) return '';
+    if (s.startsWith('//')) return 'https:$s';
+    if (s.startsWith('http://') || s.startsWith('https://')) return s;
+
+    // Some sources provide host/path without scheme.
+    if (s.startsWith('cdn') || s.contains('.')) {
+      return 'https://$s'.replaceFirst('https:///','https://');
+    }
+    return s;
+  }
+
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     final border = BorderRadius.circular(14);
 
-    if (!url.startsWith('http')) {
+    final u = _normalize(url);
+    if (!u.startsWith('http')) {
       return Container(
         width: 48,
         height: 48,
@@ -1660,7 +1674,7 @@ class _Thumb extends StatelessWidget {
     return ClipRRect(
       borderRadius: border,
       child: Image.network(
-        url,
+        u,
         width: 48,
         height: 48,
         fit: BoxFit.cover,
