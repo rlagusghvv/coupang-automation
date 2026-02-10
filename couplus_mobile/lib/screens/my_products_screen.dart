@@ -207,11 +207,12 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
               ),
             )
           else
-            Expanded(
-              child: ListView.separated(
-                itemCount: _products.length,
-                separatorBuilder: (_, __) => const SizedBox(height: 10),
-                itemBuilder: (ctx, i) {
+            ListView.separated(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              itemCount: _products.length,
+              separatorBuilder: (_, __) => const SizedBox(height: 10),
+              itemBuilder: (ctx, i) {
                   final p = _products[i];
                   final id = (p['id'] ?? '').toString();
                   final title = (p['confirmedTitle'] ?? '').toString();
@@ -329,7 +330,6 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
                   );
                 },
               ),
-            ),
         ],
       ),
     );
