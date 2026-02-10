@@ -4,6 +4,7 @@ import 'package:couplus_mobile/api/api_client.dart';
 import 'package:couplus_mobile/services/push_token_service.dart';
 
 import 'package:couplus_mobile/screens/auth/webview_screen.dart';
+import 'package:couplus_mobile/screens/recommendations_screen.dart';
 import 'package:couplus_mobile/services/sensitive_settings_store.dart';
 import 'package:couplus_mobile/ui/widgets.dart';
 import 'package:flutter/material.dart';
@@ -456,6 +457,38 @@ class _MoreScreenState extends State<MoreScreen> {
             ErrorBanner(message: _error!, onRetry: _refreshMe),
             const SizedBox(height: 12),
           ],
+
+          AppCard(
+            onTap: () {
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => RecommendationsScreen(api: widget.api),
+                ),
+              );
+            },
+            child: Row(
+              children: [
+                Icon(Icons.auto_awesome,
+                    color: Theme.of(context).colorScheme.primary),
+                const SizedBox(width: 10),
+                const Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('추천',
+                          style: TextStyle(fontWeight: FontWeight.w900)),
+                      SizedBox(height: 2),
+                      Text('매일 오전 9시, 순마진≥3,000 / 마진율≥35% 기준',
+                          style: TextStyle(fontSize: 12)),
+                    ],
+                  ),
+                ),
+                const Icon(Icons.chevron_right),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+
           AppCard(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,

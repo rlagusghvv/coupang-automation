@@ -209,6 +209,28 @@ export async function initDb() {
     )`,
   );
 
+  await dbRun(
+    db,
+    `CREATE TABLE IF NOT EXISTS recommendations (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      source_url TEXT NOT NULL,
+      keyword TEXT NOT NULL DEFAULT '',
+      title TEXT NOT NULL DEFAULT '',
+      main_image_url TEXT NOT NULL DEFAULT '',
+      source_price REAL,
+      shipping_fee REAL,
+      final_price REAL,
+      profit REAL,
+      margin_rate REAL,
+      score REAL,
+      reason TEXT NOT NULL DEFAULT '',
+      payload_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL,
+      UNIQUE(user_id, source_url)
+    )`,
+  );
+
   // Catalog events (sync/change log)
   await dbRun(
     db,

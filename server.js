@@ -58,6 +58,12 @@ import {
 import { getSellerProduct } from "./src/server/externalAdapters.js";
 import { runtimeState } from "./src/server/runtime_state.js";
 import { syncOneCatalogProduct, syncAllCatalogProducts, startCatalogSyncLoop } from "./src/server/catalogSync.js";
+import {
+  listRecommendations,
+  generateRecommendationsForUser,
+  startRecommendationLoop,
+  defaultKeywordSet,
+} from "./src/server/recommendations.js";
 
 const app = express();
 app.set("trust proxy", true);
@@ -859,6 +865,33 @@ app.get('/api/catalog/:id/events', authRequired, async (req, res) => {
     return res.json({ ok: true, events });
   } catch (e) {
     return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+// Recommendations
+app.get('/api/recommendations', authRequired, async (req, res) => {
+  try {
+    const limit = Math.max(1, Math.min(200, Number(req.query.limit || 50) || 50));
+    const items = await listRecommendations(req.user.id, { limit });
+    return res.json({ ok: true, items });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+app.post('/api/recommendations/run', authRequired, async (req, res) => {
+  try {
+    const topN = Math.max(1, Math.min(50, Number(req.body?.topN || 20) || 20));
+    const keywords = Array.isArray(req.body?.keywords) ? req.body.keywords : defaultKeywordSet();
+    const r = await generateRecommendationsForUser({
+      userId: req.user.id,
+      settings: req.user.settings || {},
+      keywords,
+      topN,
+    });
+    return res.json({ ok: true, result: r });
+  } catch (e) {
+    return res.status(400).json({ ok: false, error: String(e?.message || e) });
   }
 });
 
@@ -2037,4 +2070,13 @@ app.listen(PORT, HOST, async () => {
     });
     log(`catalog sync loop enabled: every ${intervalMin} min`);
   }
+
+  // Daily recommendations loop (09:00 Asia/Seoul; best-effort)
+  startRecommendationLoop({
+    getUsers: async () => await listUsersForSync(),
+    hour: 9,
+    minute: 0,
+    intervalMs: 60_000,
+  });
+  log('recommendations loop enabled: daily 09:00');
 });
