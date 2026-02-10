@@ -780,31 +780,52 @@ class _WorkScreenState extends State<WorkScreen> {
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text('배치 업로드 - 개별 확인',
-                        style: TextStyle(
-                            fontSize: 16, fontWeight: FontWeight.w900)),
-                    const SizedBox(height: 8),
-                    Text(title.isEmpty ? '(제목 없음)' : title,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(fontWeight: FontWeight.w800)),
+                    Row(
+                      children: [
+                        const Expanded(
+                          child: Text(
+                            '배치 업로드',
+                            style: TextStyle(
+                                fontSize: 16, fontWeight: FontWeight.w900),
+                          ),
+                        ),
+                        TextButton(
+                          onPressed: () => Navigator.of(ctx).pop('stop'),
+                          child: const Text('중단'),
+                        ),
+                      ],
+                    ),
                     const SizedBox(height: 6),
-                    Text('최종가: ${finalPrice ?? '-'}',
-                        style: TextStyle(
-                            color: Theme.of(ctx)
-                                .colorScheme
-                                .onSurface
-                                .withValues(alpha: 0.7))),
+                    Text(
+                      title.isEmpty ? '(제목 없음)' : title,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontWeight: FontWeight.w900),
+                    ),
                     const SizedBox(height: 6),
-                    Text(item.url,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                            fontSize: 12,
-                            color: Theme.of(ctx)
-                                .colorScheme
-                                .onSurface
-                                .withValues(alpha: 0.6))),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 6,
+                      children: [
+                        InfoChip(
+                          label: '최종가: ${finalPrice ?? '-'}',
+                          color: Theme.of(ctx).colorScheme.primary,
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 10),
+                    Text(
+                      item.url,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Theme.of(ctx)
+                            .colorScheme
+                            .onSurface
+                            .withValues(alpha: 0.6),
+                      ),
+                    ),
                     const SizedBox(height: 14),
                     Row(
                       children: [
@@ -822,14 +843,6 @@ class _WorkScreenState extends State<WorkScreen> {
                           ),
                         ),
                       ],
-                    ),
-                    const SizedBox(height: 6),
-                    SizedBox(
-                      width: double.infinity,
-                      child: TextButton(
-                        onPressed: () => Navigator.of(ctx).pop('stop'),
-                        child: const Text('배치 중단'),
-                      ),
                     ),
                   ],
                 ),
