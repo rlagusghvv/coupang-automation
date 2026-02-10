@@ -221,7 +221,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                   TextButton(
                     onPressed: () async {
                       final uri = Uri.tryParse(
-                          'https://www.coupang.com/vp/products/$sellerProductId');
+                          'https://www.coupang.com/vp/products/$sellerProductId?failRedirectApp=true');
                       if (uri != null) {
                         await launchUrl(uri,
                             mode: LaunchMode.externalApplication);

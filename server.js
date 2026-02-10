@@ -1163,6 +1163,10 @@ app.post("/api/jobs/start", authRequired, async (req, res) => {
         }
 
         // upload
+        try {
+          await updateJob({ id: job.id, patch: { resultJson: { progress: { stage: 'upload', url: c.url } } } });
+        } catch {}
+
         const result = await runUploadFromUrl(c.url, { ...settingsSnapshot, force });
         const ok = Boolean(result?.ok);
         await updateJob({
@@ -1194,9 +1198,19 @@ app.post("/api/jobs/start", authRequired, async (req, res) => {
             });
 
             if (p?.id) {
+              const prevValidation = (p.validation && typeof p.validation === 'object') ? p.validation : {};
               await updateCatalogProduct(userId, p.id, {
                 sellerProductId: result?.create?.sellerProductId || null,
                 deployedAt: new Date().toISOString(),
+                validation: {
+                  ...prevValidation,
+                  lastUpload: {
+                    at: new Date().toISOString(),
+                    finalPrice: result?.finalPrice ?? null,
+                    category: result?.category ?? null,
+                    payloadCheck: result?.payloadCheck ?? null,
+                  },
+                },
               });
             }
           } catch {}
