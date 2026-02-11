@@ -188,7 +188,8 @@ class _MoreScreenState extends State<MoreScreen> {
       _shippingFixedAmount.text =
           (s['shippingFixedAmount'] ?? _shippingFixedAmount.text).toString();
       _categoryOverrideCode.text = (s['categoryOverrideCode'] ?? '').toString();
-      _autoCategoryPredict = (s['autoCategoryPredict'] ?? true) == true;
+      final acp = s['autoCategoryPredict'];
+      _autoCategoryPredict = acp == true || acp == 1 || acp == '1' || acp == 'true';
       if (mounted) setState(() {});
 
       // load presets (best-effort)
@@ -223,7 +224,7 @@ class _MoreScreenState extends State<MoreScreen> {
       'shippingFixedAmount':
           double.tryParse(_shippingFixedAmount.text.trim()) ?? 2500,
       'categoryOverrideCode': int.tryParse(_categoryOverrideCode.text.trim()) ?? 0,
-      'autoCategoryPredict': _autoCategoryPredict ? '1' : '0',
+      'autoCategoryPredict': _autoCategoryPredict,
     };
   }
 
@@ -386,7 +387,7 @@ class _MoreScreenState extends State<MoreScreen> {
             double.tryParse(_shippingFixedAmount.text.trim()) ?? 2500,
         'categoryOverrideCode':
             int.tryParse(_categoryOverrideCode.text.trim()) ?? 0,
-        'autoCategoryPredict': _autoCategoryPredict ? '1' : '0',
+        'autoCategoryPredict': _autoCategoryPredict,
       });
 
       if (mounted) {

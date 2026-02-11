@@ -131,6 +131,43 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
     }
   }
 
+  Future<void> _refreshDetailImagesFromSource() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+
+    try {
+      final json = await widget.api.postJson(
+          '/api/catalog/${widget.productId}/refresh-detail-images', {});
+      final p = (json['product'] as Map?)?.cast<String, dynamic>();
+      if (p != null) {
+        final imgsRaw = (p['detailImages'] as List?) ?? const [];
+        final imgs = imgsRaw
+            .map((e) => e.toString())
+            .where((s) => s.trim().isNotEmpty)
+            .toList();
+
+        setState(() {
+          _product = p;
+          _detailImages = imgs;
+        });
+      }
+
+      if (mounted) {
+        final extracted = (json['extracted'] as Map?)?.cast<String, dynamic>();
+        final cnt = (extracted?['count'] ?? 0).toString();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('원본에서 상세이미지 다시 불러옴 ($cnt장)')),
+        );
+      }
+    } catch (e) {
+      if (mounted) setState(() => _error = e.toString());
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
   Future<void> _deploy() async {
     setState(() {
       _loading = true;
@@ -280,6 +317,17 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                         onPressed: _loading ? null : _deploy,
                         label: '배포(업로드)',
                         color: const Color(0xFF2F9E44),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                Row(
+                  children: [
+                    Expanded(
+                      child: AppButton(
+                        onPressed: _loading ? null : _refreshDetailImagesFromSource,
+                        label: '원본에서 상세이미지 다시 불러오기',
                       ),
                     ),
                   ],

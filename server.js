@@ -779,6 +779,42 @@ app.put('/api/catalog/:id', authRequired, async (req, res) => {
   }
 });
 
+// Refresh detail images from source URL (best-effort)
+app.post('/api/catalog/:id/refresh-detail-images', authRequired, async (req, res) => {
+  try {
+    const id = String(req.params.id || '').trim();
+    const product = await getCatalogProductById(req.user.id, id);
+    if (!product) return res.status(404).json({ ok: false, error: 'not_found' });
+
+    const settings = req.user.settings || {};
+    const r = await runUploadFromUrl(product.sourceUrl, {
+      ...settings,
+      payloadOnly: '1',
+      // keep extraction light
+      maxContentImages: settings?.maxContentImages ?? 20,
+    });
+
+    const detailImages = Array.isArray(r?.detailImages)
+      ? r.detailImages
+      : (Array.isArray(r?.draft?.detailImages) ? r.draft.detailImages : []);
+
+    const patch = {
+      detailImages,
+      mainImageUrl: String(product.mainImageUrl || (detailImages[0] || '')).trim(),
+      lastSourceSnapshot: {
+        at: new Date().toISOString(),
+        ok: Boolean(r?.ok),
+        detailImages: Array.isArray(detailImages) ? detailImages.slice(0, 50) : [],
+      },
+    };
+
+    const next = await updateCatalogProduct(req.user.id, id, patch);
+    return res.json({ ok: true, product: next, extracted: { count: detailImages.length } });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
 app.delete('/api/catalog/:id', authRequired, async (req, res) => {
   try {
     const id = String(req.params.id || '').trim();
@@ -1339,8 +1375,9 @@ app.post("/api/jobs/start", authRequired, async (req, res) => {
 
             if (p?.id) {
               const prevValidation = (p.validation && typeof p.validation === 'object') ? p.validation : {};
+              const sellerProductId = result?.create?.sellerProductId || null;
               await updateCatalogProduct(userId, p.id, {
-                sellerProductId: result?.create?.sellerProductId || null,
+                sellerProductId,
                 deployedAt: new Date().toISOString(),
                 validation: {
                   ...prevValidation,
@@ -1352,6 +1389,19 @@ app.post("/api/jobs/start", authRequired, async (req, res) => {
                   },
                 },
               });
+
+              // Store upload record for dedupe (jobs/start path)
+              try {
+                if (sellerProductId) {
+                  await upsertUploadedProduct({
+                    userId,
+                    sourceUrl: c.url,
+                    sellerProductId,
+                    title: confirmedTitle,
+                    finalPrice: result?.finalPrice ?? null,
+                  });
+                }
+              } catch {}
             }
           } catch {}
         }
