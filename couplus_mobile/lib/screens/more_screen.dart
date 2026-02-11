@@ -348,6 +348,7 @@ class _MoreScreenState extends State<MoreScreen> {
       final vendorUserId = _coupangVendorUserId.text.trim();
       final deliveryCompanyCode = _coupangDeliveryCompanyCode.text.trim();
       final pagesToken = _pagesApiToken.text.trim();
+      final openApiKey = _domeggookOpenApiKey.text.trim();
 
       // Save on-device first.
       await _sensitiveStore.write(
@@ -363,6 +364,7 @@ class _MoreScreenState extends State<MoreScreen> {
           deliveryCompanyCode);
       await _sensitiveStore.write(
           SensitiveSettingsStore.pagesApiToken, pagesToken);
+      await _sensitiveStore.write('domeggookOpenApiKey', openApiKey);
 
       // Sync to server (requires auth cookie).
       await widget.api.postJson('/api/settings', {
@@ -372,6 +374,7 @@ class _MoreScreenState extends State<MoreScreen> {
         SensitiveSettingsStore.coupangVendorUserId: vendorUserId,
         SensitiveSettingsStore.coupangDeliveryCompanyCode: deliveryCompanyCode,
         SensitiveSettingsStore.pagesApiToken: pagesToken,
+        'domeggookOpenApiKey': openApiKey,
 
         // General settings
         'marginRate': double.tryParse(_marginRate.text.trim()) ?? 0,
