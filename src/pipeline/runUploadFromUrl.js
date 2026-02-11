@@ -439,6 +439,13 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
     roundUnit: settings.roundUnit,
   });
 
+  // Coupang constraint guard: item price must be >= 10 KRW (practically >= 1000).
+  // Prevent accidental 0 price from config bugs / missing draft price.
+  const COUPANG_MIN_PRICE = 1000;
+  if (!Number.isFinite(Number(finalPrice)) || Number(finalPrice) < 10) {
+    finalPrice = COUPANG_MIN_PRICE;
+  }
+
   // 배송비가 유료면 "실제 배송비"만큼 판매가에 가산
   // shippingFee: 0=무료, >0=유료(금액), -1=유료(금액 표기 없음)
   const shippingFee = Number(draft.shippingFee);
