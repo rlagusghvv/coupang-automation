@@ -56,6 +56,13 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
       _progress = null;
     });
 
+    // Optimistic: hide the card immediately after starting upload.
+    // If something fails, user can refresh to see it again.
+    setState(() {
+      _items = _items.where((it) => (it['sourceUrl'] ?? '').toString() != u).toList();
+      _selected.remove(u);
+    });
+
     try {
       final payload = <String, dynamic>{
         'kind': 'upload',
