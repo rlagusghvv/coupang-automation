@@ -27,6 +27,7 @@ import { deployPagesAssets } from "../utils/pagesDeploy.js";
 import { downloadImageBufferWithPlaywright } from "../utils/downloadImage.js";
 import { uploadMarketplaceImage } from "../coupang/api/uploadMarketplaceImage.js";
 import { fetchWithRetry } from "../server/net_limit.js";
+import { getItemView as getDomeggookItemView } from "../server/domeggook_openapi.js";
 
 const OUTBOUND_SHIPPING_PLACE_CODE = "24093380";
 const DISPLAY_CATEGORY_CODE = 77723;
@@ -152,6 +153,23 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
   const rawMax = Number(settings.maxContentImages);
   const maxContentImages = Number.isFinite(rawMax) ? rawMax : 20;
 
+  // Some Domeggook items render detail HTML via dynamic blocks; OpenAPI has a reliable HTML snippet.
+  // If OpenAPI key is present, use it to supplement detail images when parsing yields none.
+  const openApiKey = String(settings.domeggookOpenApiKey || '').trim();
+  let openApiDetailHtml = '';
+  try {
+    if (openApiKey) {
+      const m = String(c.url || '').match(/\/(\d{6,})(?:\b|\?|#|$)/);
+      const no = m ? m[1] : '';
+      if (no) {
+        const v = await getDomeggookItemView({ aid: openApiKey, no });
+        if (v?.ok && String(v.html || '').trim()) {
+          openApiDetailHtml = String(v.html || '');
+        }
+      }
+    }
+  } catch {}
+
   function isLikelyProductImage(url) {
     try {
       const u = new URL(url);
@@ -220,9 +238,14 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
     ? settings.imagesOverride.map((x) => String(x || "").trim()).filter(Boolean)
     : [];
 
+  const extractedFromDraft = extractImageUrls(draft.contentText).filter(isLikelyProductImage);
+  const extractedFromOpenApi = openApiDetailHtml
+    ? extractImageUrls(openApiDetailHtml).filter(isLikelyProductImage)
+    : [];
+
   const contentImages = (imagesOverride.length > 0
     ? imagesOverride
-    : extractImageUrls(draft.contentText).filter(isLikelyProductImage))
+    : (extractedFromDraft.length > 0 ? extractedFromDraft : extractedFromOpenApi))
     .slice(0, Math.max(0, maxContentImages))
     .filter(Boolean);
 

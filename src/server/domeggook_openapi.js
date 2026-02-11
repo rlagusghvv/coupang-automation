@@ -162,6 +162,31 @@ export function pickCategoryCodes({ categories, seeds, maxCodes = 12 }) {
   return out;
 }
 
+export async function getItemView({ aid, no }) {
+  const itemNo = String(no || '').trim();
+  if (!itemNo) return { ok: false, error: 'missing_no' };
+
+  const r = await callDomeggookOpenApi({
+    aid,
+    ver: '4.5',
+    mode: 'getItemView',
+    params: {
+      om: 'json',
+      no: itemNo,
+    },
+    timeoutMs: 30_000,
+  });
+
+  const html = String(r?.root?.desc?.contents?.item || '').trim();
+  return {
+    ok: true,
+    no: itemNo,
+    title: String(r?.root?.basis?.title || '').trim(),
+    category: r?.root?.category || null,
+    html,
+  };
+}
+
 export async function getItemList({ aid, market = 'dome', ca, pg = 1, sz = 40, so = 'rd' }) {
   const r = await callDomeggookOpenApi({
     aid,
