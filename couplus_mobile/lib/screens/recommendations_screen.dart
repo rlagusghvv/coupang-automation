@@ -15,6 +15,7 @@ class RecommendationsScreen extends StatefulWidget {
 
 class _RecommendationsScreenState extends State<RecommendationsScreen> {
   bool _loading = false;
+  bool _jobRunning = false;
   String? _error;
   String? _progress;
   List<Map<String, dynamic>> _items = const [];
@@ -186,11 +187,15 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
   }
 
   Future<void> _runNow() async {
+    if (_jobRunning) return;
+
     setState(() {
-      _loading = true;
+      _jobRunning = true;
       _error = null;
       _progress = null;
+      // jobId stored only in logs (UI runs in background)
     });
+
     try {
       final json = await widget.api.postJson('/api/recommendations/fill', {
         'targetCount': 60,
@@ -200,9 +205,11 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
       final job = (json['job'] as Map?)?.cast<String, dynamic>() ?? {};
       final jobId = (job['id'] ?? '').toString();
 
+      // no need to store jobId in state; polling continues in this screen only
+
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('추천 생성 시작했어요. 잠시만 기다려주세요…')),
+          const SnackBar(content: Text('추천 생성 시작했어요. 백그라운드에서 진행돼요.')),
         );
       }
 
@@ -210,12 +217,14 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
         // Poll job for up to ~15 minutes and show progress if available.
         for (var i = 0; i < 450; i += 1) {
           await Future<void>.delayed(const Duration(seconds: 2));
+          if (!mounted) return;
+
           final j = await widget.api.getJson('/api/jobs/$jobId');
           final job = (j['job'] as Map?)?.cast<String, dynamic>() ?? {};
           final status = (job['status'] ?? '').toString();
           final progress = (job['result']?['progress'] as Map?)?.cast<String, dynamic>() ?? {};
 
-          if (progress.isNotEmpty && mounted) {
+          if (progress.isNotEmpty) {
             final stage = (progress['stage'] ?? '').toString();
             final candidates = (progress['candidates'] ?? 0).toString();
             final validated = (progress['validated'] ?? 0).toString();
@@ -226,7 +235,12 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
             });
           }
 
-          if (status == 'success') break;
+          if (status == 'success') {
+            setState(() {
+              _progress = null;
+            });
+            break;
+          }
           if (status == 'failed') {
             throw Exception(job['errorMessage'] ?? '추천 생성 실패');
           }
@@ -237,7 +251,11 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
     } catch (e) {
       setState(() => _error = e.toString());
     } finally {
-      if (mounted) setState(() => _loading = false);
+      if (mounted) {
+        setState(() {
+          _jobRunning = false;
+        });
+      }
     }
   }
 

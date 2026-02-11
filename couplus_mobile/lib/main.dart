@@ -1,4 +1,5 @@
 import 'package:couplus_mobile/api/api_client.dart';
+import 'package:couplus_mobile/api/session_store.dart';
 import 'package:couplus_mobile/screens/home_screen.dart';
 import 'package:couplus_mobile/screens/more_screen.dart';
 import 'package:couplus_mobile/screens/work_screen.dart';
@@ -37,12 +38,23 @@ class RootTabs extends StatefulWidget {
 class _RootTabsState extends State<RootTabs> {
   int _index = 0;
 
+  final _store = SessionStore();
   late final ApiClient _api = ApiClient();
 
   @override
   void initState() {
     super.initState();
     _api.init();
+    // Restore last tab on web refresh (and generally keep continuity)
+    _store.loadLastTabIndex().then((v) {
+      if (!mounted) return;
+      if (v == null) return;
+      final idx = v;
+      if (idx >= 0 && idx <= 4) {
+        setState(() => _index = idx);
+      }
+    });
+
     // Native APNs token -> server registration (best-effort)
     PushTokenService.instance.bind(_api);
   }
@@ -70,7 +82,10 @@ class _RootTabsState extends State<RootTabs> {
           borderRadius: BorderRadius.circular(18),
           child: NavigationBar(
             selectedIndex: _index,
-            onDestinationSelected: (i) => setState(() => _index = i),
+            onDestinationSelected: (i) {
+              setState(() => _index = i);
+              _store.saveLastTabIndex(i);
+            },
             destinations: const [
               NavigationDestination(
                 icon: Icon(Icons.home_outlined),

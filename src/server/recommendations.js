@@ -353,6 +353,11 @@ export async function listRecommendations(userId, { limit = 50 } = {}) {
     `SELECT id, source_url, keyword, title, main_image_url, source_price, shipping_fee, final_price, profit, margin_rate, score, reason, created_at
      FROM recommendations
      WHERE user_id = ?
+       AND NOT EXISTS (
+         SELECT 1 FROM uploaded_products up
+         WHERE up.user_id = recommendations.user_id
+           AND up.source_url = recommendations.source_url
+       )
      ORDER BY score DESC
      LIMIT ?`,
     [userId, lim],
@@ -507,6 +512,25 @@ function strictValidatePreview(preview, banKeywords = DEFAULT_BAN_KEYWORDS) {
   return { ok: true };
 }
 
+function keywordTokens(keyword) {
+  return String(keyword || '')
+    .trim()
+    .split(/\s+/)
+    .map((s) => s.trim())
+    .filter((s) => s.length >= 2)
+    .slice(0, 6);
+}
+
+function titleMatchesKeyword(keyword, title) {
+  const kw = String(keyword || '').trim();
+  if (!kw) return true;
+  const t = String(title || '').toLowerCase();
+  const toks = keywordTokens(kw);
+  if (toks.isEmpty) return t.includes(kw.toLowerCase());
+  // Require all tokens to appear (reduces irrelevant search result leakage)
+  return toks.every((x) => t.includes(x.toLowerCase()));
+}
+
 async function generateRecommendationsBatch({ settings, keywords, topN = 20, excludeUrls = new Set(), onProgress = null }) {
   const seed = Array.isArray(keywords) && keywords.length > 0 ? keywords : defaultKeywordSet();
   const startedAt = Date.now();
@@ -533,6 +557,8 @@ async function generateRecommendationsBatch({ settings, keywords, topN = 20, exc
 
     for (const it of list) {
       if (excludeUrls.has(it.url)) continue;
+      // Domeggook search can leak irrelevant items; filter by keyword tokens.
+      if (!titleMatchesKeyword(kw, it.title)) continue;
       candidates.push({ keyword: kw, ...it });
       if (candidates.length >= 1200) break;
     }
