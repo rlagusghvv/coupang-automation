@@ -148,27 +148,51 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
     }
   }
 
-  const draft = await parseProductFromDomaeqq(c.url);
-
-  const rawMax = Number(settings.maxContentImages);
-  const maxContentImages = Number.isFinite(rawMax) ? rawMax : 20;
-
-  // Some Domeggook items render detail HTML via dynamic blocks; OpenAPI has a reliable HTML snippet.
-  // If OpenAPI key is present, use it to supplement detail images when parsing yields none.
+  // OpenAPI-first: use stable product info (title/thumb/detail HTML) when available.
   const openApiKey = String(settings.domeggookOpenApiKey || '').trim();
-  let openApiDetailHtml = '';
+  let open = null;
   try {
     if (openApiKey) {
       const m = String(c.url || '').match(/\/(\d{6,})(?:\b|\?|#|$)/);
       const no = m ? m[1] : '';
       if (no) {
-        const v = await getDomeggookItemView({ aid: openApiKey, no });
-        if (v?.ok && String(v.html || '').trim()) {
-          openApiDetailHtml = String(v.html || '');
-        }
+        open = await getDomeggookItemView({ aid: openApiKey, no });
+        if (!open?.ok) open = null;
       }
     }
-  } catch {}
+  } catch {
+    open = null;
+  }
+
+  // Parse is fallback only (time-bounded) because it can be flaky/slow.
+  const withTimeout = (p, ms) => Promise.race([
+    p,
+    new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), ms)),
+  ]);
+
+  let draft = null;
+  try {
+    draft = await withTimeout(parseProductFromDomaeqq(c.url), 12_000);
+  } catch {
+    draft = { title: '', categoryText: '', price: null, shippingFee: null, imageUrl: '', sourceUrl: c.url, contentText: '', options: [] };
+  }
+
+  // Prefer OpenAPI fields
+  if (open) {
+    draft = {
+      ...draft,
+      title: String(open.title || draft.title || '').trim(),
+      imageUrl: String(open.thumbOriginal || draft.imageUrl || '').trim(),
+      shippingFee: open.shippingFee != null ? open.shippingFee : draft.shippingFee,
+      // supplement contentText for image extraction
+      contentText: String(open.html || draft.contentText || ''),
+    };
+  }
+
+  const rawMax = Number(settings.maxContentImages);
+  const maxContentImages = Number.isFinite(rawMax) ? rawMax : 20;
+
+  const openApiDetailHtml = String(open?.html || '');
 
   function isLikelyProductImage(url) {
     try {

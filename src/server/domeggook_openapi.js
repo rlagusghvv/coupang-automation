@@ -178,12 +178,19 @@ export async function getItemView({ aid, no }) {
   });
 
   const html = String(r?.root?.desc?.contents?.item || '').trim();
+  const title = String(r?.root?.basis?.title || '').trim();
+  const thumbOriginal = String(r?.root?.thumb?.original || '').trim();
+  const shippingFee = Number(r?.root?.deli?.fee);
+
   return {
     ok: true,
     no: itemNo,
-    title: String(r?.root?.basis?.title || '').trim(),
+    title,
+    thumbOriginal,
+    shippingFee: Number.isFinite(shippingFee) ? shippingFee : null,
     category: r?.root?.category || null,
     html,
+    raw: r?.root || null,
   };
 }
 

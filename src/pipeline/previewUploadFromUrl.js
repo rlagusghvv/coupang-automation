@@ -1,6 +1,7 @@
 import { classifyUrl } from "../utils/urlFilter.js";
 import { parseProductFromDomaeqq } from "../sources/domaeqq/parseProductFromDomaeqq.js";
 import { extractImageUrls } from "../utils/contentImages.js";
+import { getItemView as getDomeggookItemView } from "../server/domeggook_openapi.js";
 import { computePrice } from "../utils/price.js";
 import { recommendCategory } from "../coupang/api/recommendCategory.js";
 import { suggestTitlesFromNaver, cleanTitle } from "../utils/titleSuggest.js";
@@ -90,11 +91,46 @@ export async function previewUploadFromUrl(inputUrl, settings = {}) {
     return { ok: false, reason: c.reason, url: c.url };
   }
 
-  const draft = await parseProductFromDomaeqq(c.url);
+  // OpenAPI-first: more stable than HTML parsing.
+  const openApiKey = String(settings.domeggookOpenApiKey || '').trim();
+  let open = null;
+  try {
+    if (openApiKey) {
+      const m = String(c.url || '').match(/\/(\d{6,})(?:\b|\?|#|$)/);
+      const no = m ? m[1] : '';
+      if (no) {
+        open = await getDomeggookItemView({ aid: openApiKey, no });
+        if (!open?.ok) open = null;
+      }
+    }
+  } catch {
+    open = null;
+  }
+
+  const withTimeout = (p, ms) => Promise.race([
+    p,
+    new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), ms)),
+  ]);
+
+  // Parse is fallback only (and time-bounded) because it can be flaky/slow.
+  let parsed = { title: '', categoryText: '', price: null, shippingFee: null, imageUrl: '', sourceUrl: c.url, contentText: '', options: [] };
+  try {
+    parsed = await withTimeout(parseProductFromDomaeqq(c.url), 12_000);
+  } catch {}
+
+  const draft = {
+    ...parsed,
+    title: String(open?.title || parsed.title || '').trim(),
+    imageUrl: String(open?.thumbOriginal || parsed.imageUrl || '').trim(),
+    shippingFee: open?.shippingFee != null ? open.shippingFee : parsed.shippingFee,
+    // keep parsed categoryText as fallback for category mapping
+  };
 
   const rawMax = Number(settings.maxContentImages);
   const maxContentImages = Number.isFinite(rawMax) ? rawMax : 30;
-  const contentImages = extractImageUrls(draft.contentText)
+
+  const contentHtml = String(open?.html || parsed.contentText || '');
+  const contentImages = extractImageUrls(contentHtml)
     .filter(isLikelyProductImage)
     .slice(0, Math.max(0, maxContentImages))
     .filter(Boolean);
