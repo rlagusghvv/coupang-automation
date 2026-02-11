@@ -1316,8 +1316,15 @@ app.post("/api/jobs/start", authRequired, async (req, res) => {
         if (ok) {
           try {
             const confirmedTitle = String(settingsSnapshot?.titleOverride || result?.draft?.title || "").trim();
-            const mainImageUrl = String(result?.draft?.imageUrl || "").trim();
-            const detailImages = Array.isArray(settingsSnapshot?.imagesOverride) ? settingsSnapshot.imagesOverride : [];
+
+            const overrideImages = Array.isArray(settingsSnapshot?.imagesOverride)
+              ? settingsSnapshot.imagesOverride
+              : [];
+            const detailImages = overrideImages.length > 0
+              ? overrideImages
+              : (Array.isArray(result?.detailImages) ? result.detailImages : (Array.isArray(result?.draft?.detailImages) ? result.draft.detailImages : []));
+
+            const mainImageUrl = String(result?.draft?.imageUrl || (detailImages[0] || "")).trim();
 
             const p = await upsertCatalogProduct({
               userId,

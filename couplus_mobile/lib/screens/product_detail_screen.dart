@@ -224,7 +224,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                           'https://www.coupang.com/vp/products/$sellerProductId?failRedirectApp=true');
                       if (uri != null) {
                         await launchUrl(uri,
-                            mode: LaunchMode.externalApplication);
+                            mode: LaunchMode.platformDefault);
                       }
                     },
                     child: const Text('쿠팡 상품 열기'),
