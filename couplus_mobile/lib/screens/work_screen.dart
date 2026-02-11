@@ -1311,6 +1311,74 @@ class _WorkScreenState extends State<WorkScreen> {
                 SectionHeader('배치 업로드 큐',
                     trailing: InfoChip(label: '${_queue.length}')),
                 const SizedBox(height: 10),
+                if (_queue.isNotEmpty) ...[
+                  Builder(builder: (ctx) {
+                    final total = _queue.length;
+                    final uploading = _queue.where((it) => it.status == _QueueStatus.uploading).length;
+                    final success = _queue.where((it) => it.status == _QueueStatus.success).length;
+                    final failed = _queue.where((it) => it.status == _QueueStatus.failed).length;
+                    final skipped = _queue.where((it) => it.status == _QueueStatus.skipped).length;
+                    final done = success + failed + skipped;
+
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            InfoChip(
+                              label: _batchRunning
+                                  ? '진행: $done/$total'
+                                  : '요약: $done/$total',
+                              color: Theme.of(context).colorScheme.primary,
+                            ),
+                            const SizedBox(width: 8),
+                            if (uploading > 0)
+                              InfoChip(
+                                label: '업로드중 $uploading',
+                                color: const Color(0xFF1971C2),
+                              ),
+                            if (success > 0) ...[
+                              const SizedBox(width: 8),
+                              InfoChip(
+                                label: '완료 $success',
+                                color: const Color(0xFF2F9E44),
+                              ),
+                            ],
+                            if (failed > 0) ...[
+                              const SizedBox(width: 8),
+                              InfoChip(
+                                label: '실패 $failed',
+                                color: const Color(0xFFE03131),
+                              ),
+                            ],
+                          ],
+                        ),
+                        if (_batchRunning) ...[
+                          const SizedBox(height: 8),
+                          ClipRRect(
+                            borderRadius: BorderRadius.circular(999),
+                            child: LinearProgressIndicator(
+                              minHeight: 6,
+                              value: total <= 0 ? null : (done / total).clamp(0.0, 1.0),
+                            ),
+                          ),
+                        ],
+                      ],
+                    );
+                  }),
+                  const SizedBox(height: 12),
+                ],
+                TextField(
+                  controller: _batchUrls,
+                  enabled: isAuthed && !_loading && !_batchRunning,
+                  minLines: 3,
+                  maxLines: 6,
+                  decoration: const InputDecoration(
+                    labelText: '여러 URL 입력',
+                    hintText: '줄바꿈 또는 쉼표(,)로 여러 URL을 붙여넣기',
+                  ),
+                ),
+                const SizedBox(height: 10),
                 TextField(
                   controller: _batchUrls,
                   enabled: isAuthed && !_loading && !_batchRunning,
