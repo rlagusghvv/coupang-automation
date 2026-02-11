@@ -620,6 +620,18 @@ app.get('/api/vendor-session/:vendor/status', authRequired, async (req, res) => 
     const s = await ensureVendorStatePathForUser(req.user.id, req.user.settings || {}, vendor);
     const p = String(s[key] || '').trim();
 
+    // If user session file was reset but legacy global state exists, copy it back as a fallback.
+    try {
+      if (p && !fs.existsSync(p)) {
+        const legacy = vendor === 'domeme' ? DOMEME_STORAGE_STATE_PATH : DOMEGGOOK_STORAGE_STATE_PATH;
+        if (legacy && fs.existsSync(legacy)) {
+          const dir = path.dirname(p);
+          if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+          fs.copyFileSync(legacy, p);
+        }
+      }
+    } catch {}
+
     const st = await checkVendorSession({ vendor, storageStatePath: p });
     return res.json({ ok: true, vendor, path: p, status: st });
   } catch (e) {
