@@ -102,6 +102,14 @@ export function isSearchableCategoryCode(code) {
   return true;
 }
 
+export function normalizeCategoryCodeList(value) {
+  const arr = Array.isArray(value) ? value : (typeof value === 'string' ? value.split(',') : []);
+  return arr
+    .map((s) => String(s || '').trim())
+    .filter((s) => s)
+    .filter((s) => isSearchableCategoryCode(s));
+}
+
 export function loadCategoryKeywordSeeds() {
   const p = path.join(process.cwd(), 'data', 'domeggook_categories.txt');
   try {

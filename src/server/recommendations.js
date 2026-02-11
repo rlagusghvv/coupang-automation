@@ -7,6 +7,7 @@ import {
   collectOpenApiCandidates,
   getCategoryList,
   loadCategoryKeywordSeeds,
+  normalizeCategoryCodeList,
   pickCategoryCodes,
 } from './domeggook_openapi.js';
 
@@ -568,9 +569,24 @@ async function generateRecommendationsBatch({ settings, keywords, topN = 20, exc
   const openApiKey = String(settings?.domeggookOpenApiKey || '').trim();
   if (openApiKey) {
     try {
-      const seeds = loadCategoryKeywordSeeds();
       const catList = await getCategoryList({ aid: openApiKey, isReg: true });
-      const picked = pickCategoryCodes({ categories: catList.categories, seeds, maxCodes: 12 });
+
+      // If user selected specific categories, use them.
+      const selectedCodes = normalizeCategoryCodeList(settings?.domeggookCategoryCodes);
+      let picked = [];
+      if (selectedCodes.length > 0) {
+        const byCode = new Map((catList.categories || []).map((c) => [String(c.code), c]));
+        picked = selectedCodes
+          .slice(0, 20)
+          .map((code) => ({
+            code,
+            name: String(byCode.get(code)?.name || code),
+          }));
+      } else {
+        // Otherwise pick from keyword seeds (backward-compatible)
+        const seeds = loadCategoryKeywordSeeds();
+        picked = pickCategoryCodes({ categories: catList.categories, seeds, maxCodes: 12 });
+      }
 
       if (typeof onProgress === 'function') {
         try {

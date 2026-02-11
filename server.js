@@ -1397,6 +1397,25 @@ app.post("/api/settings", authRequired, async (req, res) => {
   }
 });
 
+// ✅ Domeggook OpenAPI helpers (categories)
+import { getCategoryList as dgGetCategoryList, isSearchableCategoryCode as dgIsSearchableCategoryCode } from './src/server/domeggook_openapi.js';
+
+app.get('/api/domeggook/categories', authRequired, async (req, res) => {
+  try {
+    const key = String(req.user?.settings?.domeggookOpenApiKey || '').trim();
+    if (!key) return res.status(400).json({ ok: false, error: 'missing_openapi_key' });
+
+    const r = await dgGetCategoryList({ aid: key, isReg: true });
+    const list = (r?.categories || [])
+      .filter((c) => dgIsSearchableCategoryCode(c?.code))
+      .map((c) => ({ code: String(c.code), name: String(c.name || ''), locked: String(c.locked || '') }));
+
+    return res.json({ ok: true, items: list });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
 // ✅ 업로드 Preview API (쿠팡 키 없어도 동작)
 app.post("/api/upload/preview", authRequired, async (req, res) => {
   try {

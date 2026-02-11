@@ -21,6 +21,8 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
   List<Map<String, dynamic>> _items = const [];
   final Set<String> _selected = <String>{};
 
+  Set<String> _selectedCategories = <String>{};
+
   @override
   void initState() {
     super.initState();
@@ -34,6 +36,28 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
       _progress = null;
     });
     try {
+      // Load category selection (settings)
+      try {
+        final s = await widget.api.getJson('/api/settings');
+        final settings = (s['settings'] as Map?)?.cast<String, dynamic>() ?? {};
+        final raw = settings['domeggookCategoryCodes'];
+        final codes = <String>{};
+        if (raw is List) {
+          for (final x in raw) {
+            final c = x.toString().trim();
+            if (c.isNotEmpty) codes.add(c);
+          }
+        } else if (raw is String) {
+          for (final part in raw.split(',')) {
+            final c = part.trim();
+            if (c.isNotEmpty) codes.add(c);
+          }
+        }
+        if (mounted) setState(() => _selectedCategories = codes);
+      } catch (_) {
+        // ignore
+      }
+
       final json = await widget.api.getJson('/api/recommendations', query: {
         'limit': '50',
       });
@@ -193,6 +217,130 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
     }
   }
 
+  Future<void> _editCategories() async {
+    setState(() {
+      _error = null;
+    });
+
+    try {
+      final cats = await widget.api.getJson('/api/domeggook/categories');
+      if (!mounted) return;
+      final items = (cats['items'] as List?) ?? const [];
+      final all = items.map((e) => (e as Map).cast<String, dynamic>()).toList();
+
+      final selected = Set<String>.from(_selectedCategories);
+      final selectedBefore = Set<String>.from(_selectedCategories);
+
+      final ok = await showDialog<bool>(
+        context: context,
+        builder: (ctx) {
+          String q = '';
+          return StatefulBuilder(
+            builder: (ctx, setLocal) {
+              final filtered = q.trim().isEmpty
+                  ? all
+                  : all.where((c) {
+                      final name = (c['name'] ?? '').toString();
+                      final code = (c['code'] ?? '').toString();
+                      return name.contains(q) || code.contains(q);
+                    }).toList();
+
+              return AlertDialog(
+                title: const Text('도매꾹 카테고리 선택'),
+                content: SizedBox(
+                  width: 520,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      TextField(
+                        decoration: const InputDecoration(
+                          hintText: '검색 (예: 디지털, 케이스, 01_11_00_00_00)',
+                          prefixIcon: Icon(Icons.search),
+                        ),
+                        onChanged: (v) => setLocal(() => q = v),
+                      ),
+                      const SizedBox(height: 12),
+                      Row(
+                        children: [
+                          Expanded(child: Text('선택 ${selected.length}개')),
+                          TextButton(
+                            onPressed: () => setLocal(() => selected.clear()),
+                            child: const Text('전체 해제'),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      Flexible(
+                        child: ListView.builder(
+                          shrinkWrap: true,
+                          itemCount: filtered.length,
+                          itemBuilder: (ctx, i) {
+                            final c = filtered[i];
+                            final code = (c['code'] ?? '').toString();
+                            final name = (c['name'] ?? '').toString();
+                            final checked = selected.contains(code);
+
+                            return CheckboxListTile(
+                              dense: true,
+                              value: checked,
+                              onChanged: (v) {
+                                setLocal(() {
+                                  if (v == true) {
+                                    selected.add(code);
+                                  } else {
+                                    selected.remove(code);
+                                  }
+                                });
+                              },
+                              title: Text(name.isEmpty ? code : name),
+                              subtitle: Text(code),
+                            );
+                          },
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.of(ctx).pop(false),
+                    child: const Text('취소'),
+                  ),
+                  FilledButton(
+                    onPressed: () => Navigator.of(ctx).pop(true),
+                    child: const Text('저장'),
+                  ),
+                ],
+              );
+            },
+          );
+        },
+      );
+
+      if (ok != true) return;
+      if (!mounted) return;
+
+      final codes = selected.toList();
+      await widget.api.postJson('/api/settings', {
+        'domeggookCategoryCodes': codes,
+      });
+      if (!mounted) return;
+
+      setState(() => _selectedCategories = selected);
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('카테고리 저장 완료')));
+
+      // If selection changed, encourage a reset fill (user can still press fill)
+      if (selectedBefore.join(',') != selected.join(',') && mounted) {
+        setState(() {
+          _progress = '카테고리 변경됨 → 우측 상단 ✨(추천 채우기) 다시 누르면 반영돼요.';
+        });
+      }
+    } catch (e) {
+      if (mounted) setState(() => _error = e.toString());
+    }
+  }
+
   Future<void> _runNow() async {
     if (_jobRunning) return;
 
@@ -285,6 +433,11 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
             tooltip: '선택 해제',
           ),
         IconButton(
+          onPressed: _loading ? null : _editCategories,
+          icon: const Icon(Icons.tune),
+          tooltip: _selectedCategories.isEmpty ? '카테고리 선택 (전체)' : '카테고리 선택 (${_selectedCategories.length}개)',
+        ),
+        IconButton(
           onPressed: _loading ? null : _runNow,
           icon: const Icon(Icons.auto_awesome),
           tooltip: '추천 채우기',
@@ -319,6 +472,13 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
               InfoChip(
                 label: _loading ? '불러오는 중…' : '총 ${_items.length}개',
                 color: Theme.of(context).colorScheme.primary,
+              ),
+              const SizedBox(width: 8),
+              InfoChip(
+                label: _selectedCategories.isEmpty
+                    ? '카테고리: 전체'
+                    : '카테고리: ${_selectedCategories.length}개',
+                color: Theme.of(context).colorScheme.secondary,
               ),
               const SizedBox(width: 8),
               InfoChip(
