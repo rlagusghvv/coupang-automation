@@ -526,7 +526,7 @@ function titleMatchesKeyword(keyword, title) {
   if (!kw) return true;
   const t = String(title || '').toLowerCase();
   const toks = keywordTokens(kw);
-  if (toks.isEmpty) return t.includes(kw.toLowerCase());
+  if (!toks || toks.length === 0) return t.includes(kw.toLowerCase());
   // Require all tokens to appear (reduces irrelevant search result leakage)
   return toks.every((x) => t.includes(x.toLowerCase()));
 }
