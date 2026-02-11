@@ -979,14 +979,14 @@ app.post('/api/recommendations/fill', authRequired, async (req, res) => {
 
         let tries = 0;
         let last = null;
-        while (tries < 6) {
+        while (tries < 12) {
           tries += 1;
           last = await fillRecommendationsForUser({
             userId: req.user.id,
             settings: req.user.settings || {},
             keywords,
             targetCount,
-            maxAddPerRun: 6,
+            maxAddPerRun: reset ? 10 : 6,
             onProgress: (p) => {
               Object.assign(progress, p || {});
               const now = Date.now();
