@@ -451,10 +451,10 @@ app.get("/api/dashboard", async (req, res) => {
 
     const domeme = (() => {
       try {
-        const filePath = DOMEME_STORAGE_STATE_PATH;
-        if (!fs.existsSync(filePath)) return { ok: true, exists: false, valid: false };
+        const filePath = user?.settings?.domemeStorageStatePath || '';
+        if (!filePath || !fs.existsSync(filePath)) return { ok: true, exists: false, valid: false };
         const stat = fs.statSync(filePath);
-        return { ok: true, exists: true, valid: true, updatedAt: new Date(stat.mtimeMs).toISOString() };
+        return { ok: true, exists: true, valid: true, updatedAt: new Date(stat.mtimeMs).toISOString(), path: filePath };
       } catch (e) {
         return { ok: false, error: String(e?.message || e) };
       }
@@ -462,10 +462,10 @@ app.get("/api/dashboard", async (req, res) => {
 
     const domeggook = (() => {
       try {
-        const filePath = DOMEGGOOK_STORAGE_STATE_PATH;
-        if (!fs.existsSync(filePath)) return { ok: true, exists: false, valid: false };
+        const filePath = user?.settings?.domeggookStorageStatePath || '';
+        if (!filePath || !fs.existsSync(filePath)) return { ok: true, exists: false, valid: false };
         const stat = fs.statSync(filePath);
-        return { ok: true, exists: true, valid: true, updatedAt: new Date(stat.mtimeMs).toISOString() };
+        return { ok: true, exists: true, valid: true, updatedAt: new Date(stat.mtimeMs).toISOString(), path: filePath };
       } catch (e) {
         return { ok: false, error: String(e?.message || e) };
       }
@@ -558,9 +558,77 @@ app.get("/api/me", authRequired, (req, res) => {
   return res.json({ ok: true, user: { id: req.user.id, email } });
 });
 
+function vendorStateKey(vendor) {
+  const v = String(vendor || '').trim();
+  if (v === 'domeggook') return 'domeggookStorageStatePath';
+  if (v === 'domeme') return 'domemeStorageStatePath';
+  return '';
+}
+
+function defaultVendorStatePath({ userId, vendor }) {
+  const uid = String(userId || '').trim() || 'unknown';
+  const v = String(vendor || '').trim() || 'vendor';
+  const dir = path.join(process.cwd(), 'data', 'vendor_sessions', uid);
+  try { if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true }); } catch {}
+  return path.join(dir, `storageState.${v}.json`);
+}
+
+async function ensureVendorStatePathForUser(userId, settings, vendor) {
+  const key = vendorStateKey(vendor);
+  if (!key) return settings || {};
+  const current = (settings && typeof settings === 'object') ? settings : {};
+  const p = String(current[key] || '').trim();
+  if (p) return current;
+  const next = defaultVendorStatePath({ userId, vendor });
+  try {
+    return await updateSettings(userId, { [key]: next });
+  } catch {
+    return { ...current, [key]: next };
+  }
+}
+
 // ✅ 설정: 조회/저장
-app.get("/api/settings", authRequired, (req, res) => {
-  return res.json({ ok: true, settings: req.user.settings || {} });
+app.get("/api/settings", authRequired, async (req, res) => {
+  // Ensure per-user vendor session paths exist (multi-user safe default)
+  let s = req.user.settings || {};
+  s = await ensureVendorStatePathForUser(req.user.id, s, 'domeggook');
+  s = await ensureVendorStatePathForUser(req.user.id, s, 'domeme');
+  return res.json({ ok: true, settings: s });
+});
+
+// ✅ Vendor session: per-user status/reset (domeme | domeggook)
+import { checkVendorSession, resetVendorSession } from "./src/server/vendorSession.js";
+
+app.get('/api/vendor-session/:vendor/status', authRequired, async (req, res) => {
+  try {
+    const vendor = String(req.params.vendor || '').trim();
+    const key = vendorStateKey(vendor);
+    if (!key) return res.status(400).json({ ok: false, error: 'bad_vendor' });
+
+    const s = await ensureVendorStatePathForUser(req.user.id, req.user.settings || {}, vendor);
+    const p = String(s[key] || '').trim();
+
+    const st = await checkVendorSession({ vendor, storageStatePath: p });
+    return res.json({ ok: true, vendor, path: p, status: st });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+app.post('/api/vendor-session/:vendor/reset', authRequired, async (req, res) => {
+  try {
+    const vendor = String(req.params.vendor || '').trim();
+    const key = vendorStateKey(vendor);
+    if (!key) return res.status(400).json({ ok: false, error: 'bad_vendor' });
+
+    const s = await ensureVendorStatePathForUser(req.user.id, req.user.settings || {}, vendor);
+    const p = String(s[key] || '').trim();
+
+    const r = resetVendorSession({ storageStatePath: p });
+    return res.json({ ok: true, vendor, path: p, result: r });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
 });
 
 // ✅ Presets: list/create/update/delete/apply
