@@ -48697,7 +48697,7 @@ if(r.length!==0){a=A.m(j).ax
 a0=a.ry
 if(a0==null){a0=a.t
 a=a0==null?a.k3:a0}else a=a0
-b.push(new A.cp(r,a,a1))}b.push(new A.cp("\uad8c\uc7a5\uac00 "+B.d.aK(A.et(o)),A.m(j).ax.b,a1))
+b.push(new A.cp("\uac80\uc0c9\uc5b4: "+r,a,a1))}b.push(new A.cp("\uad8c\uc7a5\uac00 "+B.d.aK(A.et(o)),A.m(j).ax.b,a1))
 b.push(new A.cp("\uc21c\ub9c8\uc9c4 "+B.d.aK(A.et(q)),B.cc,a1))
 b.push(new A.cp("\ub9c8\uc9c4 "+B.d.aK(A.et(p)*100)+"%",B.cc,a1))
 f=A.b([A.bB(A.b([new A.bf(B.HI,f,a1),d,B.dz,A.bS(A.bl(A.b([c,B.bn,A.oI(b,6,8)],e),B.w,B.j,B.l),1)],e),B.w,B.j,B.l,0)],e)
