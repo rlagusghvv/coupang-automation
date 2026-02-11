@@ -424,6 +424,27 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
 
     const contentLocalUrls = contentImages.map((u) => downloaded.urlMap[u]).filter(Boolean);
     contentHtml = contentLocalUrls.length > 0 ? buildImageOnlyHtmlFromUrls(contentLocalUrls) : "";
+
+    // If we have detail images but couldn't host/resolve them, fail instead of uploading empty detail.
+    if (contentImages.length > 0 && !contentHtml) {
+      return {
+        ok: false,
+        skipped: false,
+        error: 'detail_images_unavailable',
+        detail: {
+          contentImagesCount: contentImages.length,
+          resolvedCount: contentLocalUrls.length,
+          hint: 'Enable Coupang image upload (useCoupangImageUpload=1) or ensure image hosting works.',
+        },
+        draft: {
+          title: draft.title,
+          price: draft.price,
+          imageUrl: draft.imageUrl,
+          detailImages: contentImages,
+        },
+        detailImages: contentImages,
+      };
+    }
   }
 
   const displayCategoryCode = resolveDisplayCategoryCode({
