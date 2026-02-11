@@ -5,6 +5,7 @@ import 'package:couplus_mobile/services/push_token_service.dart';
 
 import 'package:couplus_mobile/screens/auth/webview_screen.dart';
 import 'package:couplus_mobile/screens/recommendations_screen.dart';
+import 'package:couplus_mobile/screens/_vendor_row.dart';
 import 'package:couplus_mobile/services/sensitive_settings_store.dart';
 import 'package:couplus_mobile/ui/widgets.dart';
 import 'package:flutter/material.dart';
@@ -21,6 +22,8 @@ class MoreScreen extends StatefulWidget {
 class _MoreScreenState extends State<MoreScreen> {
   final _email = TextEditingController();
   final _pw = TextEditingController();
+
+  Map<String, dynamic>? _vendorSessions;
 
   final _sensitiveStore = SensitiveSettingsStore();
   final _coupangAccessKey = TextEditingController();
@@ -93,6 +96,7 @@ class _MoreScreenState extends State<MoreScreen> {
       final json = await widget.api.getJson('/api/me');
       setState(() => _me = json);
       await _refreshSettings();
+      await _checkVendorSessions();
     } catch (e) {
       // 401은 에러 배너 대신 "로그인 필요" 상태로 처리
       if (e is ApiException && e.isUnauthorized) {
@@ -422,6 +426,39 @@ class _MoreScreenState extends State<MoreScreen> {
     }
   }
 
+  Future<void> _checkVendorSessions() async {
+    if ((_me?['user'] as Map?)?['email'] == null) return;
+    try {
+      final domeggook = await widget.api.getJson('/api/vendor-session/domeggook/status');
+      final domeme = await widget.api.getJson('/api/vendor-session/domeme/status');
+      if (mounted) {
+        setState(() {
+          _vendorSessions = {
+            'domeggook': domeggook,
+            'domeme': domeme,
+          };
+        });
+      }
+    } catch (e) {
+      if (mounted) setState(() => _error = e.toString());
+    }
+  }
+
+  Future<void> _resetVendor(String vendor) async {
+    if ((_me?['user'] as Map?)?['email'] == null) return;
+    try {
+      await widget.api.postJson('/api/vendor-session/$vendor/reset', {});
+      await _checkVendorSessions();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('$vendor 세션을 초기화했어요.')),
+        );
+      }
+    } catch (e) {
+      if (mounted) setState(() => _error = e.toString());
+    }
+  }
+
   Future<void> _logout() async {
     setState(() {
       _loading = true;
@@ -484,6 +521,42 @@ class _MoreScreenState extends State<MoreScreen> {
                   ),
                 ),
                 const Icon(Icons.chevron_right),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+
+          AppCard(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                SectionHeader(
+                  '도매 세션',
+                  trailing: TextButton(
+                    onPressed: (_loading || authedEmail.isEmpty) ? null : _checkVendorSessions,
+                    child: const Text('상태 확인'),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                VendorRow(
+                  title: '도매꾹',
+                  json: (_vendorSessions?['domeggook'] as Map?)?.cast<String, dynamic>(),
+                  onReset: authedEmail.isEmpty || _loading ? null : () => _resetVendor('domeggook'),
+                ),
+                const SizedBox(height: 10),
+                VendorRow(
+                  title: '도매매',
+                  json: (_vendorSessions?['domeme'] as Map?)?.cast<String, dynamic>(),
+                  onReset: authedEmail.isEmpty || _loading ? null : () => _resetVendor('domeme'),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  '※ 현재는 “파일 존재 여부”만으로 연결됨이 보일 수 있어요. 위 “상태 확인”은 실제 페이지를 열어 로그인 여부를 검사해요.',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.65),
+                  ),
+                ),
               ],
             ),
           ),
