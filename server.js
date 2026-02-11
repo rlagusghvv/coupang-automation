@@ -1255,24 +1255,56 @@ app.post("/api/jobs/start", authRequired, async (req, res) => {
     // Dedupe for upload jobs (unless force)
     if (kind === "upload" && force !== "1") {
       const existing = await getUploadedProductByUrl(req.user.id, c.url);
-      if (existing?.seller_product_id) {
-        const pid = String(existing.seller_product_id);
-        return res.status(409).json({
-          ok: false,
-          error: "duplicate_product",
-          existing: {
-            sourceUrl: existing.source_url,
-            title: existing.title,
-            finalPrice: existing.final_price,
-            sellerProductId: pid,
-            productUrl: `https://www.coupang.com/vp/products/${pid}`,
-            createdAt: existing.created_at,
-          },
-        });
+      if (existing) {
+        const pid = existing?.seller_product_id ? String(existing.seller_product_id) : '';
+        const createdAtMs = existing?.created_at ? Date.parse(existing.created_at) : 0;
+        const ageMs = createdAtMs ? (Date.now() - createdAtMs) : Number.POSITIVE_INFINITY;
+
+        // If we already have a sellerProductId, it's definitely a duplicate.
+        if (pid) {
+          return res.status(409).json({
+            ok: false,
+            error: "duplicate_product",
+            existing: {
+              sourceUrl: existing.source_url,
+              title: existing.title,
+              finalPrice: existing.final_price,
+              sellerProductId: pid,
+              productUrl: `https://www.coupang.com/vp/products/${pid}`,
+              createdAt: existing.created_at,
+            },
+          });
+        }
+
+        // If there's a recent pending record (no pid yet), block to prevent stampede.
+        if (Number.isFinite(ageMs) && ageMs < 20 * 60_000) {
+          return res.status(409).json({
+            ok: false,
+            error: "upload_pending",
+            existing: {
+              sourceUrl: existing.source_url,
+              title: existing.title,
+              createdAt: existing.created_at,
+            },
+          });
+        }
       }
     }
 
     const userId = req.user.id;
+
+    // Create/refresh a pending dedupe record early to prevent duplicate stampede clicks.
+    if (kind === 'upload' && force !== '1') {
+      try {
+        await upsertUploadedProduct({
+          userId,
+          sourceUrl: c.url,
+          sellerProductId: null,
+          title: '',
+          finalPrice: null,
+        });
+      } catch {}
+    }
 
     let presetSettings = {};
     if (presetId) {

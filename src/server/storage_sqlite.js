@@ -520,9 +520,9 @@ export async function upsertUploadedProduct({
     `INSERT INTO uploaded_products (user_id, source_url, seller_product_id, title, final_price, created_at)
      VALUES (?, ?, ?, ?, ?, ?)
      ON CONFLICT(user_id, source_url) DO UPDATE SET
-       seller_product_id = excluded.seller_product_id,
-       title = excluded.title,
-       final_price = excluded.final_price`,
+       seller_product_id = COALESCE(excluded.seller_product_id, uploaded_products.seller_product_id),
+       title = CASE WHEN excluded.title IS NOT NULL AND excluded.title != '' THEN excluded.title ELSE uploaded_products.title END,
+       final_price = COALESCE(excluded.final_price, uploaded_products.final_price)`,
     [
       userId,
       String(sourceUrl),
