@@ -37,6 +37,7 @@ import {
   listUsersWithPushTargets,
   getRecommendationsNotifyState,
   setRecommendationsLastNotifiedAt,
+  clearRecommendationsForUser,
   getActiveJobByKind,
 } from "./src/server/storage_sqlite.js";
 import {
@@ -950,6 +951,11 @@ app.post('/api/recommendations/fill', authRequired, async (req, res) => {
   try {
     const targetCount = Math.max(1, Math.min(60, Number(req.body?.targetCount || 20) || 20));
     const keywords = Array.isArray(req.body?.keywords) ? req.body.keywords : defaultKeywordSet();
+    const reset = req.body?.reset === true || String(req.body?.reset || '').trim() === '1';
+
+    if (reset) {
+      try { await clearRecommendationsForUser(req.user.id); } catch {}
+    }
 
     const active = await getActiveJobByKind(req.user.id, 'recommendations_fill', ['queued', 'running']);
     if (active) {

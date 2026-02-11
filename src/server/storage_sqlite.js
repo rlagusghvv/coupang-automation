@@ -409,6 +409,20 @@ export async function setRecommendationsLastNotifiedAt(userId, iso) {
   db.close();
 }
 
+export async function clearRecommendationsForUser(userId) {
+  const db = openDb();
+  await dbRun(db, 'DELETE FROM recommendations WHERE user_id = ?', [userId]);
+  // Reset cursor so keyword rotation starts from the beginning.
+  await dbRun(
+    db,
+    `INSERT INTO recommendations_state (user_id, next_keyword_idx, updated_at)
+     VALUES (?, 0, ?)
+     ON CONFLICT(user_id) DO UPDATE SET next_keyword_idx = 0, updated_at = excluded.updated_at`,
+    [userId, new Date().toISOString()],
+  );
+  db.close();
+}
+
 export async function addPreviewHistory({
   userId,
   url,
