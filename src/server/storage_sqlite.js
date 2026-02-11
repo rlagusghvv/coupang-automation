@@ -1139,3 +1139,47 @@ export async function cancelQueuedJob(userId, id) {
   db.close();
   return row ? String(row.status || '') : '';
 }
+
+export async function deleteJob(userId, id) {
+  if (!userId) throw new Error('userId required');
+  if (!id) throw new Error('id required');
+  const db = openDb();
+  // Only allow deleting non-active jobs for safety.
+  const row = await dbGet(db, 'SELECT status FROM jobs WHERE user_id = ? AND id = ?', [String(userId), String(id)]);
+  const status = String(row?.status || '');
+  if (!status) {
+    db.close();
+    return { ok: false, error: 'not_found' };
+  }
+  if (status === 'queued' || status === 'running') {
+    db.close();
+    return { ok: false, error: 'active_job' };
+  }
+
+  await dbRun(db, 'DELETE FROM jobs WHERE user_id = ? AND id = ?', [String(userId), String(id)]);
+  db.close();
+  return { ok: true };
+}
+
+export async function cleanupJobs(userId, { kind = 'upload', statuses = ['succeeded', 'failed', 'cancelled'] } = {}) {
+  if (!userId) throw new Error('userId required');
+  const k = String(kind || '').trim();
+  const st = Array.isArray(statuses) ? statuses.map((x) => String(x)) : [];
+  const db = openDb();
+
+  const where = ['user_id = ?'];
+  const params = [String(userId)];
+  if (k) {
+    where.push('kind = ?');
+    params.push(k);
+  }
+  if (st.length > 0) {
+    const placeholders = st.map(() => '?').join(', ');
+    where.push(`status IN (${placeholders})`);
+    params.push(...st);
+  }
+
+  const r = await dbRun(db, `DELETE FROM jobs WHERE ${where.join(' AND ')}`, params);
+  db.close();
+  return { ok: true, deleted: Number(r?.changes || 0) };
+}

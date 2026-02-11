@@ -30,6 +30,8 @@ import {
   listJobs,
   getNextQueuedJob,
   cancelQueuedJob,
+  deleteJob,
+  cleanupJobs,
   upsertCatalogProduct,
   listCatalogProducts,
   getCatalogProductById,
@@ -1866,6 +1868,72 @@ app.post('/api/upload-queue/:id/cancel', authRequired, async (req, res) => {
     setTimeout(() => processUploadQueueForUser(req.user.id).catch(() => {}), 50);
 
     return res.json({ ok: true, status });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+app.post('/api/upload-queue/:id/retry', authRequired, async (req, res) => {
+  try {
+    const id = String(req.params.id || '').trim();
+    if (!id) return res.status(400).json({ ok: false, error: 'missing id' });
+
+    const prev = await getJob(req.user.id, id);
+    if (!prev) return res.status(404).json({ ok: false, error: 'not_found' });
+
+    if (['queued', 'running'].includes(String(prev.status || ''))) {
+      return res.status(409).json({ ok: false, error: 'active_job' });
+    }
+
+    const url = String(prev.inputUrl || '').trim();
+    if (!url) return res.status(400).json({ ok: false, error: 'missing url' });
+
+    const settingsSnapshot = (prev.result?.request?.settingsSnapshot && typeof prev.result.request.settingsSnapshot === 'object')
+      ? prev.result.request.settingsSnapshot
+      : (req.user.settings || {});
+
+    const job = await createJob({
+      userId: req.user.id,
+      kind: 'upload',
+      inputUrl: url,
+      force: String(prev.force || '0') === '1' ? '1' : '0',
+      catalogId: null,
+      initialResultJson: {
+        request: {
+          presetId: prev.result?.request?.presetId || null,
+          settingsSnapshot,
+          retryOf: prev.id,
+        },
+        progress: { stage: 'queued', percent: 0, url },
+      },
+    });
+
+    setTimeout(() => processUploadQueueForUser(req.user.id).catch(() => {}), 50);
+    return res.json({ ok: true, job });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+app.post('/api/upload-queue/:id/delete', authRequired, async (req, res) => {
+  try {
+    const id = String(req.params.id || '').trim();
+    if (!id) return res.status(400).json({ ok: false, error: 'missing id' });
+    const r = await deleteJob(req.user.id, id);
+    if (!r.ok) {
+      const code = r.error === 'not_found' ? 404 : 409;
+      return res.status(code).json({ ok: false, error: r.error });
+    }
+    return res.json({ ok: true });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+app.post('/api/upload-queue/cleanup', authRequired, async (req, res) => {
+  try {
+    const r = await cleanupJobs(req.user.id, { kind: 'upload' });
+    return res.json(r);
   } catch (e) {
     return res.status(500).json({ ok: false, error: String(e?.message || e) });
   }

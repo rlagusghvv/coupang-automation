@@ -1241,10 +1241,27 @@ class _WorkScreenState extends State<WorkScreen> {
                                 child: CircularProgressIndicator(strokeWidth: 2),
                               )
                             else
-                              IconButton(
-                                tooltip: '새로고침',
-                                onPressed: (!isAuthed) ? null : _refreshQueue,
-                                icon: const Icon(Icons.refresh),
+                              Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  IconButton(
+                                    tooltip: '정리(완료/실패/취소 삭제)',
+                                    onPressed: (!isAuthed)
+                                        ? null
+                                        : () async {
+                                            try {
+                                              await widget.api.postJson('/api/upload-queue/cleanup', {});
+                                              unawaited(_refreshQueue());
+                                            } catch (_) {}
+                                          },
+                                    icon: const Icon(Icons.cleaning_services_outlined),
+                                  ),
+                                  IconButton(
+                                    tooltip: '새로고침',
+                                    onPressed: (!isAuthed) ? null : _refreshQueue,
+                                    icon: const Icon(Icons.refresh),
+                                  ),
+                                ],
                               ),
                           ],
                         ),
@@ -1397,7 +1414,17 @@ class _WorkScreenState extends State<WorkScreen> {
                                         onPressed: (!isAuthed) ? null : showDetails,
                                         child: const Text('자세히'),
                                       ),
-                                      if (canCancel)
+                                      if (status == 'failed')
+                                        TextButton(
+                                          onPressed: (!isAuthed) ? null : () async {
+                                            try {
+                                              await widget.api.postJson('/api/upload-queue/$id/retry', {});
+                                              unawaited(_refreshQueue());
+                                            } catch (_) {}
+                                          },
+                                          child: const Text('재시도'),
+                                        )
+                                      else if (canCancel)
                                         TextButton(
                                           onPressed: () async {
                                             try {
@@ -1408,7 +1435,17 @@ class _WorkScreenState extends State<WorkScreen> {
                                           child: const Text('취소'),
                                         )
                                       else
-                                        const SizedBox(height: 8),
+                                        TextButton(
+                                          onPressed: (!isAuthed || status == 'queued' || status == 'running')
+                                              ? null
+                                              : () async {
+                                                  try {
+                                                    await widget.api.postJson('/api/upload-queue/$id/delete', {});
+                                                    unawaited(_refreshQueue());
+                                                  } catch (_) {}
+                                                },
+                                          child: const Text('삭제'),
+                                        ),
                                     ],
                                   ),
                                 ],
