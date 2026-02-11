@@ -894,24 +894,48 @@ app.post('/api/catalog/:id/deploy', authRequired, async (req, res) => {
             const accessKey = String(settingsSnapshot.coupangAccessKey || '').trim();
             const secretKey = String(settingsSnapshot.coupangSecretKey || '').trim();
             if (accessKey && secretKey) {
-              const r = await getSellerProduct({ sellerProductId, accessKey, secretKey });
-              let obj = null;
-              try { obj = typeof r?.body === 'string' ? JSON.parse(r.body) : r?.body; } catch {}
-              const data = obj?.data || obj || null;
-              const displayCategoryCode = data?.displayCategoryCode ?? data?.displayCategoryId ?? null;
-              const items = Array.isArray(data?.items) ? data.items : [];
+              // Coupang can be eventually-consistent right after create; retry a few times.
+              let lastData = null;
+              for (let attempt = 1; attempt <= 3; attempt += 1) {
+                const r = await getSellerProduct({ sellerProductId, accessKey, secretKey });
+                let obj = null;
+                try { obj = typeof r?.body === 'string' ? JSON.parse(r.body) : r?.body; } catch {}
+                const data = obj?.data || obj || null;
+                lastData = data;
+
+                const items = Array.isArray(data?.items) ? data.items : [];
+                const item0 = items?.[0] || {};
+                const content =
+                  item0?.content ||
+                  item0?.contentText ||
+                  item0?.contentHtml ||
+                  // Coupang API often returns detail under items[0].contents[].contentDetails[].content
+                  (Array.isArray(item0?.contents)
+                    ? item0.contents
+                        .flatMap((c) => (Array.isArray(c?.contentDetails) ? c.contentDetails : []))
+                        .map((d) => d?.content || '')
+                        .join('\n')
+                    : '');
+
+                if (content && String(content).trim().length >= 20) break;
+                // wait then retry
+                await new Promise((rr) => setTimeout(rr, 1500 * attempt));
+              }
+
+              const displayCategoryCode = lastData?.displayCategoryCode ?? lastData?.displayCategoryId ?? null;
+              const items = Array.isArray(lastData?.items) ? lastData.items : [];
               const item0 = items?.[0] || {};
               const content =
                 item0?.content ||
                 item0?.contentText ||
                 item0?.contentHtml ||
-                // Coupang API often returns detail under items[0].contents[].contentDetails[].content
                 (Array.isArray(item0?.contents)
                   ? item0.contents
                       .flatMap((c) => (Array.isArray(c?.contentDetails) ? c.contentDetails : []))
                       .map((d) => d?.content || '')
                       .join('\n')
                   : '');
+
               if (!content || String(content).trim().length < 20) {
                 validation.ok = false;
                 validation.errors.push('detail_empty');
