@@ -1075,32 +1075,48 @@ export async function getNextQueuedJob(userId, kind) {
   if (!userId) throw new Error('userId required');
   if (!kind) throw new Error('kind required');
   const db = openDb();
-  const row = await dbGet(
+
+  // Pull a small window and pick the first job that is eligible to run.
+  // (We store retry timing inside result_json, not in a dedicated column.)
+  const rows = await dbAll(
     db,
     `SELECT id, kind, status, input_url, force, catalog_id, result_json, error_code, error_message, created_at, updated_at
      FROM jobs
      WHERE user_id = ? AND kind = ? AND status = 'queued'
      ORDER BY created_at ASC
-     LIMIT 1`,
+     LIMIT 50`,
     [String(userId), String(kind)],
   );
   db.close();
-  if (!row) return null;
-  let result = {};
-  try { result = JSON.parse(row.result_json || '{}'); } catch {}
-  return {
-    id: row.id,
-    kind: row.kind,
-    status: row.status,
-    inputUrl: row.input_url,
-    force: row.force,
-    catalogId: row.catalog_id,
-    result,
-    errorCode: row.error_code,
-    errorMessage: row.error_message,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-  };
+  if (!rows || rows.length === 0) return null;
+
+  const now = Date.now();
+
+  for (const row of rows) {
+    let result = {};
+    try { result = JSON.parse(row.result_json || '{}'); } catch {}
+
+    const retryAtMs = Number(result?.request?.retryAtMs);
+    if (Number.isFinite(retryAtMs) && retryAtMs > now) {
+      continue;
+    }
+
+    return {
+      id: row.id,
+      kind: row.kind,
+      status: row.status,
+      inputUrl: row.input_url,
+      force: row.force,
+      catalogId: row.catalog_id,
+      result,
+      errorCode: row.error_code,
+      errorMessage: row.error_message,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    };
+  }
+
+  return null;
 }
 
 export async function cancelQueuedJob(userId, id) {

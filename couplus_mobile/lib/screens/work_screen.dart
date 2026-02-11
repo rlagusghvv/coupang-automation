@@ -1295,7 +1295,18 @@ class _WorkScreenState extends State<WorkScreen> {
                                         ),
                                         const SizedBox(height: 6),
                                         if (status == 'running')
-                                          LinearProgressIndicator(value: (percent <= 0) ? null : (percent / 100.0)),
+                                          LinearProgressIndicator(value: (percent <= 0) ? null : (percent / 100.0))
+                                        else if (stage == 'backoff')
+                                          Text(
+                                            '재시도 대기중… ${((progress?['retryInSec'] ?? '')).toString()}s',
+                                            style: TextStyle(
+                                              fontSize: 12,
+                                              color: Theme.of(context)
+                                                  .colorScheme
+                                                  .onSurface
+                                                  .withValues(alpha: 0.65),
+                                            ),
+                                          ),
                                       ],
                                     ),
                                   ),

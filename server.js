@@ -394,6 +394,25 @@ async function processUploadQueueForUser(userId) {
   }
 }
 
+function isRetriableUploadError(code) {
+  const c = String(code || '').trim();
+  if (!c) return false;
+  if (c === 'coupang_rate_limited') return true;
+  if (c === 'detail_images_unavailable') return false; // deterministic until config changes
+  if (c.startsWith('coupang_create_http_429')) return true;
+  if (c.startsWith('coupang_create_http_5')) return true;
+  if (c === 'job_exception') return true;
+  return false;
+}
+
+function computeBackoffMs(attempt) {
+  const a = Math.max(1, Math.min(10, Number(attempt) || 1));
+  // 10s, 20s, 40s, 80s, ... capped at 10 minutes
+  const base = Math.min(10 * 60_000, 10_000 * (2 ** (a - 1)));
+  const jitter = Math.floor(Math.random() * 1500);
+  return base + jitter;
+}
+
 async function executeUploadJob({ userId, jobId, url, force, settingsSnapshot, presetId }) {
   const job = { id: String(jobId), kind: 'upload' };
   const inputUrl = String(url || '').trim();
@@ -439,6 +458,40 @@ async function executeUploadJob({ userId, jobId, url, force, settingsSnapshot, p
     });
 
     const ok = Boolean(result?.ok);
+
+    // If retriable failure, re-queue with backoff (avoid immediate hammering)
+    if (!ok && isRetriableUploadError(result?.error)) {
+      const prevAttempt = Number(progressState?.request?.attempt || progressState?.result?.request?.attempt || 0);
+      const attempt = prevAttempt + 1;
+      const maxAttempts = 6;
+
+      if (attempt <= maxAttempts) {
+        const delayMs = computeBackoffMs(attempt);
+        const retryAtMs = Date.now() + delayMs;
+
+        progressState.request = { ...(progressState.request || {}), attempt, retryAtMs };
+        progressState.result = result;
+        progressState.progress = {
+          stage: 'backoff',
+          percent: Math.max(1, Number(progressState?.progress?.percent || 0)),
+          url: inputUrl,
+          retryInSec: Math.ceil(delayMs / 1000),
+        };
+
+        await updateJob({
+          id: job.id,
+          patch: {
+            status: 'queued',
+            errorCode: 'retry_scheduled',
+            errorMessage: `레이트리밋/일시적 오류로 재시도 예약 (${attempt}/${maxAttempts})`,
+            resultJson: progressState,
+          },
+        });
+
+        setTimeout(() => processUploadQueueForUser(userId).catch(() => {}), Math.min(delayMs + 200, 10 * 60_000));
+        return;
+      }
+    }
 
     // Save final job result
     progressState.result = result;
