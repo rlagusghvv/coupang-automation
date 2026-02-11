@@ -48479,7 +48479,7 @@ q=3
 a1=t.N
 a2=t.z
 s=6
-return A.x(n.a.c.dD("/api/recommendations/fill",A.ao(["targetCount",20],a1,a2)),$async$oT)
+return A.x(n.a.c.dD("/api/recommendations/fill",A.ao(["targetCount",60,"reset","1"],a1,a2)),$async$oT)
 case 6:m=b1
 a3=t.Y
 a4=a3.a(J.U(m,"job"))
