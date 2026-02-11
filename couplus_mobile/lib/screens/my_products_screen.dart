@@ -218,8 +218,11 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
                   final title = (p['confirmedTitle'] ?? '').toString();
                   final status = (p['status'] ?? '').toString();
                   final img = (p['mainImageUrl'] ?? '').toString();
-                  final sellerProductId =
+                  var sellerProductId =
                       (p['sellerProductId'] ?? '').toString();
+                  if (sellerProductId.endsWith('.0')) {
+                    sellerProductId = sellerProductId.substring(0, sellerProductId.length - 2);
+                  }
                   final selected = _selected.contains(id);
 
                   return AppCard(

@@ -200,7 +200,10 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
   Widget build(BuildContext context) {
     final p = _product;
     final sourceUrl = (p?['sourceUrl'] ?? '').toString();
-    final sellerProductId = (p?['sellerProductId'] ?? '').toString();
+    var sellerProductId = (p?['sellerProductId'] ?? '').toString();
+    if (sellerProductId.endsWith('.0')) {
+      sellerProductId = sellerProductId.substring(0, sellerProductId.length - 2);
+    }
     final status = (p?['status'] ?? '').toString();
     final validation = (p?['validation'] as Map?)?.cast<String, dynamic>();
 
