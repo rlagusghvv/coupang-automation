@@ -33,6 +33,10 @@ class _MoreScreenState extends State<MoreScreen> {
   final _coupangDeliveryCompanyCode = TextEditingController();
   final _pagesApiToken = TextEditingController();
 
+  // Domeggook OpenAPI
+  final _domeggookOpenApiKey = TextEditingController();
+  bool _revealDomeggookOpenApiKey = false;
+
   // Pricing / shipping / category settings
   final _marginRate = TextEditingController();
   final _marginAdd = TextEditingController();
@@ -78,6 +82,7 @@ class _MoreScreenState extends State<MoreScreen> {
     _coupangVendorUserId.dispose();
     _coupangDeliveryCompanyCode.dispose();
     _pagesApiToken.dispose();
+    _domeggookOpenApiKey.dispose();
     _marginRate.dispose();
     _marginAdd.dispose();
     _priceMin.dispose();
@@ -170,6 +175,10 @@ class _MoreScreenState extends State<MoreScreen> {
           ? _pagesApiToken.text
           : (s[SensitiveSettingsStore.pagesApiToken]?.toString() ?? '');
 
+      _domeggookOpenApiKey.text = _domeggookOpenApiKey.text.isNotEmpty
+          ? _domeggookOpenApiKey.text
+          : (s['domeggookOpenApiKey']?.toString() ?? '');
+
       // General settings
       _marginRate.text = (s['marginRate'] ?? '').toString();
       _marginAdd.text = (s['marginAdd'] ?? '').toString();
@@ -201,6 +210,9 @@ class _MoreScreenState extends State<MoreScreen> {
       SensitiveSettingsStore.coupangDeliveryCompanyCode:
           _coupangDeliveryCompanyCode.text.trim(),
       SensitiveSettingsStore.pagesApiToken: _pagesApiToken.text.trim(),
+
+      // Domeggook OpenAPI
+      'domeggookOpenApiKey': _domeggookOpenApiKey.text.trim(),
 
       // General
       'marginRate': double.tryParse(_marginRate.text.trim()) ?? 0,
@@ -819,6 +831,26 @@ class _MoreScreenState extends State<MoreScreen> {
                           ? Icons.visibility_off
                           : Icons.visibility),
                       tooltip: _revealPagesApiToken ? 'Hide' : 'Reveal',
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: _domeggookOpenApiKey,
+                  enabled: _sensitiveUnlocked && !_savingSensitive,
+                  obscureText: !_revealDomeggookOpenApiKey,
+                  decoration: InputDecoration(
+                    labelText: 'Domeggook OpenAPI key',
+                    helperText: '도매꾹 OpenAPI 키 (추천/상품조회에 사용)',
+                    suffixIcon: IconButton(
+                      onPressed: _sensitiveUnlocked
+                          ? () => setState(() =>
+                              _revealDomeggookOpenApiKey = !_revealDomeggookOpenApiKey)
+                          : null,
+                      icon: Icon(_revealDomeggookOpenApiKey
+                          ? Icons.visibility_off
+                          : Icons.visibility),
+                      tooltip: _revealDomeggookOpenApiKey ? 'Hide' : 'Reveal',
                     ),
                   ),
                 ),
