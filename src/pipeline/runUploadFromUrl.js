@@ -689,6 +689,29 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
   let createdId = null;
   let createBody = res.body;
   let createBodyObj = null;
+
+  // If HTTP itself failed (e.g., 429), do not treat as success.
+  if (Number(res?.status) && Number(res.status) !== 200) {
+    const err = Number(res.status) === 429 ? 'coupang_rate_limited' : `coupang_create_http_${res.status}`;
+    return {
+      ok: false,
+      error: err,
+      detail: { status: res.status, body: createBody },
+      draft: {
+        title: sellerProductName,
+        price: draft.price,
+        imageUrl: draft.imageUrl,
+        detailImages: contentImages,
+      },
+      detailImages: contentImages,
+      finalPrice,
+      category: { requested: displayCategoryCode, used: finalCategoryCode, auto: allowAutoCategory, predicted: settings.__predictedCategory || null },
+      optionsUsed: optionsUsed.map((opt) => opt.label),
+      payloadCheck,
+      create: { status: res.status, body: createBody, sellerProductId: null },
+    };
+  }
+
   try {
     createBodyObj = typeof res.body === "string" ? JSON.parse(res.body) : res.body;
     if (createBodyObj?.code && String(createBodyObj.code).toUpperCase() !== "SUCCESS") {
@@ -712,6 +735,26 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
     }
     createdId = createBodyObj?.data ?? null;
   } catch {}
+
+  if (!createdId) {
+    return {
+      ok: false,
+      error: 'coupang_create_no_id',
+      detail: createBodyObj || { status: res.status, body: createBody },
+      draft: {
+        title: sellerProductName,
+        price: draft.price,
+        imageUrl: draft.imageUrl,
+        detailImages: contentImages,
+      },
+      detailImages: contentImages,
+      finalPrice,
+      category: { requested: displayCategoryCode, used: finalCategoryCode, auto: allowAutoCategory, predicted: settings.__predictedCategory || null },
+      optionsUsed: optionsUsed.map((opt) => opt.label),
+      payloadCheck,
+      create: { status: res.status, body: createBody, sellerProductId: null },
+    };
+  }
 
   let approval = null;
   if (createdId && !autoRequest) {
