@@ -579,7 +579,19 @@ async function ensureVendorStatePathForUser(userId, settings, vendor) {
   const current = (settings && typeof settings === 'object') ? settings : {};
   const p = String(current[key] || '').trim();
   if (p) return current;
+
   const next = defaultVendorStatePath({ userId, vendor });
+
+  // Migration: if legacy global storageState exists, copy it as a starting point.
+  try {
+    const legacy = vendor === 'domeme' ? DOMEME_STORAGE_STATE_PATH : DOMEGGOOK_STORAGE_STATE_PATH;
+    if (legacy && fs.existsSync(legacy) && !fs.existsSync(next)) {
+      const dir = path.dirname(next);
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      fs.copyFileSync(legacy, next);
+    }
+  } catch {}
+
   try {
     return await updateSettings(userId, { [key]: next });
   } catch {
