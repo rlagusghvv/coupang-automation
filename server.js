@@ -1001,9 +1001,10 @@ app.post('/api/recommendations/fill', authRequired, async (req, res) => {
           progress.keyword = String(last?.keyword || progress.keyword);
 
           if ((Number(last?.count) || 0) >= targetCount) break;
-          if ((Number(last?.inserted) || 0) <= 0) break;
 
-          await new Promise((r) => setTimeout(r, 1500));
+          // Even if nothing was inserted for this keyword, try a few more keywords
+          // (Domeggook search sometimes yields 0 useful candidates).
+          await new Promise((r) => setTimeout(r, 900));
         }
 
         await updateJob({ id: job.id, patch: { status: 'success', resultJson: { result: last || { ok: true }, progress } } });
