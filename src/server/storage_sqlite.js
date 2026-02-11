@@ -347,7 +347,18 @@ export async function updateSettings(userId, nextSettings) {
   } catch {
     current = {};
   }
-  const merged = { ...current, ...nextSettings };
+
+  const mergedRaw = { ...current, ...(nextSettings || {}) };
+
+  // Normalize boolean-ish settings that older clients may send as strings.
+  const merged = { ...mergedRaw };
+  if (typeof merged.autoCategoryPredict === 'string') {
+    merged.autoCategoryPredict = merged.autoCategoryPredict.trim() !== '0';
+  }
+  if (typeof merged.autoRequest === 'string') {
+    merged.autoRequest = merged.autoRequest.trim() !== '0';
+  }
+
   await dbRun(db, "UPDATE users SET settings_json = ? WHERE id = ?", [
     JSON.stringify(merged),
     userId,
