@@ -358,6 +358,9 @@ export async function updateSettings(userId, nextSettings) {
   if (typeof merged.autoRequest === 'string') {
     merged.autoRequest = merged.autoRequest.trim() !== '0';
   }
+  if (typeof merged.useCoupangImageUpload === 'string') {
+    merged.useCoupangImageUpload = merged.useCoupangImageUpload.trim() !== '0';
+  }
 
   await dbRun(db, "UPDATE users SET settings_json = ? WHERE id = ?", [
     JSON.stringify(merged),

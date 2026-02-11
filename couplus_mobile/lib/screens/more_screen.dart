@@ -974,6 +974,30 @@ class _MoreScreenState extends State<MoreScreen> {
                   value: _useCoupangImageUpload,
                   onChanged: (v) => setState(() => _useCoupangImageUpload = v),
                 ),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: TextButton.icon(
+                    onPressed: (_me == null || _savingSensitive) ? null : () async {
+                      try {
+                        setState(() => _sensitiveError = null);
+                        final r = await widget.api.postJson('/api/coupang/image-upload/probe', {});
+                        final supported = (r['supported'] == true);
+                        if (!mounted) return;
+                        setState(() => _useCoupangImageUpload = supported);
+                        if (!context.mounted) return;
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text(supported ? '쿠팡 이미지 업로드: 지원됨(ON 추천)' : '쿠팡 이미지 업로드: 미지원(OFF 추천)')),
+                        );
+                      } catch (e) {
+                        if (mounted) {
+                          setState(() => _sensitiveError = e.toString());
+                        }
+                      }
+                    },
+                    icon: const Icon(Icons.science_outlined, size: 16),
+                    label: const Text('쿠팡 이미지 업로드 지원 여부 테스트'),
+                  ),
+                ),
                 const SizedBox(height: 8),
                 Text(
                   '저장은 위의 Save 버튼을 누르면 함께 반영돼요.',

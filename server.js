@@ -1881,6 +1881,56 @@ app.post("/api/settings", authRequired, async (req, res) => {
   }
 });
 
+// ✅ Coupang image upload probe (detect if account supports uploadMarketplaceImage endpoints)
+import { uploadMarketplaceImage } from './src/coupang/api/uploadMarketplaceImage.js';
+
+app.post('/api/coupang/image-upload/probe', authRequired, async (req, res) => {
+  try {
+    const s = req.user.settings || {};
+    const accessKey = String(s.coupangAccessKey || '').trim();
+    const secretKey = String(s.coupangSecretKey || '').trim();
+    const vendorId = String(s.coupangVendorId || '').trim();
+
+    if (!accessKey || !secretKey || !vendorId) {
+      return res.status(400).json({ ok: false, error: 'missing_coupang_keys' });
+    }
+
+    // 1x1 transparent PNG
+    const png = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+Xv1cAAAAASUVORK5CYII=',
+      'base64',
+    );
+
+    const r = await uploadMarketplaceImage({
+      vendorId,
+      buffer: png,
+      fileName: 'probe.png',
+      mimeType: 'image/png',
+      accessKey,
+      secretKey,
+    });
+
+    // Persist a recommendation into settings (best-effort)
+    const supported = Boolean(r?.ok);
+    try {
+      await updateSettings(req.user.id, {
+        useCoupangImageUpload: supported,
+        __imageUploadProbe: {
+          at: new Date().toISOString(),
+          ok: supported,
+          endpoint: r?.endpoint || null,
+          status: r?.last?.status || null,
+          error: r?.error || null,
+        },
+      });
+    } catch {}
+
+    return res.json({ ok: true, supported, result: r?.ok ? { endpoint: r.endpoint } : r });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
 // ✅ Domeggook OpenAPI helpers (categories)
 import { getCategoryList as dgGetCategoryList, isSearchableCategoryCode as dgIsSearchableCategoryCode } from './src/server/domeggook_openapi.js';
 
