@@ -53,6 +53,7 @@ class _WorkScreenState extends State<WorkScreen> {
   // Batch queue
   final List<_QueueItem> _queue = [];
   bool _batchRunning = false;
+  String _queueFilter = 'all'; // all | active | failed
 
   Map<String, dynamic>? _dashboard;
 
@@ -1366,6 +1367,18 @@ class _WorkScreenState extends State<WorkScreen> {
                         child: const Text('큐 비우기'),
                       ),
                     ),
+                    TextButton(
+                      onPressed: (_batchRunning || _queue.isEmpty)
+                          ? null
+                          : () {
+                              setState(() {
+                                _queue.removeWhere((it) =>
+                                    it.status == _QueueStatus.success ||
+                                    it.status == _QueueStatus.skipped);
+                              });
+                            },
+                      child: const Text('정리'),
+                    ),
                     if (_batchRunning)
                       TextButton(
                         onPressed: () => setState(() => _batchRunning = false),
@@ -1373,83 +1386,183 @@ class _WorkScreenState extends State<WorkScreen> {
                       ),
                   ],
                 ),
+                const SizedBox(height: 6),
+                SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
+                    children: [
+                      InkWell(
+                        borderRadius: BorderRadius.circular(999),
+                        onTap: _queue.isEmpty
+                            ? null
+                            : () => setState(() => _queueFilter = 'all'),
+                        child: InfoChip(
+                          label: '전체',
+                          color: _queueFilter == 'all'
+                              ? Theme.of(context).colorScheme.primary
+                              : Theme.of(context).colorScheme.outline,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      InkWell(
+                        borderRadius: BorderRadius.circular(999),
+                        onTap: _queue.isEmpty
+                            ? null
+                            : () => setState(() => _queueFilter = 'active'),
+                        child: InfoChip(
+                          label: '진행중/대기',
+                          color: _queueFilter == 'active'
+                              ? Theme.of(context).colorScheme.primary
+                              : Theme.of(context).colorScheme.outline,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      InkWell(
+                        borderRadius: BorderRadius.circular(999),
+                        onTap: _queue.isEmpty
+                            ? null
+                            : () => setState(() => _queueFilter = 'failed'),
+                        child: InfoChip(
+                          label: '실패',
+                          color: _queueFilter == 'failed'
+                              ? Theme.of(context).colorScheme.primary
+                              : Theme.of(context).colorScheme.outline,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
                 if (_queue.isNotEmpty) ...[
                   const Divider(height: 24),
-                  ListView.separated(
-                    shrinkWrap: true,
-                    physics: const NeverScrollableScrollPhysics(),
-                    itemCount: _queue.length,
-                    separatorBuilder: (_, __) => const Divider(height: 18),
-                    itemBuilder: (_, i) {
-                      final it = _queue[i];
-                      final st = it.status;
-                      String statusText = '대기';
-                      if (st == _QueueStatus.confirmed) {
-                        statusText = '확인됨';
+                  Builder(builder: (ctx) {
+                    final filtered = _queue.where((it) {
+                      if (_queueFilter == 'failed') return it.status == _QueueStatus.failed;
+                      if (_queueFilter == 'active') {
+                        return it.status == _QueueStatus.pending ||
+                            it.status == _QueueStatus.confirmed ||
+                            it.status == _QueueStatus.uploading;
                       }
-                      if (st == _QueueStatus.uploading) {
-                        statusText = '업로드중';
-                      }
-                      if (st == _QueueStatus.success) {
-                        statusText = '완료';
-                      }
-                      if (st == _QueueStatus.failed) {
-                        statusText = '실패';
-                      }
-                      if (st == _QueueStatus.skipped) {
-                        statusText = '스킵';
-                      }
+                      return true;
+                    }).toList();
 
-                      Color color = Theme.of(context).colorScheme.outline;
-                      if (st == _QueueStatus.success) {
-                        color = const Color(0xFF2F9E44);
-                      }
-                      if (st == _QueueStatus.failed) {
-                        color = const Color(0xFFE03131);
-                      }
-                      if (st == _QueueStatus.uploading) {
-                        color = const Color(0xFF1971C2);
-                      }
-
-                      return Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          InfoChip(label: statusText, color: color),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(it.url,
-                                    maxLines: 2,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(
-                                        fontWeight: FontWeight.w800)),
-                                if ((it.error ?? '').isNotEmpty) ...[
-                                  const SizedBox(height: 4),
-                                  Text(it.error!,
-                                      style: TextStyle(
-                                        fontSize: 12,
-                                        color: Theme.of(context)
-                                            .colorScheme
-                                            .onSurface
-                                            .withValues(alpha: 0.65),
-                                      )),
-                                ],
-                              ],
-                            ),
-                          ),
-                          if (!_batchRunning)
-                            IconButton(
-                              tooltip: '삭제',
-                              onPressed: () =>
-                                  setState(() => _queue.removeAt(i)),
-                              icon: const Icon(Icons.delete_outline),
-                            ),
-                        ],
+                    if (filtered.isEmpty) {
+                      return Text(
+                        '표시할 항목이 없어요.',
+                        style: TextStyle(
+                          color: Theme.of(context)
+                              .colorScheme
+                              .onSurface
+                              .withValues(alpha: 0.65),
+                        ),
                       );
-                    },
-                  ),
+                    }
+
+                    return ListView.separated(
+                      shrinkWrap: true,
+                      physics: const NeverScrollableScrollPhysics(),
+                      itemCount: filtered.length,
+                      separatorBuilder: (_, __) => const Divider(height: 18),
+                      itemBuilder: (_, i) {
+                        final it = filtered[i];
+                        final st = it.status;
+                        String statusText = '대기';
+                        IconData icon = Icons.schedule;
+
+                        if (st == _QueueStatus.confirmed) {
+                          statusText = '확인됨';
+                          icon = Icons.check_circle_outline;
+                        }
+                        if (st == _QueueStatus.uploading) {
+                          statusText = '업로드중';
+                          icon = Icons.cloud_upload_outlined;
+                        }
+                        if (st == _QueueStatus.success) {
+                          statusText = '완료';
+                          icon = Icons.check_circle;
+                        }
+                        if (st == _QueueStatus.failed) {
+                          statusText = '실패';
+                          icon = Icons.error_outline;
+                        }
+                        if (st == _QueueStatus.skipped) {
+                          statusText = '스킵';
+                          icon = Icons.skip_next;
+                        }
+
+                        Color color = Theme.of(context).colorScheme.outline;
+                        if (st == _QueueStatus.success) {
+                          color = const Color(0xFF2F9E44);
+                        }
+                        if (st == _QueueStatus.failed) {
+                          color = const Color(0xFFE03131);
+                        }
+                        if (st == _QueueStatus.uploading) {
+                          color = const Color(0xFF1971C2);
+                        }
+
+                        return AppCard(
+                          padding: const EdgeInsets.all(12),
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Container(
+                                width: 36,
+                                height: 36,
+                                decoration: BoxDecoration(
+                                  color: color.withValues(alpha: 0.10),
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                                child: Icon(icon, color: color),
+                              ),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Wrap(
+                                      spacing: 8,
+                                      runSpacing: 6,
+                                      children: [
+                                        InfoChip(label: statusText, color: color),
+                                      ],
+                                    ),
+                                    const SizedBox(height: 6),
+                                    Text(
+                                      it.url,
+                                      maxLines: 2,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(fontWeight: FontWeight.w800),
+                                    ),
+                                    if ((it.error ?? '').isNotEmpty) ...[
+                                      const SizedBox(height: 6),
+                                      Text(
+                                        it.error!,
+                                        maxLines: 2,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          color: Theme.of(context)
+                                              .colorScheme
+                                              .onSurface
+                                              .withValues(alpha: 0.65),
+                                        ),
+                                      ),
+                                    ],
+                                  ],
+                                ),
+                              ),
+                              if (!_batchRunning)
+                                IconButton(
+                                  tooltip: '삭제',
+                                  onPressed: () => setState(() => _queue.remove(it)),
+                                  icon: const Icon(Icons.delete_outline),
+                                ),
+                            ],
+                          ),
+                        );
+                      },
+                    );
+                  }),
                 ],
               ],
             ),
