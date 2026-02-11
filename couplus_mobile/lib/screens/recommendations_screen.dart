@@ -497,7 +497,7 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
                                   children: [
                                     if (keyword.isNotEmpty)
                                       InfoChip(
-                                        label: keyword,
+                                        label: '검색어: $keyword',
                                         color: Theme.of(context)
                                             .colorScheme
                                             .outline,
