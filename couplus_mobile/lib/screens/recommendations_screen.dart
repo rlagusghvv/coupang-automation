@@ -223,10 +223,25 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
     });
 
     try {
-      final cats = await widget.api.getJson('/api/domeggook/categories');
+      final cats = await widget.api.getJson('/api/domeggook/categories', query: {
+        'tree': '1',
+      });
       if (!mounted) return;
-      final items = (cats['items'] as List?) ?? const [];
-      final all = items.map((e) => (e as Map).cast<String, dynamic>()).toList();
+
+      final tree = (cats['tree'] as List?) ?? const [];
+      final majors = tree.map((e) => (e as Map).cast<String, dynamic>()).toList();
+
+      // Also keep a flat list for search mode.
+      final all = <Map<String, dynamic>>[];
+      for (final m in majors) {
+        final minors = (m['children'] as List?) ?? const [];
+        for (final mi in minors) {
+          final leaves = ((mi as Map)['children'] as List?) ?? const [];
+          for (final leaf in leaves) {
+            all.add((leaf as Map).cast<String, dynamic>());
+          }
+        }
+      }
 
       final selected = Set<String>.from(_selectedCategories);
       final selectedBefore = Set<String>.from(_selectedCategories);
@@ -237,13 +252,71 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
           String q = '';
           return StatefulBuilder(
             builder: (ctx, setLocal) {
-              final filtered = q.trim().isEmpty
-                  ? all
+              final query = q.trim();
+              final isSearch = query.isNotEmpty;
+              final filtered = !isSearch
+                  ? const <Map<String, dynamic>>[]
                   : all.where((c) {
                       final name = (c['name'] ?? '').toString();
                       final code = (c['code'] ?? '').toString();
-                      return name.contains(q) || code.contains(q);
+                      return name.contains(query) || code.contains(query);
                     }).toList();
+
+              Widget buildLeafTile(Map<String, dynamic> c) {
+                final code = (c['code'] ?? '').toString();
+                final name = (c['name'] ?? '').toString();
+                final checked = selected.contains(code);
+
+                return CheckboxListTile(
+                  dense: true,
+                  value: checked,
+                  onChanged: (v) {
+                    setLocal(() {
+                      if (v == true) {
+                        selected.add(code);
+                      } else {
+                        selected.remove(code);
+                      }
+                    });
+                  },
+                  title: Text(name.isEmpty ? code : name),
+                  subtitle: Text(code),
+                );
+              }
+
+              Widget buildTree() {
+                return ListView.builder(
+                  shrinkWrap: true,
+                  itemCount: majors.length,
+                  itemBuilder: (ctx, i) {
+                    final m = majors[i];
+                    final mName = (m['name'] ?? '').toString();
+                    final minors = (m['children'] as List?) ?? const [];
+
+                    return ExpansionTile(
+                      title: Text(mName.isEmpty ? (m['code'] ?? '').toString() : mName),
+                      children: [
+                        for (final miAny in minors)
+                          Builder(
+                            builder: (ctx) {
+                              final mi = (miAny as Map).cast<String, dynamic>();
+                              final miName = (mi['name'] ?? '').toString();
+                              final leaves = (mi['children'] as List?) ?? const [];
+
+                              return ExpansionTile(
+                                title: Text(miName.isEmpty ? (mi['code'] ?? '').toString() : miName),
+                                children: [
+                                  for (final leafAny in leaves)
+                                    buildLeafTile((leafAny as Map).cast<String, dynamic>()),
+                                ],
+                              );
+                            },
+                          ),
+                      ],
+                    );
+                  },
+                );
+              }
 
               return AlertDialog(
                 title: const Text('도매꾹 카테고리 선택'),
@@ -271,32 +344,13 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
                       ),
                       const SizedBox(height: 8),
                       Flexible(
-                        child: ListView.builder(
-                          shrinkWrap: true,
-                          itemCount: filtered.length,
-                          itemBuilder: (ctx, i) {
-                            final c = filtered[i];
-                            final code = (c['code'] ?? '').toString();
-                            final name = (c['name'] ?? '').toString();
-                            final checked = selected.contains(code);
-
-                            return CheckboxListTile(
-                              dense: true,
-                              value: checked,
-                              onChanged: (v) {
-                                setLocal(() {
-                                  if (v == true) {
-                                    selected.add(code);
-                                  } else {
-                                    selected.remove(code);
-                                  }
-                                });
-                              },
-                              title: Text(name.isEmpty ? code : name),
-                              subtitle: Text(code),
-                            );
-                          },
-                        ),
+                        child: isSearch
+                            ? ListView.builder(
+                                shrinkWrap: true,
+                                itemCount: filtered.length,
+                                itemBuilder: (ctx, i) => buildLeafTile(filtered[i]),
+                              )
+                            : buildTree(),
                       ),
                     ],
                   ),

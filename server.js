@@ -1405,12 +1405,68 @@ app.get('/api/domeggook/categories', authRequired, async (req, res) => {
     const key = String(req.user?.settings?.domeggookOpenApiKey || '').trim();
     if (!key) return res.status(400).json({ ok: false, error: 'missing_openapi_key' });
 
-    const r = await dgGetCategoryList({ aid: key, isReg: true });
-    const list = (r?.categories || [])
-      .filter((c) => dgIsSearchableCategoryCode(c?.code))
-      .map((c) => ({ code: String(c.code), name: String(c.name || ''), locked: String(c.locked || '') }));
+    const treeMode = String(req.query?.tree || '').trim() === '1';
 
-    return res.json({ ok: true, items: list });
+    const r = await dgGetCategoryList({ aid: key, isReg: true });
+    const all = (r?.categories || []).map((c) => ({
+      code: String(c.code),
+      name: String(c.name || ''),
+      locked: String(c.locked || ''),
+    }));
+
+    if (!treeMode) {
+      const list = all
+        .filter((c) => dgIsSearchableCategoryCode(c?.code))
+        .map((c) => ({ code: c.code, name: c.name, locked: c.locked }));
+      return res.json({ ok: true, items: list });
+    }
+
+    // Build major->minor->leaf tree.
+    const byCode = new Map(all.map((c) => [c.code, c]));
+
+    const majorNodes = new Map();
+    const ensureMajor = (majorCode) => {
+      if (!majorNodes.has(majorCode)) {
+        const major = byCode.get(majorCode) || { code: majorCode, name: majorCode, locked: '' };
+        majorNodes.set(majorCode, { code: major.code, name: major.name, children: new Map() });
+      }
+      return majorNodes.get(majorCode);
+    };
+
+    const ensureMinor = (majorNode, minorCode) => {
+      if (!majorNode.children.has(minorCode)) {
+        const minor = byCode.get(minorCode) || { code: minorCode, name: minorCode, locked: '' };
+        majorNode.children.set(minorCode, { code: minor.code, name: minor.name, children: [] });
+      }
+      return majorNode.children.get(minorCode);
+    };
+
+    for (const c of all) {
+      if (!dgIsSearchableCategoryCode(c.code)) continue;
+      const parts = c.code.split('_');
+      const majorCode = `${parts[0]}_00_00_00_00`;
+      const minorCode = `${parts[0]}_${parts[1]}_00_00_00`;
+
+      const majorNode = ensureMajor(majorCode);
+      const minorNode = ensureMinor(majorNode, minorCode);
+      minorNode.children.push({ code: c.code, name: c.name, locked: c.locked });
+    }
+
+    const tree = Array.from(majorNodes.values())
+      .map((m) => ({
+        code: m.code,
+        name: m.name,
+        children: Array.from(m.children.values())
+          .map((mi) => ({
+            code: mi.code,
+            name: mi.name,
+            children: (mi.children || []).sort((a, b) => String(a.name).localeCompare(String(b.name))),
+          }))
+          .sort((a, b) => String(a.name).localeCompare(String(b.name))),
+      }))
+      .sort((a, b) => String(a.name).localeCompare(String(b.name)));
+
+    return res.json({ ok: true, tree });
   } catch (e) {
     return res.status(500).json({ ok: false, error: String(e?.message || e) });
   }
