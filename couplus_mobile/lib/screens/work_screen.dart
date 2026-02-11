@@ -1263,12 +1263,92 @@ class _WorkScreenState extends State<WorkScreen> {
                             final id = (j['id'] ?? '').toString();
                             final status = (j['status'] ?? '').toString();
                             final url = (j['inputUrl'] ?? '').toString();
-                            final progress = (j['result'] as Map?)?['progress'] as Map?;
-                            final stage = (progress?['stage'] ?? '').toString();
-                            final percentRaw = progress?['percent'];
-                            final percent = (percentRaw is num) ? percentRaw.toDouble() : double.tryParse(percentRaw?.toString() ?? '') ?? 0;
+                            final errorCode = (j['errorCode'] ?? '').toString();
+                            final errorMessage = (j['errorMessage'] ?? '').toString();
+                            final result = (j['result'] as Map?)?.cast<String, dynamic>() ?? {};
+                            final progress = (result['progress'] as Map?)?.cast<String, dynamic>() ?? {};
+                            final stage = (progress['stage'] ?? '').toString();
+                            final percentRaw = progress['percent'];
+                            final percent = (percentRaw is num)
+                                ? percentRaw.toDouble()
+                                : double.tryParse(percentRaw?.toString() ?? '') ?? 0;
 
                             final canCancel = status == 'queued';
+
+                            String guide() {
+                              final c = errorCode.isNotEmpty
+                                  ? errorCode
+                                  : (result['error'] ?? '').toString();
+                              if (c.contains('rate') || c.contains('429')) {
+                                return '쿠팡 레이트리밋(429) 가능성. 잠시 후 자동 재시도돼요.';
+                              }
+                              if (c.contains('detail_images_unavailable')) {
+                                return '상세 이미지 호스팅 실패. 설정에서 “쿠팡 이미지 업로드 사용”을 켜고 다시 시도해봐.';
+                              }
+                              if (c.contains('duplicate_product')) {
+                                return '이미 같은 원본 URL로 업로드된 상품이 있어. 강제 재업로드를 켜거나 기존 상품을 열어봐.';
+                              }
+                              if (c.contains('ip_not_allowed')) {
+                                return '쿠팡 OpenAPI 허용 IP 설정 확인 필요.';
+                              }
+                              if (c.contains('preview_failed')) {
+                                return '원본 파싱/접속 실패 가능. 원본 URL이 살아있는지 확인해봐.';
+                              }
+                              return '자세히를 열어서 에러코드/메시지를 확인해봐.';
+                            }
+
+                            Future<void> showDetails() async {
+                              final code = errorCode.isNotEmpty
+                                  ? errorCode
+                                  : (result['error'] ?? '').toString();
+                              final msg = errorMessage.isNotEmpty
+                                  ? errorMessage
+                                  : (result['detail'] ?? '').toString();
+                              final retryIn = (progress['retryInSec'] ?? '').toString();
+
+                              await showDialog<void>(
+                                context: context,
+                                builder: (ctx) {
+                                  return AlertDialog(
+                                    title: const Text('업로드 상태 상세'),
+                                    content: SingleChildScrollView(
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          Text('상태: ${_humanizeJobStatus(status)}'),
+                                          const SizedBox(height: 6),
+                                          Text('stage: ${stage.isEmpty ? '-' : stage}'),
+                                          if (retryIn.isNotEmpty && stage == 'backoff')
+                                            Text('재시도까지: ${retryIn}s'),
+                                          const SizedBox(height: 10),
+                                          Text('URL: $url'),
+                                          const SizedBox(height: 10),
+                                          if (code.isNotEmpty)
+                                            Text('errorCode: $code'),
+                                          if (msg.isNotEmpty)
+                                            Text('message: $msg'),
+                                          const SizedBox(height: 12),
+                                          const Text('해결 가이드',
+                                              style: TextStyle(
+                                                  fontWeight:
+                                                      FontWeight.w900)),
+                                          const SizedBox(height: 6),
+                                          Text(guide()),
+                                        ],
+                                      ),
+                                    ),
+                                    actions: [
+                                      TextButton(
+                                        onPressed: () =>
+                                            Navigator.of(ctx).pop(),
+                                        child: const Text('닫기'),
+                                      ),
+                                    ],
+                                  );
+                                },
+                              );
+                            }
 
                             return Padding(
                               padding: const EdgeInsets.symmetric(vertical: 6),
@@ -1298,7 +1378,7 @@ class _WorkScreenState extends State<WorkScreen> {
                                           LinearProgressIndicator(value: (percent <= 0) ? null : (percent / 100.0))
                                         else if (stage == 'backoff')
                                           Text(
-                                            '재시도 대기중… ${((progress?['retryInSec'] ?? '')).toString()}s',
+                                            '재시도 대기중… ${((progress['retryInSec'] ?? '')).toString()}s',
                                             style: TextStyle(
                                               fontSize: 12,
                                               color: Theme.of(context)
@@ -1311,18 +1391,26 @@ class _WorkScreenState extends State<WorkScreen> {
                                     ),
                                   ),
                                   const SizedBox(width: 8),
-                                  if (canCancel)
-                                    TextButton(
-                                      onPressed: () async {
-                                        try {
-                                          await widget.api.postJson('/api/upload-queue/$id/cancel', {});
-                                          unawaited(_refreshQueue());
-                                        } catch (_) {}
-                                      },
-                                      child: const Text('취소'),
-                                    )
-                                  else
-                                    const SizedBox(width: 52),
+                                  Column(
+                                    children: [
+                                      TextButton(
+                                        onPressed: (!isAuthed) ? null : showDetails,
+                                        child: const Text('자세히'),
+                                      ),
+                                      if (canCancel)
+                                        TextButton(
+                                          onPressed: () async {
+                                            try {
+                                              await widget.api.postJson('/api/upload-queue/$id/cancel', {});
+                                              unawaited(_refreshQueue());
+                                            } catch (_) {}
+                                          },
+                                          child: const Text('취소'),
+                                        )
+                                      else
+                                        const SizedBox(height: 8),
+                                    ],
+                                  ),
                                 ],
                               ),
                             );
