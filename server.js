@@ -957,11 +957,14 @@ app.post('/api/recommendations/fill', authRequired, async (req, res) => {
       try { await clearRecommendationsForUser(req.user.id); } catch {}
     }
 
-    const active = await getActiveJobByKind(req.user.id, 'recommendations_fill', ['queued', 'running']);
-    if (active) {
-      const ageMs = Date.now() - Date.parse(active.createdAt || '');
-      if (Number.isFinite(ageMs) && ageMs < 20 * 60_000) {
-        return res.json({ ok: true, job: active, deduped: true });
+    // Deduping is useful for normal fills, but for reset runs we always start fresh.
+    if (!reset) {
+      const active = await getActiveJobByKind(req.user.id, 'recommendations_fill', ['queued', 'running']);
+      if (active) {
+        const ageMs = Date.now() - Date.parse(active.createdAt || '');
+        if (Number.isFinite(ageMs) && ageMs < 20 * 60_000) {
+          return res.json({ ok: true, job: active, deduped: true });
+        }
       }
     }
 

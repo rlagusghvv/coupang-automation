@@ -527,8 +527,14 @@ function titleMatchesKeyword(keyword, title) {
   const t = String(title || '').toLowerCase();
   const toks = keywordTokens(kw);
   if (!toks || toks.length === 0) return t.includes(kw.toLowerCase());
-  // Require all tokens to appear (reduces irrelevant search result leakage)
-  return toks.every((x) => t.includes(x.toLowerCase()));
+  // Require at least a majority of tokens to appear (reduces irrelevant leakage,
+  // but avoids being overly strict for real-world titles).
+  const need = Math.max(1, Math.ceil(toks.length * 0.6));
+  let hit = 0;
+  for (const x of toks) {
+    if (t.includes(x.toLowerCase())) hit += 1;
+  }
+  return hit >= need;
 }
 
 async function generateRecommendationsBatch({ settings, keywords, topN = 20, excludeUrls = new Set(), onProgress = null }) {
