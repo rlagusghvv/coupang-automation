@@ -8,4 +8,7 @@ export const runtimeState = {
 
   purchaseLogs: new Map(),
   // key: `${userId}` -> Array<{ at: string, type: "draft"|"upload", vendor?: string, ok?: boolean, error?: string, filePath?: string, payUrl?: string }>
+
+  uploadQueueLocks: new Map(),
+  // key: `${userId}` -> boolean (simple mutex)
 };

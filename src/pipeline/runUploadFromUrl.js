@@ -100,10 +100,17 @@ function buildItemAttributesFromOptionValues(values) {
 }
 
 export async function runUploadFromUrl(inputUrl, settings = {}) {
+  const onProgress = typeof settings?.onProgress === 'function' ? settings.onProgress : null;
+  const pushProgress = (p) => {
+    try { if (onProgress) onProgress(p || {}); } catch {}
+  };
+
   const c = classifyUrl(inputUrl);
   if (!c.ok) {
     return { ok: false, skipped: true, reason: c.reason, url: c.url };
   }
+
+  pushProgress({ stage: 'classified', percent: 2, url: c.url });
 
   const payloadOnly = String(settings.payloadOnly || "").trim() === "1";
   const allowedIpsRaw =
@@ -123,6 +130,8 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
       };
     }
   }
+
+  pushProgress({ stage: 'preflight_ok', percent: 5, url: c.url });
 
   // 사용자별 설정 우선
   const accessKey = String(settings.coupangAccessKey || COUPANG_ACCESS_KEY || "").trim();
@@ -293,6 +302,7 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
   if (!payloadOnly && useCoupangImageUpload) {
     try {
       // 1) Main image
+      pushProgress({ stage: 'image_main_download', percent: 30 });
       const mainDl = await downloadImageBufferWithPlaywright({
         pageUrl: draft.sourceUrl,
         imageUrl: draft.imageUrl,
@@ -300,6 +310,7 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
 
       if (!mainDl?.ok) throw new Error("main_image_download_failed");
 
+      pushProgress({ stage: 'image_main_upload', percent: 40 });
       const mainUp = await uploadMarketplaceImage({
         vendorId,
         buffer: mainDl.buffer,
@@ -315,8 +326,15 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
 
       // 2) Content images (optional)
       const uploadedContentUrls = [];
+      let idx = 0;
       for (const u of contentImages) {
+        idx += 1;
         try {
+          const base = 50;
+          const span = 25;
+          const ratio = contentImages.length > 0 ? (idx / contentImages.length) : 1;
+          pushProgress({ stage: 'image_content_upload', percent: Math.round(base + span * ratio), index: idx, total: contentImages.length });
+
           const dl = await downloadImageBufferWithPlaywright({
             pageUrl: draft.sourceUrl,
             imageUrl: u,
@@ -700,6 +718,7 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
     };
   }
 
+  pushProgress({ stage: 'coupang_create', percent: 85 });
   const res = await createSellerProduct({
     vendorId,
     body,
@@ -794,6 +813,7 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
     });
   }
 
+  pushProgress({ stage: 'done', percent: 100, sellerProductId: createdId || null });
   return {
     ok: true,
     draft: {

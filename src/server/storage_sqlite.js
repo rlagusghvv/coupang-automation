@@ -598,7 +598,7 @@ export async function deleteApnsToken({ userId, deviceToken }) {
   db.close();
 }
 
-export async function createJob({ userId, kind, inputUrl, force = '0', catalogId = null }) {
+export async function createJob({ userId, kind, inputUrl, force = '0', catalogId = null, initialResultJson = null }) {
   if (!userId) throw new Error('userId required');
   if (!kind) throw new Error('kind required');
   // inputUrl is optional for some background jobs (e.g. recommendations)
@@ -606,11 +606,12 @@ export async function createJob({ userId, kind, inputUrl, force = '0', catalogId
   const db = openDb();
   const id = crypto.randomUUID();
   const nowIso = new Date().toISOString();
+  const rj = initialResultJson && typeof initialResultJson === 'object' ? initialResultJson : {};
   await dbRun(
     db,
     `INSERT INTO jobs (id, user_id, kind, status, input_url, force, catalog_id, result_json, created_at, updated_at)
-     VALUES (?, ?, ?, 'queued', ?, ?, ?, '{}', ?, ?)`,
-    [id, userId, String(kind), String(inputUrl), String(force), catalogId ? String(catalogId) : null, nowIso, nowIso],
+     VALUES (?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?)`,
+    [id, userId, String(kind), String(inputUrl), String(force), catalogId ? String(catalogId) : null, JSON.stringify(rj), nowIso, nowIso],
   );
   db.close();
   return { id, status: 'queued', kind, inputUrl, force, catalogId: catalogId ? String(catalogId) : null };
@@ -1016,4 +1017,106 @@ export async function listCatalogEvents(userId, catalogId, { limit = 50 } = {}) 
       createdAt: r.created_at,
     };
   });
+}
+
+// --- Jobs: list/cancel helpers (for upload queue UI)
+export async function listJobs(userId, { kind = '', statuses = null, limit = 50 } = {}) {
+  if (!userId) throw new Error('userId required');
+  const lim = Math.max(1, Math.min(200, Number(limit) || 50));
+  const k = String(kind || '').trim();
+  const st = Array.isArray(statuses) ? statuses.map((x) => String(x)) : null;
+
+  const db = openDb();
+  const where = ['user_id = ?'];
+  const params = [String(userId)];
+
+  if (k) {
+    where.push('kind = ?');
+    params.push(k);
+  }
+
+  if (st && st.length > 0) {
+    const placeholders = st.map(() => '?').join(', ');
+    where.push(`status IN (${placeholders})`);
+    params.push(...st);
+  }
+
+  const rows = await dbAll(
+    db,
+    `SELECT id, kind, status, input_url, force, catalog_id, result_json, error_code, error_message, created_at, updated_at
+     FROM jobs
+     WHERE ${where.join(' AND ')}
+     ORDER BY created_at DESC
+     LIMIT ?`,
+    [...params, lim],
+  );
+  db.close();
+
+  return rows.map((row) => {
+    let result = {};
+    try { result = JSON.parse(row.result_json || '{}'); } catch {}
+    return {
+      id: row.id,
+      kind: row.kind,
+      status: row.status,
+      inputUrl: row.input_url,
+      force: row.force,
+      catalogId: row.catalog_id,
+      result,
+      errorCode: row.error_code,
+      errorMessage: row.error_message,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    };
+  });
+}
+
+export async function getNextQueuedJob(userId, kind) {
+  if (!userId) throw new Error('userId required');
+  if (!kind) throw new Error('kind required');
+  const db = openDb();
+  const row = await dbGet(
+    db,
+    `SELECT id, kind, status, input_url, force, catalog_id, result_json, error_code, error_message, created_at, updated_at
+     FROM jobs
+     WHERE user_id = ? AND kind = ? AND status = 'queued'
+     ORDER BY created_at ASC
+     LIMIT 1`,
+    [String(userId), String(kind)],
+  );
+  db.close();
+  if (!row) return null;
+  let result = {};
+  try { result = JSON.parse(row.result_json || '{}'); } catch {}
+  return {
+    id: row.id,
+    kind: row.kind,
+    status: row.status,
+    inputUrl: row.input_url,
+    force: row.force,
+    catalogId: row.catalog_id,
+    result,
+    errorCode: row.error_code,
+    errorMessage: row.error_message,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+export async function cancelQueuedJob(userId, id) {
+  if (!userId) throw new Error('userId required');
+  if (!id) throw new Error('id required');
+  const db = openDb();
+  const nowIso = new Date().toISOString();
+  // Only cancel if it's still queued.
+  await dbRun(
+    db,
+    `UPDATE jobs
+     SET status = 'cancelled', updated_at = ?
+     WHERE user_id = ? AND id = ? AND status = 'queued'`,
+    [nowIso, String(userId), String(id)],
+  );
+  const row = await dbGet(db, 'SELECT status FROM jobs WHERE user_id = ? AND id = ?', [String(userId), String(id)]);
+  db.close();
+  return row ? String(row.status || '') : '';
 }

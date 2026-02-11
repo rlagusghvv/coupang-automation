@@ -47,6 +47,9 @@ class _MoreScreenState extends State<MoreScreen> {
   final _categoryOverrideCode = TextEditingController();
   bool _autoCategoryPredict = true;
 
+  // Image upload strategy
+  bool _useCoupangImageUpload = true; // default ON
+
   bool _loading = false;
   bool _savingSensitive = false;
   bool _sensitiveUnlocked = false;
@@ -190,6 +193,10 @@ class _MoreScreenState extends State<MoreScreen> {
       _categoryOverrideCode.text = (s['categoryOverrideCode'] ?? '').toString();
       final acp = s['autoCategoryPredict'];
       _autoCategoryPredict = acp == true || acp == 1 || acp == '1' || acp == 'true';
+
+      final ic = s['useCoupangImageUpload'];
+      _useCoupangImageUpload = !(ic == 0 || ic == '0' || ic == false || ic == 'false');
+
       if (mounted) setState(() {});
 
       // load presets (best-effort)
@@ -225,6 +232,7 @@ class _MoreScreenState extends State<MoreScreen> {
           double.tryParse(_shippingFixedAmount.text.trim()) ?? 2500,
       'categoryOverrideCode': int.tryParse(_categoryOverrideCode.text.trim()) ?? 0,
       'autoCategoryPredict': _autoCategoryPredict,
+      'useCoupangImageUpload': _useCoupangImageUpload ? '1' : '0',
     };
   }
 
@@ -388,6 +396,7 @@ class _MoreScreenState extends State<MoreScreen> {
         'categoryOverrideCode':
             int.tryParse(_categoryOverrideCode.text.trim()) ?? 0,
         'autoCategoryPredict': _autoCategoryPredict,
+        'useCoupangImageUpload': _useCoupangImageUpload ? '1' : '0',
       });
 
       if (mounted) {
@@ -957,6 +966,13 @@ class _MoreScreenState extends State<MoreScreen> {
                   subtitle: const Text('도매처 카테고리 정보가 없을 때 오분류(19세 등) 방지'),
                   value: _autoCategoryPredict,
                   onChanged: (v) => setState(() => _autoCategoryPredict = v),
+                ),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('쿠팡 이미지 업로드 사용(추천)'),
+                  subtitle: const Text('도매처 이미지가 핫링크 차단/접근불가일 때 실패를 줄여요. (429 발생 시 자동 재시도)'),
+                  value: _useCoupangImageUpload,
+                  onChanged: (v) => setState(() => _useCoupangImageUpload = v),
                 ),
                 const SizedBox(height: 8),
                 Text(

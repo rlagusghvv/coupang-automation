@@ -155,6 +155,26 @@ class _WorkScreenState extends State<WorkScreen> {
     } finally {
       if (mounted) setState(() => _loading = false);
     }
+
+    // Best-effort queue refresh
+    unawaited(_refreshQueue());
+  }
+
+  Future<void> _refreshQueue() async {
+    if (_loginRequired) return;
+    setState(() => _loadingQueue = true);
+    try {
+      final json = await widget.api.getJson('/api/upload-queue', query: {'limit': '50'});
+      final list = (json['items'] as List?) ?? const [];
+      if (!mounted) return;
+      setState(() {
+        _uploadQueue = list.map((e) => (e as Map).cast<String, dynamic>()).toList();
+      });
+    } catch (_) {
+      // ignore
+    } finally {
+      if (mounted) setState(() => _loadingQueue = false);
+    }
   }
 
   String _humanizeJobStatus(String s) {
@@ -174,6 +194,10 @@ class _WorkScreenState extends State<WorkScreen> {
 
   Map<String, dynamic>? _activeJob;
   String? _titleOverride;
+
+  // Upload queue
+  List<Map<String, dynamic>> _uploadQueue = const [];
+  bool _loadingQueue = false;
 
   Future<void> _startJob(String kind) async {
     final u = _url.text.trim();
@@ -292,6 +316,7 @@ class _WorkScreenState extends State<WorkScreen> {
         if (job == null) continue;
         if (!mounted) return;
         setState(() => _activeJob = job);
+        unawaited(_refreshQueue());
 
         final status = (job['status'] ?? '').toString();
         if (status == 'success' || status == 'failed') {
@@ -344,11 +369,114 @@ class _WorkScreenState extends State<WorkScreen> {
     }
   }
 
-  Future<void> _executeUpload({bool force = false}) async {
+  Future<void> _enqueueUpload({bool force = false}) async {
+    final u = _url.text.trim();
+    if (u.isEmpty) {
+      setState(() => _error = 'URL을 입력하세요.');
+      return;
+    }
+
     if (force) {
       setState(() => _forceUpload = true);
     }
-    return _startJob('upload');
+
+    setState(() {
+      _loading = true;
+      _error = null;
+      _uploadResult = null;
+    });
+
+    try {
+      final json = await widget.api.postJson('/api/upload-queue/enqueue', {
+        'url': u,
+        'force': _forceUpload ? '1' : '0',
+        if ((_selectedPresetId ?? '').trim().isNotEmpty)
+          'presetId': (_selectedPresetId ?? '').trim(),
+        if ((_titleOverride ?? '').trim().isNotEmpty)
+          'titleOverride': (_titleOverride ?? '').trim(),
+        if ((_imagesOverride ?? const []).isNotEmpty)
+          'imagesOverride': (_imagesOverride ?? const []),
+      });
+      final job = (json['job'] as Map?)?.cast<String, dynamic>();
+      setState(() {
+        _activeJob = job;
+        _loginRequired = false;
+      });
+      unawaited(_pollJob());
+      unawaited(_refreshQueue());
+    } catch (e) {
+      if (e is ApiException && e.isUnauthorized) {
+        setState(() {
+          _loginRequired = true;
+          _error = null;
+        });
+      } else if (e is ApiException && e.statusCode == 409) {
+        // duplicate_product (re-use existing handler)
+        try {
+          final raw = e.details ?? '';
+          final map = jsonDecode(raw) as Map<String, dynamic>;
+          if (map['error'] == 'duplicate_product') {
+            final existing = (map['existing'] as Map?)?.cast<String, dynamic>();
+            if (existing != null && mounted) {
+              await showDialog<void>(
+                context: context,
+                builder: (_) {
+                  final title = (existing['title'] ?? '').toString();
+                  final pid = (existing['sellerProductId'] ?? '').toString();
+                  final productUrl = (existing['productUrl'] ?? '').toString();
+                  return AlertDialog(
+                    title: const Text('이미 등록된 상품'),
+                    content: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(title.isEmpty ? '(제목 없음)' : title),
+                        const SizedBox(height: 8),
+                        Text('SellerProductId: ${pid.isEmpty ? '-' : pid}'),
+                      ],
+                    ),
+                    actions: [
+                      if (productUrl.isNotEmpty)
+                        TextButton(
+                          onPressed: () async {
+                            final uri = Uri.tryParse(productUrl);
+                            if (uri != null) {
+                              await launchUrl(uri,
+                                  mode: LaunchMode.externalApplication);
+                            }
+                          },
+                          child: const Text('기존 상품 열기'),
+                        ),
+                      TextButton(
+                        onPressed: () {
+                          Navigator.of(context).pop();
+                          unawaited(_enqueueUpload(force: true));
+                        },
+                        child: const Text('강제 재업로드'),
+                      ),
+                      TextButton(
+                        onPressed: () => Navigator.of(context).pop(),
+                        child: const Text('취소'),
+                      ),
+                    ],
+                  );
+                },
+              );
+              return;
+            }
+          }
+        } catch (_) {}
+        setState(() => _error = '이미 등록된 상품입니다.');
+      } else {
+        setState(() => _error = e.toString());
+      }
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _executeUpload({bool force = false}) async {
+    return _enqueueUpload(force: force);
   }
 
   Future<void> _confirmThenUpload() async {
@@ -1095,6 +1223,102 @@ class _WorkScreenState extends State<WorkScreen> {
                       ),
                     ),
                   ],
+                ),
+                const SizedBox(height: 10),
+                AppCard(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      SectionHeader(
+                        '업로드 큐',
+                        trailing: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            if (_loadingQueue)
+                              const SizedBox(
+                                width: 16,
+                                height: 16,
+                                child: CircularProgressIndicator(strokeWidth: 2),
+                              )
+                            else
+                              IconButton(
+                                tooltip: '새로고침',
+                                onPressed: (!isAuthed) ? null : _refreshQueue,
+                                icon: const Icon(Icons.refresh),
+                              ),
+                          ],
+                        ),
+                      ),
+                      if (_uploadQueue.isEmpty)
+                        Text(
+                          '대기 중인 업로드가 없어요.',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.65),
+                          ),
+                        )
+                      else
+                        Column(
+                          children: _uploadQueue.take(8).map((j) {
+                            final id = (j['id'] ?? '').toString();
+                            final status = (j['status'] ?? '').toString();
+                            final url = (j['inputUrl'] ?? '').toString();
+                            final progress = (j['result'] as Map?)?['progress'] as Map?;
+                            final stage = (progress?['stage'] ?? '').toString();
+                            final percentRaw = progress?['percent'];
+                            final percent = (percentRaw is num) ? percentRaw.toDouble() : double.tryParse(percentRaw?.toString() ?? '') ?? 0;
+
+                            final canCancel = status == 'queued';
+
+                            return Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 6),
+                              child: Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          '${_humanizeJobStatus(status)} · ${stage.isEmpty ? '-' : stage}',
+                                          style: const TextStyle(fontWeight: FontWeight.w700),
+                                        ),
+                                        const SizedBox(height: 4),
+                                        Text(
+                                          url,
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: TextStyle(
+                                            fontSize: 12,
+                                            color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.65),
+                                          ),
+                                        ),
+                                        const SizedBox(height: 6),
+                                        if (status == 'running')
+                                          LinearProgressIndicator(value: (percent <= 0) ? null : (percent / 100.0)),
+                                      ],
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  if (canCancel)
+                                    TextButton(
+                                      onPressed: () async {
+                                        try {
+                                          await widget.api.postJson('/api/upload-queue/$id/cancel', {});
+                                          unawaited(_refreshQueue());
+                                        } catch (_) {}
+                                      },
+                                      child: const Text('취소'),
+                                    )
+                                  else
+                                    const SizedBox(width: 52),
+                                ],
+                              ),
+                            );
+                          }).toList(),
+                        ),
+                    ],
+                  ),
                 ),
                 const SizedBox(height: 10),
                 Theme(

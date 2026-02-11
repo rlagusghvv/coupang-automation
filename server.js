@@ -27,6 +27,9 @@ import {
   createJob,
   updateJob,
   getJob,
+  listJobs,
+  getNextQueuedJob,
+  cancelQueuedJob,
   upsertCatalogProduct,
   listCatalogProducts,
   getCatalogProductById,
@@ -348,6 +351,191 @@ function mustEnv(name) {
 }
 
 let uploadInProgress = false;
+
+// ---- Upload queue (per-user, sequential) ----
+async function processUploadQueueForUser(userId) {
+  const uid = String(userId || '').trim();
+  if (!uid) return;
+
+  // simple per-user mutex
+  if (runtimeState.uploadQueueLocks.get(uid)) return;
+  runtimeState.uploadQueueLocks.set(uid, true);
+
+  try {
+    // Loop: run next queued upload until none left.
+    for (;;) {
+      // If there's a running upload, do nothing.
+      const running = await listJobs(uid, { kind: 'upload', statuses: ['running'], limit: 1 });
+      if (running && running.length > 0) return;
+
+      const next = await getNextQueuedJob(uid, 'upload');
+      if (!next) return;
+
+      const settingsSnapshot = (next?.result?.request?.settingsSnapshot && typeof next.result.request.settingsSnapshot === 'object')
+        ? next.result.request.settingsSnapshot
+        : {};
+      const presetId = String(next?.result?.request?.presetId || '').trim();
+
+      await executeUploadJob({
+        userId: uid,
+        jobId: next.id,
+        url: next.inputUrl,
+        force: next.force,
+        settingsSnapshot,
+        presetId: presetId || null,
+      });
+
+      // continue to next item
+    }
+  } catch (e) {
+    // do not crash server
+  } finally {
+    runtimeState.uploadQueueLocks.set(uid, false);
+  }
+}
+
+async function executeUploadJob({ userId, jobId, url, force, settingsSnapshot, presetId }) {
+  const job = { id: String(jobId), kind: 'upload' };
+  const inputUrl = String(url || '').trim();
+
+  // Mark running
+  await updateJob({
+    id: job.id,
+    patch: {
+      status: 'running',
+      resultJson: {
+        request: {
+          settingsSnapshot: settingsSnapshot || {},
+          presetId: presetId || null,
+        },
+        progress: { stage: 'start', percent: 0, url: inputUrl },
+      },
+    },
+  });
+
+  const progressState = {
+    request: {
+      settingsSnapshot: settingsSnapshot || {},
+      presetId: presetId || null,
+    },
+    progress: { stage: 'start', percent: 0, url: inputUrl },
+  };
+
+  const pushProgress = (p) => {
+    try {
+      if (!p || typeof p !== 'object') return;
+      progressState.progress = { ...(progressState.progress || {}), ...p };
+      updateJob({ id: job.id, patch: { resultJson: progressState } }).catch(() => {});
+    } catch {}
+  };
+
+  try {
+    pushProgress({ stage: 'upload', percent: 10, url: inputUrl });
+
+    const result = await runUploadFromUrl(inputUrl, {
+      ...(settingsSnapshot || {}),
+      force,
+      onProgress: pushProgress,
+    });
+
+    const ok = Boolean(result?.ok);
+
+    // Save final job result
+    progressState.result = result;
+    progressState.progress = { stage: ok ? 'done' : 'failed', percent: ok ? 100 : (progressState?.progress?.percent ?? 0) };
+
+    await updateJob({
+      id: job.id,
+      patch: {
+        status: ok ? 'success' : 'failed',
+        errorCode: ok ? null : String(result?.error || 'upload_failed'),
+        errorMessage: ok ? null : '업로드에 실패했습니다.',
+        resultJson: progressState,
+      },
+    });
+
+    // If upload succeeded, also upsert into "내 상품" catalog + dedupe record.
+    if (ok) {
+      try {
+        const confirmedTitle = String(settingsSnapshot?.titleOverride || result?.draft?.title || '').trim();
+
+        const overrideImages = Array.isArray(settingsSnapshot?.imagesOverride)
+          ? settingsSnapshot.imagesOverride
+          : [];
+        const detailImages = overrideImages.length > 0
+          ? overrideImages
+          : (Array.isArray(result?.detailImages)
+            ? result.detailImages
+            : (Array.isArray(result?.draft?.detailImages) ? result.draft.detailImages : []));
+
+        const mainImageUrl = String(result?.draft?.imageUrl || (detailImages[0] || '')).trim();
+
+        const p = await upsertCatalogProduct({
+          userId,
+          sourceUrl: inputUrl,
+          confirmedTitle,
+          mainImageUrl,
+          detailImages,
+          presetId: presetId || null,
+          categoryOverride: settingsSnapshot?.displayCategoryCode ?? null,
+          status: 'deployed',
+        });
+
+        if (p?.id) {
+          const prevValidation = (p.validation && typeof p.validation === 'object') ? p.validation : {};
+          const sellerProductId = result?.create?.sellerProductId || null;
+          await updateCatalogProduct(userId, p.id, {
+            sellerProductId,
+            deployedAt: new Date().toISOString(),
+            validation: {
+              ...prevValidation,
+              lastUpload: {
+                at: new Date().toISOString(),
+                finalPrice: result?.finalPrice ?? null,
+                category: result?.category ?? null,
+                payloadCheck: result?.payloadCheck ?? null,
+              },
+            },
+          });
+
+          try {
+            if (sellerProductId) {
+              await upsertUploadedProduct({
+                userId,
+                sourceUrl: inputUrl,
+                sellerProductId,
+                title: confirmedTitle,
+                finalPrice: result?.finalPrice ?? null,
+              });
+            }
+          } catch {}
+        }
+      } catch {}
+    }
+
+    await notifyUser(userId, {
+      title: ok ? '업로드 완료' : '업로드 실패',
+      body: `${ok ? '업로드 완료' : '업로드 실패'}: ${String(result?.draft?.title || '상품').slice(0, 40)}`,
+      tag: 'job-upload',
+      url: '/',
+      sellerProductId: result?.create?.sellerProductId || null,
+    });
+  } catch (e) {
+    try {
+      await updateJob({
+        id: job.id,
+        patch: {
+          status: 'failed',
+          errorCode: 'job_exception',
+          errorMessage: '작업 처리 중 오류가 발생했습니다.',
+        },
+      });
+    } catch {}
+  } finally {
+    // Kick the next queued upload, if any.
+    setTimeout(() => processUploadQueueForUser(userId).catch(() => {}), 50);
+  }
+}
 
 const PURCHASE_LOG_LIMIT = 200;
 function appendPurchaseLog(userId, entry) {
@@ -1508,6 +1696,128 @@ app.get("/api/jobs/:id", authRequired, async (req, res) => {
   }
 });
 
+// ✅ Upload Queue: list/enqueue/cancel (per-user sequential uploads)
+app.get('/api/upload-queue', authRequired, async (req, res) => {
+  try {
+    const limit = Math.max(1, Math.min(200, Number(req.query.limit || 50) || 50));
+    const items = await listJobs(req.user.id, { kind: 'upload', limit });
+    return res.json({ ok: true, items });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+app.post('/api/upload-queue/enqueue', authRequired, async (req, res) => {
+  try {
+    const url = String(req.body?.url || '').trim();
+    const force = String(req.body?.force || '0').trim() === '1' ? '1' : '0';
+    const presetId = String(req.body?.presetId || '').trim();
+    const titleOverride = String(req.body?.titleOverride || '').trim();
+    const imagesOverrideRaw = req.body?.imagesOverride;
+    const imagesOverride = Array.isArray(imagesOverrideRaw)
+      ? imagesOverrideRaw.map((x) => String(x || '').trim()).filter(Boolean).slice(0, 50)
+      : [];
+
+    if (!url) return res.status(400).json({ ok: false, error: 'missing url' });
+
+    const c = classifyUrl(url);
+    if (!c.ok) return res.status(400).json({ ok: false, error: c.reason, url: c.url });
+
+    // Strong dedupe: if already uploaded and has sellerProductId.
+    if (force !== '1') {
+      const existing = await getUploadedProductByUrl(req.user.id, c.url);
+      if (existing?.seller_product_id) {
+        const pid = String(existing.seller_product_id);
+        return res.status(409).json({
+          ok: false,
+          error: 'duplicate_product',
+          existing: {
+            sourceUrl: existing.source_url,
+            title: existing.title,
+            finalPrice: existing.final_price,
+            sellerProductId: pid,
+            productUrl: `https://www.coupang.com/vp/products/${pid}`,
+            createdAt: existing.created_at,
+          },
+        });
+      }
+
+      // Soft dedupe: if already queued/running for same URL.
+      const actives = await listJobs(req.user.id, { kind: 'upload', statuses: ['queued', 'running'], limit: 200 });
+      const dup = actives.find((j) => String(j.inputUrl || '') === String(c.url));
+      if (dup) return res.json({ ok: true, job: dup, deduped: true });
+    }
+
+    // Resolve preset settings now (store snapshot for worker).
+    let presetSettings = {};
+    if (presetId) {
+      try {
+        const p = await getPreset(req.user.id, presetId);
+        if (p?.settings && typeof p.settings === 'object') presetSettings = p.settings;
+      } catch {}
+    }
+
+    const settingsSnapshot = {
+      ...(req.user.settings || {}),
+      ...(presetSettings || {}),
+      ...(titleOverride ? { titleOverride } : {}),
+      ...(imagesOverride.length > 0 ? { imagesOverride } : {}),
+    };
+
+    // Create/refresh a pending dedupe record early to prevent stampede clicks.
+    if (force !== '1') {
+      try {
+        await upsertUploadedProduct({
+          userId: req.user.id,
+          sourceUrl: c.url,
+          sellerProductId: null,
+          title: '',
+          finalPrice: null,
+        });
+      } catch {}
+    }
+
+    const job = await createJob({
+      userId: req.user.id,
+      kind: 'upload',
+      inputUrl: c.url,
+      force,
+      catalogId: null,
+      initialResultJson: {
+        request: {
+          presetId: presetId || null,
+          settingsSnapshot,
+        },
+        progress: { stage: 'queued', percent: 0, url: c.url },
+      },
+    });
+
+    // Kick queue worker.
+    setTimeout(() => processUploadQueueForUser(req.user.id).catch(() => {}), 50);
+
+    return res.json({ ok: true, job });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+app.post('/api/upload-queue/:id/cancel', authRequired, async (req, res) => {
+  try {
+    const id = String(req.params.id || '').trim();
+    if (!id) return res.status(400).json({ ok: false, error: 'missing id' });
+
+    const status = await cancelQueuedJob(req.user.id, id);
+    if (!status) return res.status(404).json({ ok: false, error: 'not_found' });
+
+    // If it was queued and got cancelled, kick worker to continue.
+    setTimeout(() => processUploadQueueForUser(req.user.id).catch(() => {}), 50);
+
+    return res.json({ ok: true, status });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
 app.post("/api/settings", authRequired, async (req, res) => {
   try {
     const next = req.body || {};
@@ -2545,6 +2855,17 @@ app.listen(PORT, HOST, async () => {
   log(`server running: http://${baseHost}:${PORT}`);
   log(`authorize start: http://${baseHost}:${PORT}/auth/kakao`);
   log(`bind: ${HOST}:${PORT}`);
+
+  // Resume any queued uploads on boot (best-effort)
+  try {
+    const users = await listUsersForSync();
+    for (const u of users) {
+      const queued = await listJobs(u.id, { kind: 'upload', statuses: ['queued'], limit: 1 });
+      if (queued && queued.length > 0) {
+        processUploadQueueForUser(u.id).catch(() => {});
+      }
+    }
+  } catch {}
 
   // 운영 동기화 루프(옵션): CE_SYNC_INTERVAL_MIN 설정 시 주기 실행
   const intervalMin = Number(process.env.CE_SYNC_INTERVAL_MIN || 0);
