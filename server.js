@@ -1762,6 +1762,81 @@ app.get('/api/upload-queue', authRequired, async (req, res) => {
   }
 });
 
+// --- Status summary (for n8n / dashboard)
+const STATUS_API_TOKEN = String(process.env.STATUS_API_TOKEN || '').trim();
+
+function statusAuthorized(req) {
+  if (!STATUS_API_TOKEN) return false;
+  const h = String(req.headers['authorization'] || req.headers['Authorization'] || '').trim();
+  const x = String(req.headers['x-api-key'] || req.headers['X-Api-Key'] || '').trim();
+  const t = x || (h.match(/^Bearer\s+(.+)$/i)?.[1] || h);
+  return t && t.trim() === STATUS_API_TOKEN;
+}
+
+app.get('/api/status/summary', async (req, res) => {
+  try {
+    if (!statusAuthorized(req)) {
+      return res.status(401).json({ ok: false, error: 'Unauthorized' });
+    }
+
+    // For now: single-user dashboard (first user)
+    const users = await listUsersForSync();
+    const userId = users?.[0]?.id;
+    if (!userId) return res.json({ ok: true, empty: true });
+
+    const items = await listJobs(userId, { kind: 'upload', limit: 200 });
+    const counts = { queued: 0, running: 0, backoff: 0, failed: 0, succeeded: 0, cancelled: 0, other: 0 };
+
+    const now = Date.now();
+    const failures = new Map();
+    let lastSucceededAt = null;
+    let lastFailedAt = null;
+
+    for (const j of items) {
+      const st = String(j.status || '');
+      const stage = String(j.result?.progress?.stage || '');
+      if (st === 'queued' && stage === 'backoff') counts.backoff++;
+      else if (st in counts) counts[st]++;
+      else counts.other++;
+
+      if (st === 'succeeded') {
+        if (!lastSucceededAt || String(j.updatedAt) > String(lastSucceededAt)) lastSucceededAt = j.updatedAt;
+      }
+      if (st === 'failed') {
+        if (!lastFailedAt || String(j.updatedAt) > String(lastFailedAt)) lastFailedAt = j.updatedAt;
+        const code = String(j.errorCode || j.result?.error || 'error_unknown');
+        failures.set(code, (failures.get(code) || 0) + 1);
+      }
+    }
+
+    const topFailures = [...failures.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5)
+      .map(([code, count]) => ({ code, count }));
+
+    const textLines = [
+      '📍 상태 대시보드',
+      `- 업로드 큐: queued ${counts.queued} / running ${counts.running} / backoff ${counts.backoff} / failed ${counts.failed}`,
+      lastSucceededAt ? `- 마지막 성공: ${lastSucceededAt}` : '- 마지막 성공: -',
+      lastFailedAt ? `- 마지막 실패: ${lastFailedAt}` : '- 마지막 실패: -',
+      topFailures.length ? `- 실패 TOP: ${topFailures.map((x) => `${x.code}(${x.count})`).join(', ')}` : '- 실패 TOP: -',
+      `- 서버 시간: ${new Date(now).toISOString()}`,
+    ];
+
+    return res.json({
+      ok: true,
+      userId,
+      counts,
+      topFailures,
+      lastSucceededAt,
+      lastFailedAt,
+      text: textLines.join('\n'),
+    });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
 app.post('/api/upload-queue/enqueue', authRequired, async (req, res) => {
   try {
     const url = String(req.body?.url || '').trim();
