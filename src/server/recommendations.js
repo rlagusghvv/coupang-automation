@@ -3,6 +3,12 @@ import crypto from 'node:crypto';
 import { previewUploadFromUrl } from '../pipeline/previewUploadFromUrl.js';
 import { dbAll, dbRun, openDb } from './storage_sqlite_internal.js';
 import { fetchWithRetry } from './net_limit.js';
+import {
+  collectOpenApiCandidates,
+  getCategoryList,
+  loadCategoryKeywordSeeds,
+  pickCategoryCodes,
+} from './domeggook_openapi.js';
 
 function dbGetOne(db, sql, params = []) {
   return dbAll(db, sql, params).then((rows) => (rows && rows[0]) || null);
@@ -14,6 +20,20 @@ function dbGetOne(db, sql, params = []) {
 
 function nowIso() {
   return new Date().toISOString();
+}
+
+async function readHtmlResponse(res) {
+  // Domeggook pages are often served as euc-kr. Node fetch decodes as utf-8 by default,
+  // which breaks keyword/price parsing. Decode using TextDecoder when needed.
+  const buf = Buffer.from(await res.arrayBuffer());
+  const head = buf.subarray(0, Math.min(buf.length, 4096)).toString('ascii');
+  const isEucKr = /charset\s*=\s*euc-kr/i.test(head);
+  try {
+    if (isEucKr) {
+      return new TextDecoder('euc-kr').decode(buf);
+    }
+  } catch {}
+  return buf.toString('utf-8');
 }
 
 function withTimeout(promise, ms, label = 'timeout') {
@@ -128,7 +148,7 @@ export async function fetchDomeggookUrlsByKeyword({ keyword, limit = 40, storage
       });
       if (r.status === 429) throw new Error('domeggook_rate_limited');
       if (!r.ok) break;
-      const html = await r.text();
+      const html = await readHtmlResponse(r);
       await new Promise((r) => setTimeout(r, 450));
       const out = extractFromHtml(html);
       for (const u of out) {
@@ -472,7 +492,7 @@ async function fetchFastCandidatesFromList({ keyword, limit = 80, storageStatePa
       clearTimeout(t);
       if (r.status === 429) throw new Error('domeggook_rate_limited');
       if (!r.ok) continue;
-      const html = await r.text();
+      const html = await readHtmlResponse(r);
       await new Promise((r) => setTimeout(r, 200));
 
       const title = (() => {
@@ -529,7 +549,8 @@ function titleMatchesKeyword(keyword, title) {
   if (!toks || toks.length === 0) return t.includes(kw.toLowerCase());
   // Require at least a majority of tokens to appear (reduces irrelevant leakage,
   // but avoids being overly strict for real-world titles).
-  const need = Math.max(1, Math.ceil(toks.length * 0.6));
+  // 50% threshold keeps relevance while avoiding empty results.
+  const need = Math.max(1, Math.ceil(toks.length * 0.5));
   let hit = 0;
   for (const x of toks) {
     if (t.includes(x.toLowerCase())) hit += 1;
@@ -542,36 +563,97 @@ async function generateRecommendationsBatch({ settings, keywords, topN = 20, exc
   const startedAt = Date.now();
 
   const candidates = [];
-  for (const kw of seed.slice(0, 12)) {
-    if (Date.now() - startedAt > 6 * 60_000) break;
-    let list = [];
-    try {
-      list = await fetchFastCandidatesFromList({
-        keyword: kw,
-        limit: 40,
-        storageStatePath: String(settings?.domeggookStorageStatePath || ''),
-      });
-    } catch (e) {
-      if (String(e?.message || e).includes('rate_limited')) {
-        if (typeof onProgress === 'function') {
-          try { onProgress({ stage: 'rate_limited', keyword: kw, candidates: candidates.length }); } catch {}
-        }
-        throw e;
-      }
-      list = [];
-    }
 
-    for (const it of list) {
-      if (excludeUrls.has(it.url)) continue;
-      // Domeggook search can leak irrelevant items; filter by keyword tokens.
-      if (!titleMatchesKeyword(kw, it.title)) continue;
-      candidates.push({ keyword: kw, ...it });
+  // Prefer Domeggook OpenAPI if key is configured (more stable than HTML crawling)
+  const openApiKey = String(settings?.domeggookOpenApiKey || '').trim();
+  if (openApiKey) {
+    try {
+      const seeds = loadCategoryKeywordSeeds();
+      const catList = await getCategoryList({ aid: openApiKey, isReg: true });
+      const picked = pickCategoryCodes({ categories: catList.categories, seeds, maxCodes: 12 });
+
+      if (typeof onProgress === 'function') {
+        try {
+          onProgress({ stage: 'collect_categories', candidates: 0, categories: picked.length });
+        } catch {}
+      }
+
+      const r = await collectOpenApiCandidates({
+        aid: openApiKey,
+        market: 'dome',
+        categories: picked,
+        perCategory: 40,
+        pages: 1,
+        sleepMs: 220,
+      });
+
+      for (const it of (r.items || [])) {
+        if (!it?.url || excludeUrls.has(it.url)) continue;
+        if (!it?.title || !Number.isFinite(Number(it?.price)) || Number(it.price) <= 0) continue;
+        candidates.push({ keyword: it?.category?.name || '카테고리', url: it.url, title: it.title, price: Number(it.price) });
+        if (candidates.length >= 1200) break;
+      }
+
+      if (typeof onProgress === 'function') {
+        try {
+          onProgress({ stage: 'collect', keyword: 'OpenAPI', candidates: candidates.length });
+        } catch {}
+      }
+    } catch (e) {
+      if (typeof onProgress === 'function') {
+        try {
+          onProgress({ stage: 'openapi_failed', error: String(e?.message || e) });
+        } catch {}
+      }
+      // fall through to HTML crawling
+    }
+  }
+
+  const openApiUsed = candidates.length > 0;
+
+  if (candidates.length === 0) {
+    for (const kw of seed.slice(0, 12)) {
+      if (Date.now() - startedAt > 6 * 60_000) break;
+
+      let list = [];
+      try {
+        list = await fetchFastCandidatesFromList({
+          keyword: kw,
+          limit: 40,
+          storageStatePath: String(settings?.domeggookStorageStatePath || ''),
+        });
+      } catch (e) {
+        if (String(e?.message || e).includes('rate_limited')) {
+          if (typeof onProgress === 'function') {
+            try {
+              onProgress({
+                stage: 'rate_limited',
+                keyword: kw,
+                candidates: candidates.length,
+              });
+            } catch {}
+          }
+          throw e;
+        }
+        list = [];
+      }
+
+      for (const it of list) {
+        if (excludeUrls.has(it.url)) continue;
+        // Domeggook search can leak irrelevant items; filter by keyword tokens.
+        if (!titleMatchesKeyword(kw, it.title)) continue;
+        candidates.push({ keyword: kw, ...it });
+        if (candidates.length >= 1200) break;
+      }
+
+      if (typeof onProgress === 'function') {
+        try {
+          onProgress({ stage: 'collect', keyword: kw, candidates: candidates.length });
+        } catch {}
+      }
+
       if (candidates.length >= 1200) break;
     }
-    if (typeof onProgress === 'function') {
-      try { onProgress({ stage: 'collect', keyword: kw, candidates: candidates.length }); } catch {}
-    }
-    if (candidates.length >= 1200) break;
   }
 
   const uniq = [];
@@ -582,6 +664,9 @@ async function generateRecommendationsBatch({ settings, keywords, topN = 20, exc
     seen.add(c.url);
     uniq.push(c);
   }
+
+  // If OpenAPI collection already ran, skip extra HTML crawling work.
+  // (candidates are already stable + structured.)
 
   const scoredPool = [];
   for (const c of uniq) {
@@ -616,6 +701,16 @@ async function generateRecommendationsBatch({ settings, keywords, topN = 20, exc
     if (final.length >= topN) break;
     if (Date.now() - startedAt > 12 * 60_000) break;
     if (excludeUrls.has(cand.sourceUrl)) continue;
+
+    // When candidates come from OpenAPI, we already have stable metadata.
+    // Skip heavy HTML preview validation to avoid session/timeout issues.
+    if (openApiUsed) {
+      final.push({
+        ...cand,
+        payload: { ...cand.payload, openapi: true },
+      });
+      continue;
+    }
 
     const prev = await withTimeout(
       previewUploadFromUrl(cand.sourceUrl, {
