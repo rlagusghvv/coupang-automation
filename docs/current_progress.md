@@ -41,6 +41,10 @@
   - `src/pipeline/runUploadFromUrl.js`
   Reason: when parsing times out, draft.price becomes null → later upload/recommendation steps can fail.
 
+### Product direction (UX reference)
+- Reference SaaS to match closely for v1: https://www.coupilot.net/
+- Goal: produce a "유사/동일" 1st complete version (flow + UI/UX) before additional iterations.
+
 ### Commands / quick checks
 - Server health:
   - `curl -H "Authorization: Bearer $STATUS_API_TOKEN" http://127.0.0.1:3000/api/status/summary`
