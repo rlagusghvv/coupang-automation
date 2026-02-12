@@ -35,6 +35,12 @@
 4) For `coupang_create_failed`:
    - log Coupang API response body/code; likely auth/required fields/certification/category mismatch.
 
+### Fix applied (reliability)
+- Increased Domeggook HTML parse timeout from **12s → 25s** in:
+  - `src/pipeline/previewUploadFromUrl.js`
+  - `src/pipeline/runUploadFromUrl.js`
+  Reason: when parsing times out, draft.price becomes null → later upload/recommendation steps can fail.
+
 ### Commands / quick checks
 - Server health:
   - `curl -H "Authorization: Bearer $STATUS_API_TOKEN" http://127.0.0.1:3000/api/status/summary`
