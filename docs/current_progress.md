@@ -1,5 +1,23 @@
 # Current Progress (Coupang Elephants / coupang-automation)
 
+## 2026-02-13
+
+### Status snapshot (morning)
+- Public endpoint: https://app.splui.com/app/
+  - Next UI is served on port 3333 via tunnel.
+  - Legacy uploader/console API is served on port 3000; Next proxies `/api/*` to 3000.
+- New Next pages added:
+  - `/app/recommend` (추천: fill/status/list + 선택 업로드 직렬 enqueue)
+  - `/app/upload` (URL 업로드: preview + enqueue)
+  - `/app/console` (레거시 콘솔 iframe)
+- Bulk enqueue bugfix already landed: sqlite busyTimeout + WAL to prevent missing queue items under burst clicks.
+
+### Next step to validate (today)
+- In `https://app.splui.com/app/console` 로그인 후,
+  1) 추천 채우기 → 다중 선택 → 선택 업로드(직렬)
+  2) 업로드 큐에서 실행/결과 확인
+  3) 실패 시 errorCode가 무엇인지 확인(이미지/레이트리밋/카테고리 등)
+
 ## 2026-02-12
 
 ### Latest progress (18:52 KST)
