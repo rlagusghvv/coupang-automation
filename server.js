@@ -90,6 +90,14 @@ app.use("/couplus-out", express.static(path.join(process.cwd(), "out")));
 app.use("/tmp", express.static(path.join(process.cwd(), "out"))); // /tmp/tmp_main.jpg 같은 형태로도 접근 가능
 app.use(express.static(path.join(process.cwd(), "public")));
 
+// Console (existing dashboard)
+app.get('/console', (req, res) => {
+  return res.sendFile(path.join(process.cwd(), 'public', 'console.html'));
+});
+app.get('/console/*', (req, res) => {
+  return res.redirect('/console');
+});
+
 // Flutter Web app (served from public/app)
 app.get('/app/*', (req, res, next) => {
   try {

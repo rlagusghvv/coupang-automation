@@ -3,434 +3,243 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Couplus</title>
+    <title>쿠팡 코끼리</title>
     <link rel="stylesheet" href="/styles.css" />
-
-    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="stylesheet" href="/landing.css" />
     <meta name="theme-color" content="#ffffff" />
-    <meta name="apple-mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
-    <link rel="apple-touch-icon" href="/icons/icon-192.png" />
   </head>
-  <body>
-    <main class="wrap">
-      <header class="topbar">
-        <div class="brand">
-          <div class="logo">Couplus</div>
-          <div class="tagline">도매꾹/도매매 → 쿠팡 자동화 대시보드</div>
-        </div>
-        <div class="topbar-right">
-          <div class="topbar-actions">
-            <button id="themeToggle" class="icon-btn" type="button" title="테마 전환 (자동/라이트/다크)">테마</button>
-          </div>
-          <div class="session-badges">
-            <span class="badge" id="badgeDomeggook">도매꾹: -</span>
-            <span class="badge" id="badgeDomeme">도매매: -</span>
-          </div>
-          <div class="version" id="versionInfo">버전 확인 중...</div>
-        </div>
-      </header>
+  <body class="landing-body">
+    <header class="landing-top">
+      <div class="landing-top-inner">
+        <a class="landing-brand" href="/">
+          <span class="landing-logo">COUPELEPHANT</span>
+        </a>
 
-      <div class="toss-app">
-        <section class="view" id="view-home">
-          <div class="home-dashboard">
-            <!-- Session card -->
-            <section class="dash-card" aria-label="세션">
-              <div class="dash-head">
-                <h2 class="dash-title">세션</h2>
-                <div class="dash-chips">
-                  <span class="chip" id="homeChipDomeggook">도매꾹: -</span>
-                  <span class="chip" id="homeChipDomeme">도매매: -</span>
-                </div>
-              </div>
-              <div class="dash-body">
-                <div class="dash-grid">
-                  <div class="dash-item">
-                    <div class="dash-label">도매꾹</div>
-                    <div class="dash-value" id="homeDomeggookSessionText">-</div>
-                    <div class="btn-row">
-                      <button id="homeCreateDomeggookSession" type="button">로그인(브라우저 열기)</button>
-                      <button id="homeSaveDomeggookSession" type="button" class="ghost">지금 저장</button>
-                    </div>
-                  </div>
-                  <div class="dash-item">
-                    <div class="dash-label">도매매</div>
-                    <div class="dash-value" id="homeDomemeSessionText">-</div>
-                    <div class="btn-row">
-                      <button id="homeCreateDomemeSession" type="button">로그인(브라우저 열기)</button>
-                      <button id="homeSaveDomemeSession" type="button" class="ghost">지금 저장</button>
-                    </div>
-                  </div>
-                </div>
-                <p class="hint">로그인 완료 후 ‘지금 저장’을 누르면 세션이 저장됩니다.</p>
-              </div>
-            </section>
-
-            <!-- Upload card -->
-            <section class="dash-card" aria-label="업로드">
-              <div class="dash-head">
-                <h2 class="dash-title">상품 업로드</h2>
-                <div class="dash-sub" id="homeUploadGate">-</div>
-              </div>
-              <div class="dash-body">
-                <label class="sr-only" for="url">도매꾹/도매매 상품 링크</label>
-                <input id="url" type="url" placeholder="https://domeggook.com/..." inputmode="url" />
-                <div class="btn-row">
-                  <button id="previewUpload" type="button" class="ghost">미리보기</button>
-                  <button id="submit" type="button">실행</button>
-                  <button id="enablePush" type="button" class="ghost">푸시 켜기</button>
-                </div>
-                <div class="row compact-row" style="gap: 10px; align-items: center;">
-                  <input id="forceUpload" type="checkbox" />
-                  <span class="hint">강제 재업로드(중복 허용)</span>
-                </div>
-                <div class="mini-card hidden" id="uploadPreviewCard">
-                  <div class="mini-title">미리보기</div>
-                  <div class="mini-kv" id="uploadPreviewKv"></div>
-                </div>
-                <p class="hint">미리보기로 제목/가격/옵션/이미지를 확인한 뒤 실행하세요.</p>
-              </div>
-            </section>
-
-            <!-- Purchase/Payment card -->
-            <section class="dash-card" aria-label="발주/결제">
-              <div class="dash-head">
-                <h2 class="dash-title">발주/결제</h2>
-                <div class="dash-sub">최근 결제 링크</div>
-              </div>
-              <div class="dash-body">
-                <div class="btn-row">
-                  <button id="homeDraftPurchase" type="button">발주 엑셀 생성</button>
-                  <button id="homeUploadPurchase" type="button">발주 업로드</button>
-                </div>
-                <div class="mini-card" id="homePayButtons"></div>
-                <p class="hint">발주 업로드 후 ‘결제하러 가기’ 버튼이 활성화됩니다.</p>
-              </div>
-            </section>
-
-            <!-- Recent activity card -->
-            <section class="dash-card" aria-label="최근 활동">
-              <div class="dash-head">
-                <h2 class="dash-title">최근 활동</h2>
-                <button id="homeRefreshActivity" type="button" class="ghost">새로고침</button>
-              </div>
-              <div class="dash-body">
-                <div class="activity-list" id="homeActivityList"></div>
-              </div>
-            </section>
-          </div>
-        </section>
-
-        <section class="view hidden" id="view-work">
-          <div class="settings-page">
-            <section class="settings-section card">
-              <h2 class="section-title">주문/발주</h2>
-              <div class="panel order-actions" id="panel-orders">
-            <label>쿠팡 주문 → 도매처 발주</label>
-
-          <div class="row compact-row hidden" id="devOrdersRow">
-            <button id="seedOrders">(개발용) 더미 주문 2개 생성</button>
-            <button id="refreshOrders">주문 목록 새로고침</button>
-          </div>
-          <div class="grid hidden" id="ordersListWrap">
-            <div>
-              <label>주문 목록 (MVP)</label>
-              <textarea id="ordersList" rows="6" readonly></textarea>
-            </div>
-          </div>
-
-          <div class="divider"></div>
-
-          <label>시드 주문 → 발주 업로드 (MVP)</label>
-          <div class="row compact-row">
-            <button id="draftPurchase">발주 엑셀 생성</button>
-            <button id="uploadPurchase">발주 업로드</button>
-          </div>
-          <div class="row compact-row">
-            <span class="hint">마지막 발주 엑셀: <span id="lastPurchaseDraft">-</span></span>
-          </div>
-          <div class="grid">
-            <div>
-              <label>발주 로그</label>
-              <textarea id="purchaseLog" rows="6" readonly></textarea>
-              <div class="row compact-row" id="purchasePayActions"></div>
-            </div>
-          </div>
-
-          <div class="divider"></div>
-
-          <label>쿠팡 주문 → 도매매 엑셀 생성</label>
-          <div class="grid">
-            <div>
-              <label>시작일 (YYYY-MM-DD)</label>
-              <input id="orderFrom" type="date" />
-            </div>
-            <div>
-              <label>종료일 (YYYY-MM-DD)</label>
-              <input id="orderTo" type="date" />
-            </div>
-          </div>
-          <div class="row compact-row">
-            <button id="exportOrders">엑셀 생성</button>
-          </div>
-          <div class="row compact-row">
-            <button id="uploadOrders">도매매 업로드</button>
-          </div>
-          <div class="row compact-row">
-            <span class="hint">마지막 생성 엑셀: <span id="lastExportPath">-</span></span>
-          </div>
-          <div class="divider"></div>
-          <div class="sku-map-section">
-            <label>SKU 매핑</label>
-          <div class="row compact-row">
-            <button id="loadMissing">누락 목록 불러오기</button>
-            <button id="loadSkuMap">매핑 불러오기</button>
-            <button id="saveSkuMap">매핑 저장</button>
-          </div>
-          <div class="grid">
-            <div>
-              <label>누락 목록 (읽기전용)</label>
-              <textarea id="missingSku" rows="6" readonly></textarea>
-            </div>
-            <div>
-              <label>SKU 매핑 JSON</label>
-              <textarea id="skuMap" rows="6" placeholder='{\"vendorItemId\": {\"itemNo\":\"47185732\",\"optionCode\":\"00_01\",\"optionName\":\"...\"}}'></textarea>
-            </div>
-          </div>
-          </div>
-          <p class="hint">상태: 결제완료(ACCEPT)만 포함됩니다.</p>
-        </div>
-
-          </div>
-            </section>
-
-            <section class="settings-section card">
-              <h2 class="section-title">히스토리</h2>
-              <div class="panel" id="panel-history">
-          <div class="row compact-row">
-            <button id="refreshHistory">히스토리 새로고침</button>
-          </div>
-          <div class="history-table" id="historyTable"></div>
-        </div>
-
-          </div>
-            </section>
-          </div>
-        </section>
-
-        <section class="view hidden" id="view-more">
-          <div class="settings-page">
-            <section class="settings-section card">
-              <h2 class="section-title">More</h2>
-              <div class="panel" id="panel-settings">
-                <div class="settings-list">
-                  <details class="settings-cat" open>
-                    <summary>쿠팡 API</summary>
-                    <div class="grid">
-                      <div class="field sensitive" data-sensitive-id="ckey">
-                        <label>쿠팡 Access Key</label>
-                        <div class="sensitive-locked" data-sensitive="ckey">
-                          <input class="mask-input" type="password" value="••••••••" readonly />
-                          <button class="mini-btn" type="button" data-action="unlock" data-target="ckey">Reveal/Edit</button>
-                        </div>
-                        <input id="ckey" class="sensitive-input hidden" type="text" placeholder="access key" autocomplete="off" />
-                      </div>
-                      <div class="field sensitive" data-sensitive-id="skey">
-                        <label>쿠팡 Secret Key</label>
-                        <div class="sensitive-locked" data-sensitive="skey">
-                          <input class="mask-input" type="password" value="••••••••" readonly />
-                          <button class="mini-btn" type="button" data-action="unlock" data-target="skey">Reveal/Edit</button>
-                        </div>
-                        <input id="skey" class="sensitive-input hidden" type="password" placeholder="secret key" autocomplete="off" />
-                      </div>
-                      <div>
-                        <label>Vendor ID</label>
-                        <input id="vendorId" type="text" placeholder="A0..." />
-                      </div>
-                      <div>
-                        <label>Vendor User ID</label>
-                        <input id="vendorUserId" type="text" placeholder="..." />
-                      </div>
-                      <div>
-                        <label>배송사 코드</label>
-                        <input id="deliveryCode" type="text" placeholder="CJGLS" />
-                      </div>
-                      <div>
-                        <label>이미지 프록시</label>
-                        <input id="proxyBase" type="text" placeholder="https://coupang-automation.pages.dev" />
-                      </div>
-                      <div>
-                        <label>허용 IP 목록 (쉼표로 구분)</label>
-                        <input id="allowedIps" type="text" placeholder="104.28.211.26, 104.28.243.28" />
-                      </div>
-                    </div>
-                  </details>
-
-                  <details class="settings-cat">
-                    <summary>도매꾹 / 도매매 세션</summary>
-                    <div class="grid">
-                      <div>
-                        <label>도매꾹 세션 파일 경로</label>
-                        <input id="domeggookStorageStatePath" type="text" placeholder="/Users/.../storageState.domeggook.json" />
-                      </div>
-                      <div>
-                        <label>도매꾹 세션 만들기</label>
-                        <div class="row compact-row">
-                          <button id="createDomeggookSession">브라우저 열기</button>
-                          <button id="saveDomeggookSession" class="ghost">지금 저장</button>
-                          <span class="hint">로그인 완료되면 ‘지금 저장’</span>
-                        </div>
-                        <p class="hint">세션 상태: <span id="domeggookSessionStatus">-</span></p>
-                      </div>
-                      <div>
-                        <label>도매매 ID</label>
-                        <input id="domemeId" type="text" placeholder="domeme id" />
-                      </div>
-                      <div class="field sensitive" data-sensitive-id="domemePw">
-                        <label>도매매 PW</label>
-                        <div class="sensitive-locked" data-sensitive="domemePw">
-                          <input class="mask-input" type="password" value="••••••••" readonly />
-                          <button class="mini-btn" type="button" data-action="unlock" data-target="domemePw">Reveal/Edit</button>
-                        </div>
-                        <input id="domemePw" class="sensitive-input hidden" type="password" placeholder="domeme password" autocomplete="off" />
-                      </div>
-                      <div>
-                        <label>도매매 세션 파일 경로</label>
-                        <input id="domemeStorageStatePath" type="text" placeholder="/Users/.../storageState.domeme.json" />
-                      </div>
-                      <div>
-                        <label>도매매 세션 만들기</label>
-                        <div class="row compact-row">
-                          <button id="createDomemeSession">브라우저 열기</button>
-                          <button id="saveDomemeSession" class="ghost">지금 저장</button>
-                          <span class="hint">로그인 완료되면 ‘지금 저장’</span>
-                        </div>
-                        <p class="hint">세션 상태: <span id="domemeSessionStatus">-</span></p>
-                      </div>
-                    </div>
-                  </details>
-
-                  <details class="settings-cat">
-                    <summary>Cloudflare Pages</summary>
-                    <div class="grid">
-                      <div>
-                        <label>Pages 프로젝트명</label>
-                        <input id="pagesProjectName" type="text" placeholder="coupang-automation" />
-                      </div>
-                      <div>
-                        <label>Pages Account ID</label>
-                        <input id="pagesAccountId" type="text" placeholder="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" />
-                      </div>
-                      <div class="field sensitive" data-sensitive-id="pagesApiToken">
-                        <label>Pages API Token</label>
-                        <div class="sensitive-locked" data-sensitive="pagesApiToken">
-                          <input class="mask-input" type="password" value="••••••••" readonly />
-                          <button class="mini-btn" type="button" data-action="unlock" data-target="pagesApiToken">Reveal/Edit</button>
-                        </div>
-                        <input id="pagesApiToken" class="sensitive-input hidden" type="password" placeholder="cf api token" autocomplete="off" />
-                      </div>
-                      <div>
-                        <label>Pages 자동 배포</label>
-                        <input id="pagesAutoDeploy" type="checkbox" />
-                      </div>
-                    </div>
-                  </details>
-
-                  <details class="settings-cat">
-                    <summary>가격 / 자동화</summary>
-                    <div class="grid">
-                      <div>
-                        <label>마진률 (예: 0.3)</label>
-                        <input id="marginRate" type="number" step="0.01" />
-                      </div>
-                      <div>
-                        <label>추가금 (원)</label>
-                        <input id="marginAdd" type="number" step="10" />
-                      </div>
-                      <div>
-                        <label>최소가격</label>
-                        <input id="priceMin" type="number" step="10" />
-                      </div>
-                      <div>
-                        <label>라운딩 단위</label>
-                        <input id="roundUnit" type="number" step="1" />
-                      </div>
-                    </div>
-                    <p class="hint">가격 공식: 도매꾹가 × (1+마진률) + 추가금 → 라운딩</p>
-
-                    <div class="settings-actions">
-                      <label class="toggle">
-                        <input id="autoRequest" type="checkbox" />
-                        <span>자동 승인요청 (임시저장 없이 요청)</span>
-                      </label>
-                      <label class="toggle">
-                        <input id="payloadOnly" type="checkbox" />
-                        <span>쿠팡 API 호출 안함 (payload만 생성)</span>
-                      </label>
-                      <label class="toggle">
-                        <input id="soundOnComplete" type="checkbox" />
-                        <span>완료 알림 소리</span>
-                      </label>
-                    </div>
-                  </details>
-
-                  <details class="settings-cat">
-                    <summary>계정</summary>
-                    <div class="grid">
-                      <div>
-                        <label>이메일</label>
-                        <input id="email" type="email" />
-                      </div>
-                      <div class="field sensitive" data-sensitive-id="password">
-                        <label>비밀번호</label>
-                        <div class="sensitive-locked" data-sensitive="password">
-                          <input class="mask-input" type="password" value="••••••••" readonly />
-                          <button class="mini-btn" type="button" data-action="unlock" data-target="password">Reveal/Edit</button>
-                        </div>
-                        <input id="password" class="sensitive-input hidden" type="password" autocomplete="current-password" />
-                      </div>
-                    </div>
-                    <div class="row">
-                      <button id="signup">회원가입</button>
-                      <button id="login">로그인</button>
-                      <button id="logout">로그아웃</button>
-                    </div>
-                    <p class="hint" id="authStatus">로그인 필요</p>
-                  </details>
-                </div>
-
-                <div class="settings-actions more-actions">
-                  <button id="saveSettings">설정 저장</button>
-                  <div class="mini-row">
-                    <span class="hint">현재 공인 IP: <span id="currentIp">-</span></span>
-                    <button id="refreshIp" class="mini-btn">IP 새로고침</button>
-                  </div>
-                </div>
-              </div>
-            </section>
-          </div>
-        </section>
-
-        <nav class="bottombar" aria-label="primary">
-          <button class="nav-item active" type="button" data-view="home">Home</button>
-          <button class="nav-item" type="button" data-view="work">Work</button>
-          <button class="nav-item" type="button" data-view="more">More</button>
+        <nav class="landing-nav" aria-label="상단 메뉴">
+          <a href="#features">소개</a>
+          <a href="#pricing">요금</a>
+          <a href="#reviews">결과</a>
+          <a href="#faq">자주묻는질문</a>
         </nav>
-      </div>
 
-      <section class="card">
-        <div class="status">
-          <div class="dot" id="dot"></div>
-          <span id="status">대기 중</span>
+        <div class="landing-top-actions">
+          <a class="landing-link" href="/console">로그인</a>
+          <a class="landing-cta" href="/console">시작하기</a>
         </div>
-        <div id="summary" class="summary hidden"></div>
-        <details class="raw">
-          <summary>상세 로그 보기</summary>
-          <pre id="log" class="log"></pre>
-        </details>
-      </section>
-    </main>
+      </div>
+    </header>
 
-    <script src="/app.js"></script>
+    <main class="landing">
+      <section class="hero">
+        <div class="hero-grid">
+          <div class="hero-left">
+            <div class="hero-pill">쿠팡판매를 위한 자동화 대시보드</div>
+            <h1 class="hero-title">
+              사업이 막막한 순간,<br />
+              답은 <span class="grad">데이터</span>에 있습니다.
+            </h1>
+            <p class="hero-desc">
+              도매 소싱부터 쿠팡 등록까지. 반복 업무를 자동화하고, 중요한 의사결정은 지표로 빠르게.
+            </p>
+            <div class="hero-actions">
+              <a class="landing-cta" href="/console">빠르게 시작하기</a>
+              <a class="landing-secondary" href="#features">기능 보기</a>
+            </div>
+            <div class="hero-social-proof">
+              <span class="dot"></span>
+              <span>운영 중인 실제 사용자 데이터 기반</span>
+            </div>
+          </div>
+
+          <div class="hero-right">
+            <div class="mock">
+              <div class="mock-top">
+                <span class="mock-dot red"></span>
+                <span class="mock-dot yellow"></span>
+                <span class="mock-dot green"></span>
+                <span class="mock-title">리얼 타임 대시보드</span>
+              </div>
+              <div class="mock-body">
+                <div class="mock-kpi">
+                  <div class="kpi">
+                    <div class="kpi-label">추천 상품 생성</div>
+                    <div class="kpi-value">+300%</div>
+                  </div>
+                  <div class="kpi">
+                    <div class="kpi-label">등록 자동화</div>
+                    <div class="kpi-value">대기열</div>
+                  </div>
+                  <div class="kpi">
+                    <div class="kpi-label">세션 상태</div>
+                    <div class="kpi-value">정상</div>
+                  </div>
+                </div>
+                <div class="mock-chart">
+                  <div class="bar" style="height: 30%"></div>
+                  <div class="bar" style="height: 52%"></div>
+                  <div class="bar" style="height: 64%"></div>
+                  <div class="bar" style="height: 45%"></div>
+                  <div class="bar" style="height: 70%"></div>
+                  <div class="bar" style="height: 58%"></div>
+                  <div class="bar" style="height: 74%"></div>
+                  <div class="bar" style="height: 62%"></div>
+                </div>
+                <div class="mock-note">* 화면은 예시입니다. 실제 화면은 /console 에서 확인할 수 있습니다.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="features" class="sec">
+        <div class="sec-head">
+          <div class="sec-pill">키워드 발굴</div>
+          <h2>떠오르는 키워드를<br />제일 먼저 포착합니다.</h2>
+          <p>반복되는 리서치 업무를 줄이고, 팔리는 상품 후보를 빠르게 쌓아 올립니다.</p>
+        </div>
+
+        <div class="steps">
+          <article class="step">
+            <div class="step-num">1</div>
+            <div class="step-body">
+              <h3>추천/후보 수집</h3>
+              <p>키워드/카테고리 기반으로 후보를 자동 수집하고 중복을 제거합니다.</p>
+            </div>
+          </article>
+          <article class="step">
+            <div class="step-num">2</div>
+            <div class="step-body">
+              <h3>원클릭 미리보기</h3>
+              <p>도매꾹/도매매 링크를 붙여넣으면 이미지/옵션/가격 정책을 미리 확인합니다.</p>
+            </div>
+          </article>
+          <article class="step">
+            <div class="step-num">3</div>
+            <div class="step-body">
+              <h3>업로드 자동화</h3>
+              <p>대기열 기반으로 안정적으로 업로드를 실행하고 실패 원인을 남깁니다.</p>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section class="sec dark">
+        <div class="sec-head">
+          <div class="sec-pill">현업 전문가</div>
+          <h2>현업 전문가들은 이미<br />답을 찾고 있습니다.</h2>
+          <p>실사용 흐름과 운영 데이터로 검증된 자동화 파이프라인을 지향합니다.</p>
+        </div>
+
+        <div class="video-grid" aria-label="후기 영상 자리">
+          <div class="video-card">후기 영상 슬롯 1</div>
+          <div class="video-card">후기 영상 슬롯 2</div>
+          <div class="video-card">후기 영상 슬롯 3</div>
+        </div>
+      </section>
+
+      <section class="sec" id="reviews">
+        <div class="sec-head">
+          <div class="sec-pill">ACTUAL USER DATA</div>
+          <h2>결과가<br />증명합니다.</h2>
+        </div>
+
+        <div class="stats">
+          <div class="stat">
+            <div class="stat-big">0%</div>
+            <div class="stat-label">불필요한 반복 작업 감소(목표)</div>
+          </div>
+          <div class="stat">
+            <div class="stat-big">+0</div>
+            <div class="stat-label">월간 추천 상품 증가(목표)</div>
+          </div>
+          <div class="stat">
+            <div class="stat-big">∞</div>
+            <div class="stat-label">확장 가능한 자동화 워크플로우</div>
+          </div>
+        </div>
+
+        <div class="review-cards">
+          <div class="review">사용자 후기 카드 (준비중)</div>
+          <div class="review">사용자 후기 카드 (준비중)</div>
+          <div class="review">사용자 후기 카드 (준비중)</div>
+        </div>
+      </section>
+
+      <section class="sec" id="pricing">
+        <div class="sec-head">
+          <div class="sec-pill">요금</div>
+          <h2>단순하게 시작하고<br />필요할 때 확장하세요.</h2>
+        </div>
+
+        <div class="pricing">
+          <article class="price">
+            <h3>Starter</h3>
+            <div class="price-tag">준비중</div>
+            <ul>
+              <li>미리보기/업로드 기본</li>
+              <li>추천 상품 자동 채우기</li>
+              <li>웹 푸시 알림</li>
+            </ul>
+            <a class="landing-cta" href="/console">시작하기</a>
+          </article>
+
+          <article class="price highlight">
+            <h3>Pro</h3>
+            <div class="price-tag">준비중</div>
+            <ul>
+              <li>대기열/작업 관리</li>
+              <li>벤더 발주 파일 자동 생성</li>
+              <li>상태 동기화/리포트</li>
+            </ul>
+            <a class="landing-cta" href="/console">상담/시작</a>
+          </article>
+
+          <article class="price">
+            <h3>Team</h3>
+            <div class="price-tag">준비중</div>
+            <ul>
+              <li>다중 사용자</li>
+              <li>권한/감사 로그</li>
+              <li>맞춤 연동</li>
+            </ul>
+            <a class="landing-cta" href="/console">문의</a>
+          </article>
+        </div>
+      </section>
+
+      <section class="sec" id="faq">
+        <div class="sec-head">
+          <div class="sec-pill">FAQ</div>
+          <h2>자주 묻는 질문</h2>
+        </div>
+
+        <div class="faq">
+          <details>
+            <summary>지금 바로 쓸 수 있나요?</summary>
+            <div class="faq-body">네. /console 에서 세션 로그인 후 링크 붙여넣기로 미리보기/업로드를 시작할 수 있습니다.</div>
+          </details>
+          <details>
+            <summary>쿠팡 정책/제한에 걸리면 어떻게 되나요?</summary>
+            <div class="faq-body">작업은 대기열 기반으로 실행되며, 실패 사유를 저장해 재현/재시도를 돕습니다.</div>
+          </details>
+          <details>
+            <summary>추천/자동화는 어떻게 동작하나요?</summary>
+            <div class="faq-body">키워드 셋과 사용자 설정을 기반으로 후보를 채우고, 필요 시 푸시로 알립니다.</div>
+          </details>
+        </div>
+      </section>
+
+      <footer class="landing-footer">
+        <div class="footer-inner">
+          <div class="footer-brand">COUPELEPHANT</div>
+          <div class="footer-links">
+            <a href="/console">Console</a>
+            <a href="#features">Features</a>
+            <a href="#pricing">Pricing</a>
+          </div>
+          <div class="footer-note">© Coupelephant. All rights reserved.</div>
+        </div>
+      </footer>
+    </main>
   </body>
 </html>
