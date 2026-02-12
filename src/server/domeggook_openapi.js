@@ -179,14 +179,32 @@ export async function getItemView({ aid, no }) {
 
   const html = String(r?.root?.desc?.contents?.item || '').trim();
   const title = String(r?.root?.basis?.title || '').trim();
-  const thumbOriginal = String(r?.root?.thumb?.original || '').trim();
+
+  // Thumb field names vary by API version / response shape.
+  // Prefer explicit thumb fields, but fall back to first <img> in description if needed.
+  const thumbOriginal = (
+    String(r?.root?.thumb?.original || '').trim() ||
+    String(r?.root?.thumb?.url || '').trim() ||
+    String(r?.root?.thumb || '').trim() ||
+    String(r?.root?.basis?.thumb || '').trim() ||
+    String(r?.root?.basis?.image || '').trim() ||
+    String(r?.root?.basis?.img || '').trim()
+  );
+
+  let thumb = String(thumbOriginal || '').trim();
+  if (!thumb && html) {
+    // Best-effort: pick first image from HTML.
+    const m = html.match(/<img[^>]+src=["']([^"']+)["']/i);
+    if (m && m[1]) thumb = String(m[1]).trim();
+  }
+
   const shippingFee = Number(r?.root?.deli?.fee);
 
   return {
     ok: true,
     no: itemNo,
     title,
-    thumbOriginal,
+    thumbOriginal: thumb,
     shippingFee: Number.isFinite(shippingFee) ? shippingFee : null,
     category: r?.root?.category || null,
     html,

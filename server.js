@@ -1519,9 +1519,10 @@ app.post("/api/jobs/start", authRequired, async (req, res) => {
     const c = classifyUrl(url);
     if (!c.ok) return res.status(400).json({ ok: false, error: c.reason, url: c.url });
 
-    // Prevent concurrent uploads (Coupang API is rate-limited). One upload at a time per user.
+    // Prevent concurrent *running* uploads (Coupang API is rate-limited).
+    // We still allow multiple queued uploads so bulk enqueue works.
     if (kind === 'upload' && force !== '1') {
-      const activeUpload = await getActiveJobByKind(req.user.id, 'upload', ['queued', 'running']);
+      const activeUpload = await getActiveJobByKind(req.user.id, 'upload', ['running']);
       if (activeUpload) {
         return res.status(409).json({ ok: false, error: 'upload_in_progress', job: activeUpload });
       }
