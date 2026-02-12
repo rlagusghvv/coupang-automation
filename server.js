@@ -98,12 +98,13 @@ app.get('/console/*', (req, res) => {
 });
 
 // Main app entry
-// NOTE: The legacy Flutter bundle under `public/app` is kept for now, but the active console UI
-// lives at `/console`. Keep `/app/*` redirecting to `/console` so the main URL reflects updates.
-// This route must be defined BEFORE express.static, otherwise `public/app/index.html` will be served directly.
-app.get('/app/*', (req, res) => {
-  return res.redirect('/console');
-});
+// NOTE: Historically the main entry was `/app/` (Flutter bundle). For now we treat `/app/` as
+// the public entry and route it to the new landing page so users see updates immediately.
+// Keep `/console` as the working dashboard.
+// This route must be defined BEFORE express.static.
+app.get('/app', (req, res) => res.redirect('/'));
+app.get('/app/', (req, res) => res.redirect('/'));
+app.get('/app/*', (req, res) => res.redirect('/'));
 
 app.use(express.static(path.join(process.cwd(), "public")));
 
