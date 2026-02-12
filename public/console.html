@@ -92,6 +92,37 @@
               </div>
             </section>
 
+            <!-- Recommendations card -->
+            <section class="dash-card" aria-label="추천 상품">
+              <div class="dash-head">
+                <h2 class="dash-title">추천 상품</h2>
+                <div class="dash-sub" id="recoStatusText">-</div>
+              </div>
+              <div class="dash-body">
+                <div class="btn-row">
+                  <button id="recoFill" type="button">추천 채우기</button>
+                  <button id="recoResetFill" type="button" class="ghost">초기화 후 채우기</button>
+                  <button id="recoRefresh" type="button" class="ghost">새로고침</button>
+                </div>
+                <div class="row compact-row" style="gap: 10px; align-items: center;">
+                  <span class="hint">추천을 선택한 뒤 ‘선택 업로드’를 누르면 <b>1개씩 순서대로</b> 업로드됩니다.</span>
+                </div>
+                <div class="btn-row">
+                  <button id="recoBatchUpload" type="button">선택 업로드(직렬)</button>
+                  <button id="recoStop" type="button" class="ghost">중단</button>
+                  <label class="ghost" style="display:flex;align-items:center;gap:8px;">
+                    <input id="recoContinueOnError" type="checkbox" checked />
+                    <span class="hint">실패해도 계속</span>
+                  </label>
+                </div>
+                <div class="mini-card" id="recoProgressCard">
+                  <div class="mini-title">진행상태</div>
+                  <div class="mini-kv" id="recoProgressKv">-</div>
+                </div>
+                <div class="activity-list" id="recoList"></div>
+              </div>
+            </section>
+
             <!-- Purchase/Payment card -->
             <section class="dash-card" aria-label="발주/결제">
               <div class="dash-head">

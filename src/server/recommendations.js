@@ -779,14 +779,18 @@ export async function fillRecommendationsForUser({ userId, settings, keywords, t
   const kw = seed[idx];
   await setRecommendationsState(db, userId, idx + 1);
 
-  db.close();
+  // NOTE: keep DB open for downstream candidate fetches.
+  // `collectOpenApiCandidates` reads category/keyword seeds from DB.
 
   if (typeof onProgress === 'function') {
     try { onProgress({ stage: 'fill_start', keyword: kw, candidates: exclude.size }); } catch {}
   }
 
   const need = Math.max(0, Number(targetCount) - exclude.size);
-  if (need <= 0) return { ok: true, inserted: 0, count: exclude.size, keyword: kw };
+  if (need <= 0) {
+    try { db.close(); } catch {}
+    return { ok: true, inserted: 0, count: exclude.size, keyword: kw };
+  }
 
   const batch = await generateRecommendationsBatch({
     settings,
@@ -797,6 +801,7 @@ export async function fillRecommendationsForUser({ userId, settings, keywords, t
   });
 
   const up = await upsertRecommendationsForUser({ userId, items: batch.items, maxKeep: Math.max(60, Number(targetCount) || 20) });
+  try { db.close(); } catch {}
   return { ok: true, ...up, keyword: kw };
 }
 
