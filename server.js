@@ -99,14 +99,11 @@ app.get('/console/*', (req, res) => {
   return res.redirect('/console');
 });
 
-// Flutter Web app (served from public/app)
-app.get('/app/*', (req, res, next) => {
-  try {
-    const p = path.join(process.cwd(), 'public', 'app', 'index.html');
-    return res.sendFile(p);
-  } catch {
-    return next();
-  }
+// Main app entry
+// NOTE: The legacy Flutter bundle under `public/app` is kept for now, but the active console UI
+// lives at `/console`. Keep `/app/*` redirecting to `/console` so the main URL reflects updates.
+app.get('/app/*', (req, res) => {
+  return res.redirect('/console');
 });
 
 const PORT = Number(process.env.PORT || 3000);
