@@ -89,8 +89,6 @@ await initDb();
 app.use("/couplus-out", express.static(path.join(process.cwd(), "out")));
 // 레거시 경로도 유지
 app.use("/tmp", express.static(path.join(process.cwd(), "out"))); // /tmp/tmp_main.jpg 같은 형태로도 접근 가능
-app.use(express.static(path.join(process.cwd(), "public")));
-
 // Console (existing dashboard)
 app.get('/console', (req, res) => {
   return res.sendFile(path.join(process.cwd(), 'public', 'console.html'));
@@ -102,9 +100,12 @@ app.get('/console/*', (req, res) => {
 // Main app entry
 // NOTE: The legacy Flutter bundle under `public/app` is kept for now, but the active console UI
 // lives at `/console`. Keep `/app/*` redirecting to `/console` so the main URL reflects updates.
+// This route must be defined BEFORE express.static, otherwise `public/app/index.html` will be served directly.
 app.get('/app/*', (req, res) => {
   return res.redirect('/console');
 });
+
+app.use(express.static(path.join(process.cwd(), "public")));
 
 const PORT = Number(process.env.PORT || 3000);
 
