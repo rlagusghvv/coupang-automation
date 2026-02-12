@@ -151,7 +151,8 @@ async function proxyToNext(req, res) {
     });
 
     if (upstream.body) {
-      upstream.body.pipe(res);
+      // Node's fetch() returns a WHATWG ReadableStream; convert to Node stream.
+      Readable.fromWeb(upstream.body).pipe(res);
     } else {
       res.end();
     }
