@@ -99,18 +99,69 @@ app.get('/console/*', (req, res) => {
 
 // Main app entry
 // `https://app.splui.com/app/` is the public entrypoint.
-// Serve the new web console shell there, styled like the new design.
+// Proxy /app/* to the Next.js UI server (coupang-elephant) running locally.
 // Keep the old Flutter bundle under `/legacy-app/`.
 // This route must be defined BEFORE express.static.
-app.get('/app', (req, res) => {
-  return res.sendFile(path.join(process.cwd(), 'public', 'app_shell.html'));
-});
-app.get('/app/', (req, res) => {
-  return res.sendFile(path.join(process.cwd(), 'public', 'app_shell.html'));
-});
-app.get('/app/*', (req, res) => {
-  return res.sendFile(path.join(process.cwd(), 'public', 'app_shell.html'));
-});
+const NEXT_UI_ORIGIN = String(process.env.NEXT_UI_ORIGIN || 'http://127.0.0.1:3333').trim();
+
+async function proxyToNext(req, res) {
+  try {
+    // We mount the Next.js dev server under `/app` (public domain path).
+    // Next itself serves at `/`, so strip the `/app` prefix when proxying.
+    const orig = String(req.originalUrl || req.url || '/');
+    const rel = orig.startsWith('/app') ? (orig.slice('/app'.length) || '/') : orig;
+    const targetUrl = new URL(rel, NEXT_UI_ORIGIN);
+
+    const hopByHop = new Set([
+      'connection',
+      'keep-alive',
+      'proxy-authenticate',
+      'proxy-authorization',
+      'te',
+      'trailers',
+      'transfer-encoding',
+      'upgrade',
+      'host'
+    ]);
+
+    const headers = {};
+    for (const [k, v] of Object.entries(req.headers || {})) {
+      if (!k) continue;
+      const key = String(k).toLowerCase();
+      if (hopByHop.has(key)) continue;
+      headers[key] = v;
+    }
+    headers['x-forwarded-host'] = req.headers.host;
+    headers['x-forwarded-proto'] = req.headers['x-forwarded-proto'] || 'https';
+
+    const method = (req.method || 'GET').toUpperCase();
+    const body = method === 'GET' || method === 'HEAD' ? undefined : req;
+
+    const upstream = await fetch(targetUrl.toString(), {
+      method,
+      headers,
+      body,
+      redirect: 'manual'
+    });
+
+    res.status(upstream.status);
+    upstream.headers.forEach((value, key) => {
+      if (hopByHop.has(String(key).toLowerCase())) return;
+      res.setHeader(key, value);
+    });
+
+    if (upstream.body) {
+      upstream.body.pipe(res);
+    } else {
+      res.end();
+    }
+  } catch {
+    res.status(502).send('UI proxy error');
+  }
+}
+
+app.get('/app', (req, res) => res.redirect('/app/'));
+app.use('/app', proxyToNext);
 
 // Legacy Flutter bundle
 app.use('/legacy-app', express.static(path.join(process.cwd(), 'public', 'app')));
