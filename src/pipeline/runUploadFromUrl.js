@@ -181,7 +181,8 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
 
   let draft = null;
   try {
-    draft = await withTimeout(parseProductFromDomaeqq(c.url), 12_000);
+    // Domeggook pages can be slow/heavy; allow more time to avoid null price/title.
+    draft = await withTimeout(parseProductFromDomaeqq(c.url), 25_000);
   } catch {
     draft = { title: '', categoryText: '', price: null, shippingFee: null, imageUrl: '', sourceUrl: c.url, contentText: '', options: [] };
   }

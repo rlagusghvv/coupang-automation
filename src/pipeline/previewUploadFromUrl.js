@@ -115,7 +115,8 @@ export async function previewUploadFromUrl(inputUrl, settings = {}) {
   // Parse is fallback only (and time-bounded) because it can be flaky/slow.
   let parsed = { title: '', categoryText: '', price: null, shippingFee: null, imageUrl: '', sourceUrl: c.url, contentText: '', options: [] };
   try {
-    parsed = await withTimeout(parseProductFromDomaeqq(c.url), 12_000);
+    // Domeggook pages can be slow/heavy; allow more time to avoid null price/title.
+    parsed = await withTimeout(parseProductFromDomaeqq(c.url), 25_000);
   } catch {}
 
   const draft = {
