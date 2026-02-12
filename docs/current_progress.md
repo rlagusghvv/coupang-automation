@@ -8,38 +8,67 @@
    - Result: noisy logs + no dashboard updates.
 
 2) **Server port 3000 already in use** errors appear when a second instance is started:
-   - Running instance: LaunchAgent `com.splui.coupelephant-server` (pid 21820) listens on `0.0.0.0:3000`.
+   - Running instance: LaunchAgent `com.splui.coupelephant-server` listens on `0.0.0.0:3000`.
    - If someone runs `node server.js` manually while launchd job is alive, it crashes with `EADDRINUSE`.
 
 3) **Recommendation/upload failures** (from `/api/status/summary`):
-   - `coupang_create_failed` (4)
-   - `main_image_download_failed` (3)
-   - `coupang_rate_limited` (1)
-   - `image_host_unreachable` (1)
-   - Last failed: `2026-02-11T06:56:02.022Z`
-   - No successful uploads recorded in recent 200 jobs.
+   - `coupang_create_failed`
+   - `main_image_download_failed`
+   - `coupang_rate_limited`
+   - `image_host_unreachable`
 
-### Fix applied (today)
-- Added `ops/dashboard_update.sh` to repo workspace to match launchd job expectation.
+### Fix applied (ops/dashboard)
+- Added `ops/dashboard_update.sh` to match the dashboard LaunchAgent expectation.
   - Script calls `GET http://127.0.0.1:3000/api/status/summary` with `STATUS_API_TOKEN`
   - Then edits/sends a Telegram message using env vars in the LaunchAgent.
-- Truncated old `data/dashboard_bot.err.log` after validation to remove stale noise.
-
-### Next steps (to find root cause of “추천 상품 업로드 안됨”)
-1) Inspect recent failed jobs in sqlite:
-   - `data/app.db` tables: `jobs`, `uploaded_products` (confirm which error codes correlate with which URLs)
-2) For `main_image_download_failed` / `image_host_unreachable`:
-   - confirm image host blocks hotlinking / requires headers; add retry + fallback download.
-3) For `coupang_rate_limited`:
-   - implement exponential backoff + concurrency=1 + per-endpoint limiter.
-4) For `coupang_create_failed`:
-   - log Coupang API response body/code; likely auth/required fields/certification/category mismatch.
 
 ### Fix applied (reliability)
 - Increased Domeggook HTML parse timeout from **12s → 25s** in:
   - `src/pipeline/previewUploadFromUrl.js`
   - `src/pipeline/runUploadFromUrl.js`
   Reason: when parsing times out, draft.price becomes null → later upload/recommendation steps can fail.
+
+---
+
+## Upload failure fixes (implemented)
+
+### Symptoms
+1) `main_image_download_failed`
+   - Root cause: image URL can be a “wrapper” URL (nested/URL-encoded original URL in query params) or returns non-image responses (HTML/login/blocked) depending on UA/referer/redirect.
+
+2) `coupang_create_failed` with message:
+   - `[옵션(단품) : 10원 이상의 판매가를 입력해주세요.]`
+   - Root cause: option item price could become `NaN` (non-finite). `Math.max(min, NaN) -> NaN`, which then went into `salePrice/originalPrice`.
+
+### Fixes
+1) **Image URL normalization + candidate expansion**
+- Added `src/utils/imageUrlNormalize.js`
+  - `normalizeDomeggookThumbOriginalUrl()` extracts nested image URLs from common params (`thumbOriginal`, `url`, `src`, ...)
+  - `expandCandidateImageUrls()` generates variants (https-upgrade, queryless URL)
+
+2) **More robust Playwright image download**
+- Updated `src/utils/playwrightImageDownload.js`
+  - Uses realistic Chrome UA + accept headers
+  - Sends `referer` + `user-agent`, allows redirects
+  - Skips non-`image/*` content-types (prevents saving HTML)
+  - Tries expanded/normalized candidate URLs
+
+3) **Guaranteed finite option item prices (>= 1000)**
+- Updated `src/utils/price.js`
+  - Added `sanitizeCoupangPrice()`
+  - `computePrice()` now always returns a finite integer (fallback to min when base invalid)
+- Updated `src/coupang/builders/buildSingleItem.js`
+  - Sanitizes `salePrice/originalPrice`
+- Updated `src/pipeline/runUploadFromUrl.js`
+  - Option item price now sanitized before payload
+
+### Tests
+- Enabled Node test runner: `npm test` → `node --test`
+- Added:
+  - `test/price.test.js`
+  - `test/imageUrlNormalize.test.js`
+
+---
 
 ### Product direction (UX reference)
 - Reference SaaS to match closely for v1: https://www.coupilot.net/
@@ -50,4 +79,3 @@
   - `curl -H "Authorization: Bearer $STATUS_API_TOKEN" http://127.0.0.1:3000/api/status/summary`
 - LaunchAgents:
   - `launchctl list | grep coupelephant`
-

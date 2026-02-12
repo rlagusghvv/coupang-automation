@@ -2,6 +2,7 @@ import { buildAttributes } from "./buildAttributes.js";
 import { buildItemImages } from "./buildItemImages.js";
 import { buildNoticesEtcGoods } from "./buildNoticesEtcGoods.js";
 import { buildContentsText } from "./buildContentsText.js";
+import { sanitizeCoupangPrice } from "../../utils/price.js";
 
 export function buildSingleItem({
   itemName = "단품",
@@ -15,10 +16,12 @@ export function buildSingleItem({
 } = {}) {
   if (!imageUrl) throw new Error("imageUrl required (item)");
 
+  const safePrice = sanitizeCoupangPrice(price, { min: 1000, roundUnit: 1 });
+
   const item = {
     itemName,
-    originalPrice: price,
-    salePrice: price,
+    originalPrice: safePrice,
+    salePrice: safePrice,
 
     maximumBuyCount: stock,
     maximumBuyForPerson: 0,

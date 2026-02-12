@@ -20,7 +20,7 @@ import { buildSingleItem } from "../coupang/builders/buildSingleItem.js";
 import path from "node:path";
 import { extractImageUrls, buildImageOnlyHtmlFromUrls } from "../utils/contentImages.js";
 import { resolveDisplayCategoryCode } from "../utils/categoryMap.js";
-import { computePrice } from "../utils/price.js";
+import { computePrice, sanitizeCoupangPrice } from "../utils/price.js";
 import { resolveLocalImageBase } from "../utils/localImageHost.js";
 import { downloadImagesWithPlaywright } from "../utils/playwrightImageDownload.js";
 import { deployPagesAssets } from "../utils/pagesDeploy.js";
@@ -687,11 +687,11 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
     items:
       optionsUsed.length > 0
         ? optionsUsed.map((opt) => {
-            const rawPrice = finalPrice + (opt.priceDelta || 0);
             const minPrice = Number.isFinite(Number(settings.priceMin))
               ? Number(settings.priceMin)
               : 1000;
-            const itemPrice = Math.max(minPrice, rawPrice);
+            const rawPrice = Number(finalPrice) + Number(opt.priceDelta || 0);
+            const itemPrice = sanitizeCoupangPrice(rawPrice, { min: minPrice, roundUnit: 1 });
 
             return buildSingleItem({
               itemName: opt.label,
