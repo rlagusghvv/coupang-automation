@@ -173,9 +173,99 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
     );
   }
 
+  Future<Map<String, String>?> _promptBulkTitleEdit() async {
+    final prefixCtrl = TextEditingController();
+    final suffixCtrl = TextEditingController();
+    bool enabled = false;
+
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (ctx, setLocal) {
+            return AlertDialog(
+              title: const Text('다중 업로드 제목 처리'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  SwitchListTile.adaptive(
+                    value: enabled,
+                    onChanged: (v) => setLocal(() => enabled = v),
+                    title: const Text('접두/접미 적용'),
+                    subtitle: const Text('선택한 모든 상품 제목에 일괄로 붙여요.'),
+                    contentPadding: EdgeInsets.zero,
+                  ),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: prefixCtrl,
+                    enabled: enabled,
+                    decoration: const InputDecoration(
+                      labelText: '접두(prefix)',
+                      hintText: '예) [HOT] ',
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: suffixCtrl,
+                    enabled: enabled,
+                    decoration: const InputDecoration(
+                      labelText: '접미(suffix)',
+                      hintText: '예) (당일출고)',
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  const Text(
+                    '※ 비워두면 원래 추천 제목으로 업로드해요.',
+                    style: TextStyle(fontSize: 12),
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(ctx).pop(false),
+                  child: const Text('취소'),
+                ),
+                FilledButton(
+                  onPressed: () => Navigator.of(ctx).pop(true),
+                  child: const Text('업로드 시작'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    if (ok != true) return null;
+
+    final prefix = prefixCtrl.text;
+    final suffix = suffixCtrl.text;
+    if (!enabled || (prefix.trim().isEmpty && suffix.trim().isEmpty)) {
+      return {};
+    }
+    return {
+      'prefix': prefix,
+      'suffix': suffix,
+    };
+  }
+
   Future<void> _uploadSelected() async {
     final urls = _selected.toList();
     if (urls.isEmpty) return;
+
+    final bulk = await _promptBulkTitleEdit();
+    if (bulk == null) return;
+
+    final prefix = (bulk['prefix'] ?? '');
+    final suffix = (bulk['suffix'] ?? '');
+
+    // Build a quick lookup: sourceUrl -> title
+    final titleByUrl = <String, String>{};
+    for (final it in _items) {
+      final u = (it['sourceUrl'] ?? '').toString();
+      if (u.isEmpty) continue;
+      titleByUrl[u] = (it['title'] ?? '').toString();
+    }
 
     setState(() {
       _loading = true;
@@ -186,11 +276,17 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
     try {
       int started = 0;
       for (final u in urls) {
+        final baseTitle = titleByUrl[u] ?? '';
+        final nextTitle = (prefix.isEmpty && suffix.isEmpty)
+            ? ''
+            : ('$prefix$baseTitle$suffix').trim();
+
         // Start job (do not block on completion for bulk)
         await widget.api.postJson('/api/jobs/start', {
           'kind': 'upload',
           'url': u,
           'force': '0',
+          if (nextTitle.isNotEmpty) 'titleOverride': nextTitle,
         });
         started += 1;
         if (mounted) {
