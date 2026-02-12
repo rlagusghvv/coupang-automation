@@ -4,6 +4,12 @@
 
 ## 2026-02-12
 
+### 23:40 KST — data (배포: app.splui.com/app 를 새 Next UI로 전환)
+- 조치: Cloudflare Tunnel `app.splui.com` ingress를 `localhost:3333` → `127.0.0.1:3000`으로 변경
+- 조치: uploader/API 서버는 `PORT=3001`로 분리 실행
+- 결과: 외부에서 `https://app.splui.com/app/` 접속 시 새 Next UI가 노출됨(도메인/경로 유지)
+- 참고: Next 프론트는 `tesla-info/_repo/coupang-elephant` (basePath=/app), API는 rewrite로 3001 프록시
+
 ### 23:32 KST — data (프론트엔드 전환 요청: 3333 Next UI → app.splui.com/app)
 - 요청: 새 디자인( http://192.168.0.31:3333/ )을 기준으로, 기존 `https://app.splui.com/app/` 기능을 새 UI에 이식 + 외부접속은 반드시 `https://app.splui.com/app/` 경로 유지
 - 프론트 코드 위치(확인): **`/Users/kimhyunhomacmini/tesla-info/_repo/coupang-elephant` (Next.js)**
