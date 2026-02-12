@@ -5,6 +5,7 @@
 ### User direction (17:33 KST)
 - Manual URL upload flow is already working; **do not churn working upload code**.
 - The reported "upload errors" are mainly in the **Recommendations** flow.
+  - Specifically: happens when **uploading multiple recommended items at once** (bulk from recommendations list).
 - Focus efforts on: (1) recommendation quality (competitive products) (2) UX details like Coupilot.net, while keeping stable parts unchanged.
 
 ### What’s broken right now (observed)
