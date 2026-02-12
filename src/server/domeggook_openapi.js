@@ -200,11 +200,28 @@ export async function getItemView({ aid, no }) {
 
   const shippingFee = Number(r?.root?.deli?.fee);
 
+  // Price field names vary; try common locations.
+  const priceCandidates = [
+    r?.root?.basis?.price,
+    r?.root?.basis?.salePrice,
+    r?.root?.basis?.supplyPrice,
+    r?.root?.basis?.p,
+    r?.root?.price,
+    r?.root?.sale?.price,
+    r?.root?.item?.price,
+  ];
+  let price = null;
+  for (const v of priceCandidates) {
+    const n = Number(v);
+    if (Number.isFinite(n) && n > 0) { price = n; break; }
+  }
+
   return {
     ok: true,
     no: itemNo,
     title,
     thumbOriginal: thumb,
+    price,
     shippingFee: Number.isFinite(shippingFee) ? shippingFee : null,
     category: r?.root?.category || null,
     html,

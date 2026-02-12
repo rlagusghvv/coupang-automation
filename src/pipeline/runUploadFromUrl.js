@@ -192,6 +192,7 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
       ...draft,
       title: String(open.title || draft.title || '').trim(),
       imageUrl: String(open.thumbOriginal || draft.imageUrl || '').trim(),
+      price: open.price != null ? open.price : draft.price,
       shippingFee: open.shippingFee != null ? open.shippingFee : draft.shippingFee,
       // supplement contentText for image extraction
       contentText: String(open.html || draft.contentText || ''),
@@ -471,7 +472,20 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
     fallback: DISPLAY_CATEGORY_CODE,
   });
 
-  let finalPrice = computePrice(draft.price, {
+  // Guard: if we couldn't fetch a source price, do NOT upload a broken product.
+  const sourcePriceRaw = Number(draft.price);
+  if (!Number.isFinite(sourcePriceRaw) || sourcePriceRaw <= 0) {
+    return {
+      ok: false,
+      error: 'missing_source_price',
+      messageKo: '도매꾹에서 상품 원가(가격)를 가져오지 못해서 업로드를 중단했어요.',
+      hint: '해당 상품 페이지에서 가격 노출이 제한되었거나(로그인/권한), OpenAPI 응답에 가격이 없을 수 있어요. 다른 상품으로 시도하거나 도매꾹 OpenAPI 키/세션을 확인해 주세요.',
+      url: c.url,
+      draft: { title: draft.title || '', price: draft.price ?? null, imageUrl: draft.imageUrl || '' },
+    };
+  }
+
+  let finalPrice = computePrice(sourcePriceRaw, {
     rate: settings.marginRate,
     add: settings.marginAdd,
     min: settings.priceMin,

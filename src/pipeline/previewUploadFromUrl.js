@@ -122,6 +122,7 @@ export async function previewUploadFromUrl(inputUrl, settings = {}) {
     ...parsed,
     title: String(open?.title || parsed.title || '').trim(),
     imageUrl: String(open?.thumbOriginal || parsed.imageUrl || '').trim(),
+    price: open?.price != null ? open.price : parsed.price,
     shippingFee: open?.shippingFee != null ? open.shippingFee : parsed.shippingFee,
     // keep parsed categoryText as fallback for category mapping
   };
