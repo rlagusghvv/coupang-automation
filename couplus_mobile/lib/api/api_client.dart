@@ -140,10 +140,12 @@ class ApiClient {
     }
 
     if (res.statusCode >= 400) {
+      final msg = (json['messageKo'] ?? json['error'] ?? 'request_failed').toString();
+      final hint = (json['hint'] ?? '').toString();
       throw ApiException(
         statusCode: res.statusCode,
-        message: (json['error'] ?? 'request_failed').toString(),
-        details: body,
+        message: msg,
+        details: hint.isNotEmpty ? hint : body,
       );
     }
 
@@ -172,10 +174,12 @@ class ApiClient {
     }
 
     if (res.statusCode >= 400) {
+      final msg = (json['messageKo'] ?? json['error'] ?? 'request_failed').toString();
+      final hint = (json['hint'] ?? '').toString();
       throw ApiException(
         statusCode: res.statusCode,
-        message: (json['error'] ?? 'request_failed').toString(),
-        details: raw,
+        message: msg,
+        details: hint.isNotEmpty ? hint : raw,
       );
     }
 
@@ -200,10 +204,12 @@ class ApiClient {
     }
 
     if (res.statusCode >= 400) {
+      final msg = (json['messageKo'] ?? json['error'] ?? 'request_failed').toString();
+      final hint = (json['hint'] ?? '').toString();
       throw ApiException(
         statusCode: res.statusCode,
-        message: (json['error'] ?? 'request_failed').toString(),
-        details: raw,
+        message: msg,
+        details: hint.isNotEmpty ? hint : raw,
       );
     }
 
