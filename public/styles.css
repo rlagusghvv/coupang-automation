@@ -564,9 +564,13 @@ h1 {
   display: flex;
   gap: 8px;
   margin-bottom: 14px;
-  background: #f1f5f9;
+  background: rgba(15, 23, 42, 0.05);
   border-radius: 999px;
   padding: 6px;
+}
+
+:root[data-theme="dark"] .tabs {
+  background: rgba(148, 163, 184, 0.10);
 }
 
 @media (max-width: 860px) {
@@ -590,7 +594,7 @@ h1 {
 
 .tab.active {
   color: #ffffff;
-  background: var(--accent);
+  background: linear-gradient(90deg, var(--brand-a), var(--brand-b));
 }
 
 .panel.hidden {
