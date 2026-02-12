@@ -1524,7 +1524,13 @@ app.post("/api/jobs/start", authRequired, async (req, res) => {
     if (kind === 'upload' && force !== '1') {
       const activeUpload = await getActiveJobByKind(req.user.id, 'upload', ['running']);
       if (activeUpload) {
-        return res.status(409).json({ ok: false, error: 'upload_in_progress', job: activeUpload });
+        return res.status(409).json({
+          ok: false,
+          error: 'upload_in_progress',
+          messageKo: '지금 다른 상품 업로드가 진행 중이에요. 완료 후 다시 시도해 주세요.',
+          hint: '대량 업로드는 큐(대기열) 기능을 사용하면 순서대로 처리됩니다.',
+          job: activeUpload,
+        });
       }
     }
 
@@ -1541,6 +1547,8 @@ app.post("/api/jobs/start", authRequired, async (req, res) => {
           return res.status(409).json({
             ok: false,
             error: "duplicate_product",
+            messageKo: '이미 업로드된 상품이에요. 중복 업로드를 막았습니다.',
+            hint: '정말 다시 올려야 하면 "강제 업로드"(force) 옵션을 사용하세요.',
             existing: {
               sourceUrl: existing.source_url,
               title: existing.title,
@@ -1557,6 +1565,8 @@ app.post("/api/jobs/start", authRequired, async (req, res) => {
           return res.status(409).json({
             ok: false,
             error: "upload_pending",
+            messageKo: '방금 업로드 요청을 처리 중이에요. 잠시 후 다시 시도해 주세요.',
+            hint: '같은 상품을 연속으로 누르면 중복 처리될 수 있어 잠깐 막아요.',
             existing: {
               sourceUrl: existing.source_url,
               title: existing.title,
@@ -1958,7 +1968,12 @@ app.post('/api/upload-queue/:id/retry', authRequired, async (req, res) => {
     if (!prev) return res.status(404).json({ ok: false, error: 'not_found' });
 
     if (['queued', 'running'].includes(String(prev.status || ''))) {
-      return res.status(409).json({ ok: false, error: 'active_job' });
+      return res.status(409).json({
+        ok: false,
+        error: 'active_job',
+        messageKo: '이미 진행 중인 작업이라 재시도할 수 없어요.',
+        hint: '작업이 끝난 뒤에 다시 시도(재시도) 버튼을 눌러주세요.',
+      });
     }
 
     const url = String(prev.inputUrl || '').trim();
@@ -2550,6 +2565,8 @@ app.post("/api/upload/execute", authRequired, async (req, res) => {
       return res.status(409).json({
         ok: false,
         error: "duplicate_product",
+        messageKo: '이미 업로드된 상품이에요. 중복 업로드를 막았습니다.',
+        hint: '정말 다시 올려야 하면 "강제 업로드"(force) 옵션을 사용하세요.',
         existing: {
           sourceUrl: existing.source_url,
           title: existing.title,
@@ -2563,7 +2580,12 @@ app.post("/api/upload/execute", authRequired, async (req, res) => {
 
     // NOTE: For now we simply reuse the existing pipeline.
     if (uploadInProgress) {
-      return res.status(409).json({ ok: false, error: "upload in progress" });
+      return res.status(409).json({
+        ok: false,
+        error: "upload_in_progress",
+        messageKo: '지금 다른 상품 업로드가 진행 중이에요. 완료 후 다시 시도해 주세요.',
+        hint: '대량 업로드는 큐(대기열) 기능을 사용하면 순서대로 처리됩니다.',
+      });
     }
     uploadInProgress = true;
 
@@ -2642,6 +2664,8 @@ app.post("/api/upload", authRequired, async (req, res) => {
       return res.status(409).json({
         ok: false,
         error: "duplicate_product",
+        messageKo: '이미 업로드된 상품이에요. 중복 업로드를 막았습니다.',
+        hint: '정말 다시 올려야 하면 "강제 업로드"(force) 옵션을 사용하세요.',
         existing: {
           sourceUrl: existing.source_url,
           title: existing.title,
@@ -2654,7 +2678,12 @@ app.post("/api/upload", authRequired, async (req, res) => {
     }
 
     if (uploadInProgress) {
-      return res.status(409).json({ ok: false, error: "upload in progress" });
+      return res.status(409).json({
+        ok: false,
+        error: "upload_in_progress",
+        messageKo: '지금 다른 상품 업로드가 진행 중이에요. 완료 후 다시 시도해 주세요.',
+        hint: '대량 업로드는 큐(대기열) 기능을 사용하면 순서대로 처리됩니다.',
+      });
     }
     uploadInProgress = true;
 
