@@ -102,7 +102,9 @@ app.get('/console/*', (req, res) => {
 // Serve the new web console shell there, styled like the new design.
 // Keep the old Flutter bundle under `/legacy-app/`.
 // This route must be defined BEFORE express.static.
-app.get('/app', (req, res) => res.redirect('/app/'));
+app.get('/app', (req, res) => {
+  return res.sendFile(path.join(process.cwd(), 'public', 'app_shell.html'));
+});
 app.get('/app/', (req, res) => {
   return res.sendFile(path.join(process.cwd(), 'public', 'app_shell.html'));
 });
