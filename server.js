@@ -106,11 +106,10 @@ const NEXT_UI_ORIGIN = String(process.env.NEXT_UI_ORIGIN || 'http://127.0.0.1:33
 
 async function proxyToNext(req, res) {
   try {
-    // We mount the Next.js dev server under `/app` (public domain path).
-    // Next itself serves at `/`, so strip the `/app` prefix when proxying.
+    // Proxy the request as-is to the Next.js UI server.
+    // The Next app uses `/app` as its basePath, so we must keep the prefix.
     const orig = String(req.originalUrl || req.url || '/');
-    const rel = orig.startsWith('/app') ? (orig.slice('/app'.length) || '/') : orig;
-    const targetUrl = new URL(rel, NEXT_UI_ORIGIN);
+    const targetUrl = new URL(orig, NEXT_UI_ORIGIN);
 
     const hopByHop = new Set([
       'connection',
