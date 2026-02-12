@@ -4,11 +4,25 @@
 
 ## 2026-02-12
 
+### 23:32 KST — data (프론트엔드 전환 요청: 3333 Next UI → app.splui.com/app)
+- 요청: 새 디자인( http://192.168.0.31:3333/ )을 기준으로, 기존 `https://app.splui.com/app/` 기능을 새 UI에 이식 + 외부접속은 반드시 `https://app.splui.com/app/` 경로 유지
+- 현 상태 파악:
+  - 3333은 Next.js dev 서버로 보이며, 소스는 `tesla-info/_repo/coupang-elephant` 쪽에서 빌드되는 것으로 관측(HTML에 next/turbopack 스크립트 존재)
+  - 현재 Cloudflare Tunnel은 `app.splui.com -> localhost:3000` (coupang-automation node 서버)로 라우팅 중
+  - `https://app.splui.com/app/`은 (현재 구조상) Flutter web 정적 산출물을 서빙하는 경로라서, 코드 변경만으로는 UI가 바뀌지 않고 “웹 빌드/배포”가 필요
+- 제안 아키텍처(가장 덜 꼬이는 방식):
+  1) Next 프론트를 **basePath=/app** 로 설정하고 production build 해서 node 서버(3000)에서 서빙
+  2) 기존 API(node server.js)는 포트를 분리(예: 3001)하고, Next에서 `/api/*`를 3001로 reverse proxy(rewrite)
+  3) Cloudflared는 그대로 `app.splui.com -> localhost:3000` 유지(도메인/경로 요구사항 충족)
+- 다음 작업(우선순위):
+  - Next 앱에 기존 기능 화면(추천/업로드/히스토리/설정)을 순서대로 이식
+  - 최소 기능: 추천 리스트 + 다건 업로드(큐) + 진행상황 표시(`/api/recommendations/status`)
+
 ### 18:55 KST — data (진행상황 / 다음 작업)
 - 완료된 수정(추천 오류 관련): 추천 화면에서 다건 업로드를 **순차 큐 처리**로 변경 → 동시에 여러 업로드 job을 쏘지 않게 해서 실패율/세션 꼬임/레이트리밋 리스크 감소
 - 완료된 기능(UI 관측): `GET /api/recommendations/status` 추가 → UI에서 추천 fill 진행률/활성 job 상태 표시 가능
 - 레퍼런스 정리: coupilot UI/구성 메모 및 우리 서비스 매핑 문서화
-- 다음(오늘 남은): 추천 리스트에서 “다건 업로드” 진행률 UI(전체/개별), 실패 아이템 재시도 UX, 서버측 동시성 제한(업로드 job 큐) 옵션 검토
+- 다음: 추천 리스트에서 “다건 업로드” 진행률 UI(전체/개별), 실패 아이템 재시도 UX, 서버측 동시성 제한(업로드 job 큐) 옵션 검토
 
 
 ### 17:35 KST — data (조치: 추천 다건 업로드 안정화)
