@@ -6,13 +6,16 @@
 
 ### 23:32 KST — data (프론트엔드 전환 요청: 3333 Next UI → app.splui.com/app)
 - 요청: 새 디자인( http://192.168.0.31:3333/ )을 기준으로, 기존 `https://app.splui.com/app/` 기능을 새 UI에 이식 + 외부접속은 반드시 `https://app.splui.com/app/` 경로 유지
+- 프론트 코드 위치(확인): **`/Users/kimhyunhomacmini/tesla-info/_repo/coupang-elephant` (Next.js)**
+  - `next.config.ts`에 이미 `basePath: "/app"` 설정됨
+  - `/api/*`, `/console/*`, `/couplus-out/*` 는 기존 node 서버로 rewrite(proxy) 설정돼 있음
+- dev 실행(로컬 3333): `PORT=3333 npm run dev` (coupang-elephant 디렉토리에서)
 - 현 상태 파악:
-  - 3333은 Next.js dev 서버로 보이며, 소스는 `tesla-info/_repo/coupang-elephant` 쪽에서 빌드되는 것으로 관측(HTML에 next/turbopack 스크립트 존재)
   - 현재 Cloudflare Tunnel은 `app.splui.com -> localhost:3000` (coupang-automation node 서버)로 라우팅 중
-  - `https://app.splui.com/app/`은 (현재 구조상) Flutter web 정적 산출물을 서빙하는 경로라서, 코드 변경만으로는 UI가 바뀌지 않고 “웹 빌드/배포”가 필요
-- 제안 아키텍처(가장 덜 꼬이는 방식):
-  1) Next 프론트를 **basePath=/app** 로 설정하고 production build 해서 node 서버(3000)에서 서빙
-  2) 기존 API(node server.js)는 포트를 분리(예: 3001)하고, Next에서 `/api/*`를 3001로 reverse proxy(rewrite)
+  - `https://app.splui.com/app/`은 빌드 산출물이 바뀌지 않으면 UI 변화가 안 보임(웹 빌드/배포 필요)
+- 제안 아키텍처(덜 꼬이는 방식):
+  1) Next 프론트를 **basePath=/app** 로 production build 후, `next start -p 3000` 로 서빙
+  2) 기존 API(node server.js)는 포트를 분리(예: 3001)하고, Next rewrite 대상도 3001로 변경
   3) Cloudflared는 그대로 `app.splui.com -> localhost:3000` 유지(도메인/경로 요구사항 충족)
 - 다음 작업(우선순위):
   - Next 앱에 기존 기능 화면(추천/업로드/히스토리/설정)을 순서대로 이식
