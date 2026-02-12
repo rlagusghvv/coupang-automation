@@ -14,6 +14,13 @@ function ensureDir() {
 function openDb() {
   ensureDir();
   const db = new sqlite3.Database(DB_PATH);
+
+  // Improve reliability under concurrent requests (e.g. bulk enqueue from recommendations).
+  // Without a busy timeout, sqlite3 can throw SQLITE_BUSY: database is locked.
+  try { db.configure('busyTimeout', 5000); } catch {}
+  // Best-effort: WAL reduces writer contention.
+  try { db.exec('PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;'); } catch {}
+
   return db;
 }
 

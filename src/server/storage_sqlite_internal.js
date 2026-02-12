@@ -11,7 +11,10 @@ function ensureDir() {
 
 export function openDb() {
   ensureDir();
-  return new sqlite3.Database(DB_PATH);
+  const db = new sqlite3.Database(DB_PATH);
+  try { db.configure('busyTimeout', 5000); } catch {}
+  try { db.exec('PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;'); } catch {}
+  return db;
 }
 
 export function dbRun(db, sql, params = []) {

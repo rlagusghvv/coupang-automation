@@ -9,7 +9,12 @@
 - Focus efforts on: (1) recommendation quality (competitive products) (2) UX details like Coupilot.net, while keeping stable parts unchanged.
 
 ### What’s broken right now (observed)
-1) **Dashboard bot LaunchAgent** was failing every 120s with exit 127 because script path was missing:
+1) **Recommendations bulk upload enqueue can fail intermittently**
+   - Failure mode: when selecting many recommended items and tapping bulk upload, the app fires many `/api/upload-queue/enqueue` requests concurrently.
+   - Observed error (server-side): `SQLITE_BUSY: database is locked` from sqlite writes.
+   - Effect: some items never get enqueued (missing from upload queue), or enqueue returns 500.
+
+2) **Dashboard bot LaunchAgent** was failing every 120s with exit 127 because script path was missing:
    - `com.splui.coupelephant-dashboard-bot` ran `./ops/dashboard_update.sh` but `ops/` did not exist.
    - Result: noisy logs + no dashboard updates.
 
@@ -29,6 +34,15 @@
   - Then edits/sends a Telegram message using env vars in the LaunchAgent.
 
 ### Fix applied (reliability)
+- **SQLite busy timeout + WAL** to make bulk enqueue reliable
+  - Updated `openDb()` in:
+    - `src/server/storage_sqlite.js`
+    - `src/server/storage_sqlite_internal.js`
+  - Added:
+    - `db.configure('busyTimeout', 5000)`
+    - `PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;`
+  - Root cause: many concurrent enqueue requests cause sqlite writer contention; without busyTimeout sqlite throws `SQLITE_BUSY` immediately.
+
 - Increased Domeggook HTML parse timeout from **12s → 25s** in:
   - `src/pipeline/previewUploadFromUrl.js`
   - `src/pipeline/runUploadFromUrl.js`
@@ -73,6 +87,7 @@
 - Added:
   - `test/price.test.js`
   - `test/imageUrlNormalize.test.js`
+  - `test/sqliteConcurrency.test.js` (guards against `SQLITE_BUSY` during bulk enqueue)
 
 ---
 
