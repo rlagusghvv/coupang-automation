@@ -2,6 +2,13 @@
 
 ## 2026-02-12
 
+### Latest progress (18:52 KST)
+- Recent commits on branch include fixes for:
+  - Recommendations bulk enqueue stability (prevent missing queue items under burst clicks)
+  - Image download normalization (avoid HTML/404 hotlink cases)
+  - Option price sanitization (prevent Coupang validation errors due to NaN)
+- Server status summary still shows historical failures; next verification step is to run a fresh recommendations multi-select enqueue + execute and confirm the new fixes eliminate: `SQLITE_BUSY`, `main_image_download_failed`, and `coupang_create_failed`.
+
 ### User direction (17:33 KST)
 - Manual URL upload flow is already working; **do not churn working upload code**.
 - The reported "upload errors" are mainly in the **Recommendations** flow.
