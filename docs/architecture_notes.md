@@ -10,6 +10,12 @@
 
 ---
 
+## (Ops) launchd / 포트 충돌(EADDRINUSE) 대응
+- 현상: `server.js`가 `0.0.0.0:3000` bind 시, 이미 다른 인스턴스가 떠 있으면 `EADDRINUSE`로 크래시 → launchd `KeepAlive`로 재시작 루프가 생기며 로그만 쌓임.
+- 원인 패턴: (1) 수동으로 `node server.js` 실행 후 launchd도 실행, (2) 재시작 타이밍 겹침.
+- 조치(코드): `server.js`에서 `server.on('error')`로 `EADDRINUSE`를 잡고, `127.0.0.1:${PORT}/api/status/summary`가 응답하면 “이미 정상 서버가 떠 있음”으로 판단 → 프로세스를 유지(setInterval hold)해서 launchd 재시작 루프 방지.
+- 관련 커밋: `fix(server): handle EADDRINUSE to avoid launchd crash loop`
+
 ## 1) 계층화 및 모듈 분리 (Separation of Concerns)
 ### Infrastructure Layer
 외부 시스템/통신/저장소 의존이 있는 코드는 여기로 격리한다.
