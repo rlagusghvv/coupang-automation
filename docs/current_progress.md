@@ -3,6 +3,7 @@
 ## 2026-02-12
 
 ### Latest progress (18:52 KST)
+- Service endpoint: `https://app.splui.com` (tunnel → localhost:3000)
 - Recent commits on branch include fixes for:
   - Recommendations bulk enqueue stability (prevent missing queue items under burst clicks)
   - Image download normalization (avoid HTML/404 hotlink cases)
