@@ -792,6 +792,64 @@ export async function fillRecommendationsForUser({ userId, settings, keywords, t
     return { ok: true, inserted: 0, count: exclude.size, keyword: kw };
   }
 
+  // Bootstrap mode: if this is a fresh user and we have no OpenAPI key configured,
+  // we still want the product to "work" out of the box.
+  // Copy a starter set from the most recently generated recommendations of any user.
+  const openApiKey = String(settings?.domeggookOpenApiKey || settings?.openApiKey || '').trim();
+  if (!openApiKey && exclude.size === 0) {
+    try {
+      const now = nowIso();
+      const pool = await dbAll(
+        db,
+        `SELECT keyword, title, main_image_url, source_price, shipping_fee, final_price, profit, margin_rate, score, reason, payload_json, source_url
+         FROM recommendations
+         WHERE user_id <> ?
+         ORDER BY created_at DESC
+         LIMIT 200`,
+        [String(userId)],
+      );
+
+      let inserted = 0;
+      for (const r of pool || []) {
+        if (inserted >= Math.min(need, Math.max(2, Number(maxAddPerRun) || 6))) break;
+        const id = crypto.randomUUID();
+        const sourceUrl = String(r?.source_url || '').trim();
+        if (!sourceUrl) continue;
+        await dbRun(
+          db,
+          `INSERT OR IGNORE INTO recommendations (
+            id, user_id, source_url, keyword, title, main_image_url,
+            source_price, shipping_fee, final_price, profit, margin_rate,
+            score, reason, payload_json, created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            id,
+            String(userId),
+            sourceUrl,
+            String(r?.keyword || '추천'),
+            String(r?.title || ''),
+            String(r?.main_image_url || ''),
+            r?.source_price ?? null,
+            r?.shipping_fee ?? null,
+            r?.final_price ?? null,
+            r?.profit ?? null,
+            r?.margin_rate ?? null,
+            r?.score ?? null,
+            String(r?.reason || ''),
+            String(r?.payload_json || '{}'),
+            now,
+          ],
+        );
+        inserted += 1;
+      }
+
+      if (inserted > 0) {
+        try { db.close(); } catch {}
+        return { ok: true, inserted, count: inserted, keyword: 'bootstrap' };
+      }
+    } catch {}
+  }
+
   const batch = await generateRecommendationsBatch({
     settings,
     keywords: [kw],

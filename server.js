@@ -1302,7 +1302,8 @@ app.get('/api/recommendations/status', authRequired, async (req, res) => {
     const activeFull = await getActiveJobByKind(req.user.id, 'recommendations', ['queued', 'running']);
 
     const activeJob = activeFill || activeFull || null;
-    const progress = activeJob?.resultJson?.progress || null;
+    // `getActiveJobByKind` maps DB result_json -> job.result
+    const progress = activeJob?.result?.progress || activeJob?.resultJson?.progress || null;
 
     return res.json({ ok: true, activeJob, progress, count });
   } catch (e) {
