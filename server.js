@@ -98,13 +98,20 @@ app.get('/console/*', (req, res) => {
 });
 
 // Main app entry
-// NOTE: Historically the main entry was `/app/` (Flutter bundle). For now we treat `/app/` as
-// the public entry and route it to the new landing page so users see updates immediately.
-// Keep `/console` as the working dashboard.
+// `https://app.splui.com/app/` is the public entrypoint.
+// Serve the new web console shell there, styled like the new design.
+// Keep the old Flutter bundle under `/legacy-app/`.
 // This route must be defined BEFORE express.static.
-app.get('/app', (req, res) => res.redirect('/'));
-app.get('/app/', (req, res) => res.redirect('/'));
-app.get('/app/*', (req, res) => res.redirect('/'));
+app.get('/app', (req, res) => res.redirect('/app/'));
+app.get('/app/', (req, res) => {
+  return res.sendFile(path.join(process.cwd(), 'public', 'app_shell.html'));
+});
+app.get('/app/*', (req, res) => {
+  return res.sendFile(path.join(process.cwd(), 'public', 'app_shell.html'));
+});
+
+// Legacy Flutter bundle
+app.use('/legacy-app', express.static(path.join(process.cwd(), 'public', 'app')));
 
 app.use(express.static(path.join(process.cwd(), "public")));
 
