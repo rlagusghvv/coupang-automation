@@ -249,6 +249,45 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
     };
   }
 
+  Future<Map<String, dynamic>> _startUploadJobAndWait(String url, {String? titleOverride}) async {
+    final payload = <String, dynamic>{
+      'kind': 'upload',
+      'url': url,
+      'force': '0',
+      if (titleOverride != null && titleOverride.trim().isNotEmpty) 'titleOverride': titleOverride.trim(),
+    };
+
+    final json = await widget.api.postJson('/api/jobs/start', payload);
+    final job = (json['job'] as Map?)?.cast<String, dynamic>() ?? {};
+    final jobId = (job['id'] ?? '').toString();
+    if (jobId.isEmpty) {
+      throw Exception('업로드 작업 생성 실패');
+    }
+
+    // Poll job for up to ~10 minutes.
+    for (var i = 0; i < 300; i += 1) {
+      await Future<void>.delayed(const Duration(seconds: 2));
+      final j = await widget.api.getJson('/api/jobs/$jobId');
+      final cur = (j['job'] as Map?)?.cast<String, dynamic>() ?? {};
+      final status = (cur['status'] ?? '').toString();
+      final progress = (cur['result']?['progress'] as Map?)?.cast<String, dynamic>() ?? {};
+
+      if (progress.isNotEmpty && mounted) {
+        final stage = (progress['stage'] ?? '').toString();
+        setState(() {
+          _progress = stage.isEmpty ? null : '업로드 진행중: $stage';
+        });
+      }
+
+      if (status == 'success') return cur;
+      if (status == 'failed') {
+        throw Exception(cur['errorMessage'] ?? '업로드 실패');
+      }
+    }
+
+    throw Exception('업로드 타임아웃');
+  }
+
   Future<void> _uploadSelected() async {
     final urls = _selected.toList();
     if (urls.isEmpty) return;
@@ -273,39 +312,48 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
       _progress = null;
     });
 
+    final failed = <String>[];
+    int done = 0;
+
     try {
-      int started = 0;
+      // IMPORTANT: 업로드는 순차(큐)로 처리해 서버/세션/도매꾹 레이트리밋/DB락을 피한다.
       for (final u in urls) {
         final baseTitle = titleByUrl[u] ?? '';
-        final nextTitle = (prefix.isEmpty && suffix.isEmpty)
-            ? ''
-            : ('$prefix$baseTitle$suffix').trim();
+        final nextTitle = (prefix.isEmpty && suffix.isEmpty) ? '' : ('$prefix$baseTitle$suffix').trim();
 
-        // Start job (do not block on completion for bulk)
-        await widget.api.postJson('/api/jobs/start', {
-          'kind': 'upload',
-          'url': u,
-          'force': '0',
-          if (nextTitle.isNotEmpty) 'titleOverride': nextTitle,
-        });
-        started += 1;
         if (mounted) {
           setState(() {
-            _progress = '다중 업로드 시작중… ($started/${urls.length})';
+            _progress = '다중 업로드 진행중… (${done + 1}/${urls.length})';
           });
         }
-        await Future<void>.delayed(const Duration(milliseconds: 350));
+
+        try {
+          await _startUploadJobAndWait(u, titleOverride: nextTitle.isEmpty ? null : nextTitle);
+          // Remove only on success.
+          if (mounted) {
+            setState(() {
+              _items = _items.where((it) => (it['sourceUrl'] ?? '').toString() != u).toList();
+              _selected.remove(u);
+            });
+          }
+        } catch (_) {
+          failed.add(u);
+        }
+
+        done += 1;
+        await Future<void>.delayed(const Duration(milliseconds: 250));
       }
 
-      if (mounted) {
+      if (!mounted) return;
+      if (failed.isEmpty) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('선택한 ${urls.length}개 업로드 작업을 시작했어요.')),
+          SnackBar(content: Text('선택한 ${urls.length}개 업로드 완료!')),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('업로드 완료. 실패 ${failed.length}개는 선택 유지(재시도 가능).')),
         );
       }
-
-      setState(() {
-        _selected.clear();
-      });
     } catch (e) {
       setState(() => _error = e.toString());
     } finally {
