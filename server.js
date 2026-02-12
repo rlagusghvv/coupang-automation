@@ -3126,7 +3126,7 @@ function escapeHtml(s) {
 // Override with HOST=127.0.0.1 if you explicitly want local-only.
 const HOST = (process.env.HOST || "0.0.0.0").trim();
 
-app.listen(PORT, HOST, async () => {
+const server = app.listen(PORT, HOST, async () => {
   const baseHost = HOST === "0.0.0.0" ? "localhost" : HOST;
   log(`server running: http://${baseHost}:${PORT}`);
   log(`authorize start: http://${baseHost}:${PORT}/auth/kakao`);
@@ -3212,4 +3212,29 @@ app.listen(PORT, HOST, async () => {
   setTimeout(tickReco, 10_000).unref?.();
 
   log(`recommendations auto-fill enabled: every ${recoIntervalMin} min (notify cooldown ${notifyCooldownMin} min)`);
+});
+
+// Prevent crash loops when the port is already in use (typically: a previous instance
+// is already running, or the service was started manually and then launchd also started it).
+server.on("error", async (err) => {
+  const code = err?.code;
+  if (code === "EADDRINUSE") {
+    log(`[boot] PORT ${PORT} already in use on ${HOST}. Checking if an existing server is alive...`);
+    try {
+      // Use localhost to avoid DNS / IPv6 surprises.
+      const url = `http://127.0.0.1:${PORT}/api/status/summary`;
+      const res = await fetch(url, { signal: AbortSignal.timeout(1500) });
+      if (res?.ok) {
+        log(`[boot] Existing server is responding on :${PORT}. Holding this process to avoid launchd restart loop.`);
+        setInterval(() => {}, 60 * 60 * 1000).unref?.();
+        return;
+      }
+    } catch {}
+
+    log(`[boot] Port :${PORT} is in use but no healthy response detected. Exiting with error.`);
+    process.exit(1);
+  }
+
+  log(`[boot] server error: ${code || "unknown"} ${err?.message || err}`);
+  process.exit(1);
 });
