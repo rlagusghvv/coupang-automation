@@ -4,6 +4,12 @@
 
 ## 2026-02-12
 
+### 17:12 KST — data (기능: 추천 진행상황 API)
+- 추가: `GET /api/recommendations/status` (authRequired)
+  - activeJob(recommendations_fill|recommendations) + progress(job.resultJson.progress) + cache count 반환
+- 목적: 모바일/웹 UI에서 "추천 채우기" 진행률/멈춤 여부를 안정적으로 표시
+- 변경: `server.js`, `src/server/recommendations.js`
+
 ### 17:00 KST — data (레퍼런스 분석: coupilot.net)
 - 대표 요청: <https://www.coupilot.net/> 과 **완전히 유사**한 1차 완성본 목표
 - 조치: 랜딩/정보구조/섹션 구성/CTA를 우리 서비스로 매핑한 메모 추가
