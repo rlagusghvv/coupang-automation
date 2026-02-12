@@ -48,6 +48,13 @@ Goal: “유사/동일” 수준의 1차 완성본을 빠르게 만들고, 이�
 - Data/Rules: category mapping, banned keywords, pricing heuristics
 - Ops: launchd stability, dashboard bot, monitoring
 
+## Product constraints (대표 요구사항)
+- **유료로 팔아도 될 정도의 완성도**가 기준 (안정성/품질/UX 우선)
+- 타겟 유저: 돈을 벌고 싶은 **소규모 온라인 셀러**
+- 현 단계(v1)에서는 **과금 요소/결제/플랜**은 넣지 않음
+  - 운영자 관점 비용투자도 최소화
+  - 추후 서비스로 수익화 구조가 검증되면 그때 비용투자/유료화 요소를 추가
+
 ## Acceptance checklist for v1
 - 10개 URL 연속 업로드 성공률 80%+ (실패는 명확한 이유/가이드 제공)
 - 실패한 건 1-2번 클릭으로 재시도 가능
