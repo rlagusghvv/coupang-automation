@@ -4,6 +4,10 @@
 
 ## 2026-02-12
 
+### 17:27 KST — data (제품 원칙 정리)
+- 대표 요구사항(제품/전략): 유료 서비스 가능한 안정성 수준, 타겟=소규모 셀러, 현 단계 과금/비용 최소
+- 문서화: `docs/product_principles.md`
+
 ### 17:12 KST — data (기능: 추천 진행상황 API)
 - 추가: `GET /api/recommendations/status` (authRequired)
   - activeJob(recommendations_fill|recommendations) + progress(job.resultJson.progress) + cache count 반환
