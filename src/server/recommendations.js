@@ -366,6 +366,13 @@ async function setRecommendationsState(db, userId, nextKeywordIdx) {
   );
 }
 
+export async function countRecommendations(userId) {
+  const db = openDb();
+  const row = await dbGetOne(db, 'SELECT COUNT(*) AS c FROM recommendations WHERE user_id = ?', [userId]);
+  db.close();
+  return Number(row?.c) || 0;
+}
+
 export async function listRecommendations(userId, { limit = 50 } = {}) {
   const db = openDb();
   const lim = Math.max(1, Math.min(200, Number(limit) || 50));

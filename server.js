@@ -69,6 +69,7 @@ import { getSellerProduct } from "./src/server/externalAdapters.js";
 import { runtimeState } from "./src/server/runtime_state.js";
 import { syncOneCatalogProduct, syncAllCatalogProducts, startCatalogSyncLoop } from "./src/server/catalogSync.js";
 import {
+  countRecommendations,
   listRecommendations,
   generateRecommendationsForUser,
   fillRecommendationsForUser,
@@ -1287,6 +1288,23 @@ app.get('/api/recommendations', authRequired, async (req, res) => {
     const limit = Math.max(1, Math.min(200, Number(req.query.limit || 50) || 50));
     const items = await listRecommendations(req.user.id, { limit });
     return res.json({ ok: true, items });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+// Status: active job + progress + current cache count
+app.get('/api/recommendations/status', authRequired, async (req, res) => {
+  try {
+    const count = await countRecommendations(req.user.id);
+
+    const activeFill = await getActiveJobByKind(req.user.id, 'recommendations_fill', ['queued', 'running']);
+    const activeFull = await getActiveJobByKind(req.user.id, 'recommendations', ['queued', 'running']);
+
+    const activeJob = activeFill || activeFull || null;
+    const progress = activeJob?.resultJson?.progress || null;
+
+    return res.json({ ok: true, activeJob, progress, count });
   } catch (e) {
     return res.status(500).json({ ok: false, error: String(e?.message || e) });
   }
