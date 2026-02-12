@@ -74,8 +74,16 @@
 - Reference SaaS to match closely for v1: https://www.coupilot.net/
 - Goal: produce a "유사/동일" 1st complete version (flow + UI/UX) before additional iterations.
 
+### Ops note (service restart)
+- `com.splui.coupelephant-server` restart can hit `EADDRINUSE` if an old node process is still bound to 3000.
+- Clean restart sequence (macOS launchd):
+  - `launchctl kill SIGTERM gui/$(id -u)/com.splui.coupelephant-server`
+  - `launchctl kickstart -k gui/$(id -u)/com.splui.coupelephant-server`
+
 ### Commands / quick checks
 - Server health:
   - `curl -H "Authorization: Bearer $STATUS_API_TOKEN" http://127.0.0.1:3000/api/status/summary`
+- Port check:
+  - `/usr/sbin/netstat -anv | grep '\.3000' | grep LISTEN`
 - LaunchAgents:
   - `launchctl list | grep coupelephant`
