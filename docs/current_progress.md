@@ -2,6 +2,11 @@
 
 ## 2026-02-12
 
+### User direction (17:33 KST)
+- Manual URL upload flow is already working; **do not churn working upload code**.
+- The reported "upload errors" are mainly in the **Recommendations** flow.
+- Focus efforts on: (1) recommendation quality (competitive products) (2) UX details like Coupilot.net, while keeping stable parts unchanged.
+
 ### What’s broken right now (observed)
 1) **Dashboard bot LaunchAgent** was failing every 120s with exit 127 because script path was missing:
    - `com.splui.coupelephant-dashboard-bot` ran `./ops/dashboard_update.sh` but `ops/` did not exist.
