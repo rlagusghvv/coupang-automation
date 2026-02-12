@@ -160,7 +160,6 @@ async function proxyToNext(req, res) {
   }
 }
 
-app.get('/app', (req, res) => res.redirect('/app/'));
 app.use('/app', proxyToNext);
 
 // Legacy Flutter bundle
