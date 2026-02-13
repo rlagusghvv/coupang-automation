@@ -114,9 +114,13 @@ export async function fetchDomeggookUrlsByKeyword({ keyword, limit = 40, storage
     const all = [];
     for (let pageNo = 1; pageNo <= want && all.length < limit; pageNo += 1) {
       const listUrl = pageNo === 1 ? baseUrl : `${baseUrl}&page=${pageNo}`;
+      const controller = new AbortController();
+      const t = setTimeout(() => controller.abort(), 15_000);
       const r = await fetch(listUrl, {
+        signal: controller.signal,
         headers: { 'User-Agent': 'Mozilla/5.0', 'Referer': 'https://domeggook.com/' },
       });
+      clearTimeout(t);
       if (r.status === 429) throw new Error('domeggook_rate_limited');
       if (!r.ok) break;
       const html = await r.text();
