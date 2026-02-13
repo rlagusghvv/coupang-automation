@@ -14,11 +14,11 @@
 - Restart cloudflared launchagent:
   - launchctl kickstart -kp gui/$(id -u)/com.splui.coupelephant-cloudflared
 
-### 2) /auth/kakao 500
-- Usually missing env:
-  - KAKAO_REST_KEY
-  - KAKAO_REDIRECT_URI
-- After env apply, restart server:
+### 2) 로그인/인증 문제(401 unauthorized)
+- 이 서비스는 `session` 쿠키 기반 인증을 사용함.
+- 먼저 `/api/signup` 또는 `/api/login`으로 세션 쿠키가 발급되는지 확인.
+- 브라우저에서 쿠키 차단/다른 도메인(서브도메인) 혼용 시 401이 날 수 있음.
+- 서버 재기동:
   - launchctl kickstart -kp gui/$(id -u)/com.splui.coupelephant-server
 
 ### 3) Web = App (Flutter) routing
