@@ -345,6 +345,29 @@ async function authRequired(req, res, next) {
 
 // ✅ 외부에서 연결 확인용
 app.get("/health", (req, res) => res.type("text").send("OK"));
+
+// ✅ Public notice (no auth): used by Web banner overlay
+app.get("/api/public/notice", (req, res) => {
+  const serviceName = String(process.env.SERVICE_NAME || "쿠팡코끼리");
+  const priceKrw = Number(process.env.SUBSCRIPTION_PRICE_KRW || 50000);
+  const tossPayUrl = String(process.env.TOSS_PAY_URL || "").trim();
+  const kakaoPayUrl = String(process.env.KAKAOPAY_PAY_URL || "").trim();
+  const supportTelegramUrl = String(process.env.SUPPORT_TELEGRAM_URL || "").trim();
+
+  return res.json({
+    ok: true,
+    serviceName,
+    priceKrw: Number.isFinite(priceKrw) ? priceKrw : 50000,
+    pay: {
+      toss: tossPayUrl || null,
+      kakaoPay: kakaoPayUrl || null,
+    },
+    support: {
+      telegram: supportTelegramUrl || null,
+    },
+  });
+});
+
 app.get("/api/version", (req, res) => {
   const version = readPackageVersion();
   const git = readGitInfo();

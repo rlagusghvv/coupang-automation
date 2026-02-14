@@ -33,6 +33,54 @@
   <link rel="manifest" href="manifest.json">
 </head>
 <body>
+  <!-- fixed top banner overlay (independent of Flutter UI) -->
+  <div id="ce-banner" style="display:none; position:fixed; top:0; left:0; right:0; z-index:999999; background:#111827; color:#fff; padding:10px 12px; font-family: -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,'Apple Color Emoji','Segoe UI Emoji'; box-shadow:0 2px 10px rgba(0,0,0,.25);">
+    <div style="max-width:980px; margin:0 auto; display:flex; gap:10px; align-items:center; justify-content:space-between;">
+      <div style="display:flex; flex-direction:column; gap:4px;">
+        <div style="font-size:14px; font-weight:700;">쿠팡코끼리 · 월 50,000원</div>
+        <div id="ce-banner-links" style="font-size:13px; opacity:.95;"></div>
+      </div>
+      <button id="ce-banner-close" style="background:transparent; border:1px solid rgba(255,255,255,.35); color:#fff; padding:6px 10px; border-radius:8px; cursor:pointer; font-size:13px;">닫기</button>
+    </div>
+  </div>
+
+  <div style="height:52px"></div>
+
+  <script>
+    (function(){
+      try {
+        var key = 'ce_banner_closed_v1';
+        var closed = localStorage.getItem(key) === '1';
+        var banner = document.getElementById('ce-banner');
+        var linksEl = document.getElementById('ce-banner-links');
+        var closeBtn = document.getElementById('ce-banner-close');
+        if (closeBtn) closeBtn.addEventListener('click', function(){ localStorage.setItem(key,'1'); if(banner) banner.style.display='none'; });
+        if (closed) return;
+
+        fetch('/api/public/notice').then(function(r){return r.json();}).then(function(j){
+          if (!j || !j.ok) return;
+          var serviceName = j.serviceName || '쿠팡코끼리';
+          var priceKrw = j.priceKrw || 50000;
+          var toss = j.pay && j.pay.toss;
+          var kakao = j.pay && j.pay.kakaoPay;
+          var tg = j.support && j.support.telegram;
+
+          var title = serviceName + ' · 월 ' + priceKrw.toLocaleString('ko-KR') + '원';
+          banner.querySelector('div').querySelector('div').querySelector('div').textContent = title;
+
+          var parts = [];
+          if (toss) parts.push('<a href="'+toss+'" target="_blank" rel="noreferrer" style="color:#93c5fd; text-decoration:underline;">토스 결제</a>');
+          if (kakao) parts.push('<a href="'+kakao+'" target="_blank" rel="noreferrer" style="color:#a7f3d0; text-decoration:underline;">카카오페이 결제</a>');
+          if (tg) parts.push('문의: <a href="'+tg+'" target="_blank" rel="noreferrer" style="color:#fcd34d; text-decoration:underline;">텔레그램</a>');
+          if (parts.length === 0) parts.push('문의: 텔레그램 DM');
+          linksEl.innerHTML = parts.join(' · ');
+
+          banner.style.display='block';
+        }).catch(function(){});
+      } catch(e){}
+    })();
+  </script>
+
   <script src="flutter_bootstrap.js" async></script>
 </body>
 </html>
