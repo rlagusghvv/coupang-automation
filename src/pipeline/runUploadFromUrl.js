@@ -17,15 +17,18 @@ import { checkAutoCategoryAgreed } from "../coupang/api/checkAutoCategoryAgreed.
 import { recommendCategory } from "../coupang/api/recommendCategory.js";
 import { suggestTitlesFromNaver, cleanTitle } from "../utils/titleSuggest.js";
 import { buildSingleItem } from "../coupang/builders/buildSingleItem.js";
+import fs from "node:fs";
 import path from "node:path";
 import { extractImageUrls, buildImageOnlyHtmlFromUrls } from "../utils/contentImages.js";
 import { resolveDisplayCategoryCode } from "../utils/categoryMap.js";
 import { computePrice } from "../utils/price.js";
-import { resolveLocalImageBase } from "../utils/localImageHost.js";
+import { resolveLocalImageBase, buildLocalImageUrl } from "../utils/localImageHost.js";
 import { downloadImagesWithPlaywright } from "../utils/playwrightImageDownload.js";
 import { deployPagesAssets } from "../utils/pagesDeploy.js";
 import { downloadImageBufferWithPlaywright } from "../utils/downloadImage.js";
 import { uploadMarketplaceImage } from "../coupang/api/uploadMarketplaceImage.js";
+import { uploadWingImage } from "../coupang/api/uploadWingImage.js";
+import { getLastWingUploadedImage, getWingUploadedImages } from "../utils/wingCapture.js";
 
 const OUTBOUND_SHIPPING_PLACE_CODE = "24093380";
 const DISPLAY_CATEGORY_CODE = 77723;
@@ -178,9 +181,27 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
   const computedImages = Array.isArray(computed.images) ? computed.images : [];
   const detailFromPreview = computedImages.slice(1);
 
-  const contentImages = (imagesOverride.length > 0 ? imagesOverride : detailFromPreview)
+  let contentImages = (imagesOverride.length > 0 ? imagesOverride : detailFromPreview)
     .slice(0, Math.max(0, maxContentImages))
     .filter(Boolean);
+
+  // For approvals, external detail image URLs are the #1 rejection source.
+  // Default: build detail images from Wing uploader captures (vendor_inventory paths).
+  const includeDetailImages = String(settings.includeDetailImages ?? '1').trim() === '1';
+  const useWingCaptureDetailImages = String(settings.useWingCaptureDetailImages ?? '1').trim() !== '0';
+  if (includeDetailImages && useWingCaptureDetailImages) {
+    const wingDetails = getWingUploadedImages({ imageType: 'DETAIL' })
+      .map((x) => x.vendorPath)
+      .filter(Boolean);
+    if (wingDetails.length > 0) {
+      contentImages = wingDetails;
+    }
+  }
+
+  // If still not set, skip detail images by default.
+  if (!includeDetailImages) {
+    contentImages = [];
+  }
 
   function stripImgTags(html) {
     return String(html || "").replace(/<img\b[^>]*>/gi, "");
@@ -191,40 +212,85 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
   // Never fall back to raw page text; keep details image-only.
   let contentHtml = "";
 
-  // ✅ Best-effort: Upload images to Coupang first (prevents image_host_unreachable)
+  // ✅ Best-effort: Upload images to Coupang/Wing first (prevents image_host_unreachable)
   // If disabled, falls back to the previous "public hosting" approach.
-  // Image upload endpoints are not always available per account.
-  // Allow disabling this to fall back to public hosting (imageProxyBase / Cloudflare Pages).
-  // Default to using Coupang image upload because hotlink-protected CDNs often break.
   const useCoupangImageUpload = String(settings.useCoupangImageUpload ?? "1").trim() !== "0";
 
-  // Try Coupang upload first; if it fails, fall back to public hosting instead of hard-failing.
+  // Try image upload first; if it fails, fall back to public hosting instead of hard-failing.
+  // NOTE: Wing internal uploader cannot be used headless reliably (Akamai). We can reuse
+  // a recently uploaded Wing image from capture log as a temporary, stable representation.
+  const useWingCaptureUploadedRep = String(settings.useWingCaptureUploadedRep ?? '1').trim() !== '0';
+
   if (!payloadOnly && useCoupangImageUpload) {
     try {
       // 1) Main image
-      const mainDl = await downloadImageBufferWithPlaywright({
-        pageUrl: draft.sourceUrl,
-        imageUrl: draft.imageUrl,
-      });
+      // Prefer reusing the last Wing UI upload (most reliable) to avoid CDN/hotlink issues.
+      // If available, FORCE it (override any other upload attempts) to prevent external URL rejections.
+      let mainEndpoint = null;
+      if (useWingCaptureUploadedRep) {
+        const last = getLastWingUploadedImage({ imageType: 'REPRESENTATION' });
+        if (last?.vendorPath) {
+          imageUrl = last.vendorPath;
+          mainEndpoint = 'wing-capture';
+        }
+      }
 
-      if (!mainDl?.ok) throw new Error("main_image_download_failed");
+      // If we still don't have a Wing vendorPath, download and try upload APIs.
+      const needMainUpload = imageUrl === draft.imageUrl;
 
-      const mainUp = await uploadMarketplaceImage({
-        vendorId,
-        buffer: mainDl.buffer,
-        fileName: `main${mainDl.ext || ".jpg"}`,
-        mimeType: mainDl.mimeType || "image/jpeg",
-        accessKey,
-        secretKey,
-      });
+      // Try official API first
+      let mainUp = { ok: false };
+      let mainDl = null;
+      if (needMainUpload) {
+        mainDl = await downloadImageBufferWithPlaywright({
+          pageUrl: draft.sourceUrl,
+          imageUrl: draft.imageUrl,
+        });
+        if (!mainDl?.ok) throw new Error("main_image_download_failed");
 
-      if (!mainUp.ok || !(mainUp.vendorPath || mainUp.cdnPath)) throw new Error("coupang_image_upload_failed");
+        mainUp = await uploadMarketplaceImage({
+          vendorId,
+          buffer: mainDl.buffer,
+          fileName: `main${mainDl.ext || ".jpg"}`,
+          mimeType: mainDl.mimeType || "image/jpeg",
+          accessKey,
+          secretKey,
+        });
+      }
 
-      imageUrl = mainUp.vendorPath || mainUp.cdnPath;
+      // If we already have a Wing vendorPath, skip upload.
+      if (imageUrl === draft.imageUrl) {
+        // Fallback: Wing internal uploader (more reliable for approvals)
+        if (!mainUp.ok || !(mainUp.vendorPath || mainUp.cdnPath)) {
+        // 1) If user just uploaded an image in Wing UI, reuse that vendorPath from capture log.
+        if (useWingCaptureUploadedRep) {
+          const last = getLastWingUploadedImage({ imageType: 'REPRESENTATION' });
+          if (last?.vendorPath) {
+            mainUp = { ok: true, vendorPath: last.vendorPath, cdnPath: null, endpoint: 'wing-capture' };
+          }
+        }
+
+        // 2) Try programmatic Wing upload (may fail due to Akamai/headless constraints)
+        if (!mainUp.ok || !(mainUp.vendorPath || mainUp.cdnPath)) {
+          // write temp file
+          const tmpMainPath = path.join(process.cwd(), "out", `wing_main_${Date.now()}.jpg`);
+          try { fs.writeFileSync(tmpMainPath, Buffer.from(mainDl.buffer)); } catch {}
+          const wingUp = await uploadWingImage({ filePath: tmpMainPath, imageType: "REPRESENTATION" });
+          if (!wingUp.ok || !wingUp.vendorPath) throw new Error("wing_image_upload_failed");
+          mainUp = { ok: true, vendorPath: wingUp.vendorPath, cdnPath: null, endpoint: "wing" };
+        }
+        }
+
+        imageUrl = mainUp.vendorPath || mainUp.cdnPath;
+      }
 
       // 2) Content images (optional)
+      // NOTE: Until we can upload detail images through Wing programmatically,
+      // keep contentHtml empty when we used Wing-captured rep image (prevents approval rejects
+      // due to unreachable external detail images).
       const uploadedContentUrls = [];
-      for (const u of contentImages) {
+      const allowContentUpload = !(mainEndpoint === 'wing-capture') && !(mainUp?.endpoint === 'wing-capture');
+      if (allowContentUpload) for (const u of contentImages) {
         try {
           const dl = await downloadImageBufferWithPlaywright({
             pageUrl: draft.sourceUrl,
@@ -232,7 +298,8 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
           });
           if (!dl?.ok) continue;
 
-          const up = await uploadMarketplaceImage({
+          // 1) official api
+          let up = await uploadMarketplaceImage({
             vendorId,
             buffer: dl.buffer,
             fileName: `content${dl.ext || ".jpg"}`,
@@ -240,6 +307,20 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
             accessKey,
             secretKey,
           });
+
+          // 2) wing uploader fallback
+          if (!up.ok || !(up.vendorPath || up.cdnPath)) {
+            const tmpPath = path.join(process.cwd(), "out", `wing_content_${Date.now()}_${Math.random().toString(16).slice(2)}.jpg`);
+            try { fs.writeFileSync(tmpPath, Buffer.from(dl.buffer)); } catch {}
+            let wingUp = await uploadWingImage({ filePath: tmpPath, imageType: "DETAIL" });
+            if (!wingUp.ok) {
+              wingUp = await uploadWingImage({ filePath: tmpPath, imageType: "REPRESENTATION" });
+            }
+            if (wingUp.ok && wingUp.vendorPath) {
+              up = { ok: true, vendorPath: wingUp.vendorPath, cdnPath: null, endpoint: "wing" };
+            }
+          }
+
           const src = up?.cdnPath || up?.vendorPath;
           if (src) uploadedContentUrls.push(src);
         } catch {
@@ -250,6 +331,8 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
       // Build clean HTML with only Coupang-hosted images
       if (uploadedContentUrls.length > 0) {
         contentHtml = buildImageOnlyHtmlFromUrls(uploadedContentUrls);
+      } else if (mainUp?.endpoint === 'wing-capture') {
+        contentHtml = '';
       }
     } catch {
       // Fall back to public hosting approach below
@@ -311,27 +394,50 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
       await new Promise((r) => setTimeout(r, 3000));
     }
 
+    // Helper: for a downloaded file, generate a fresh cache-busted public URL and
+    // verify it's reachable from the internet (Cloudflare edge can cache a transient 404).
+    async function pickReachablePublicUrl(fileName, { attempts = 8, timeoutMs = IMAGE_CHECK_TIMEOUT_MS } = {}) {
+      if (!fileName) return "";
+      for (let i = 0; i < attempts; i += 1) {
+        const u = buildLocalImageUrl(localImageBase, fileName, { cacheBust: true });
+        const ok = await isUrlReachable(u, timeoutMs);
+        if (ok) return u;
+        // backoff
+        await new Promise((r) => setTimeout(r, 700 + i * 500));
+      }
+      return "";
+    }
+
     // Update main image only if we haven't already uploaded it to Coupang.
     if (imageUrl === draft.imageUrl) {
-      const mappedMain = downloaded.urlMap[draft.imageUrl];
-      if (!mappedMain) {
-        return { ok: false, skipped: false, error: "main image download failed" };
+      const mainFile = (downloaded.files || []).find((f) => f.imageUrl === draft.imageUrl);
+      const mainFileName = mainFile?.fileName;
+      if (!mainFileName) {
+        return { ok: false, skipped: false, error: "main_image_download_failed" };
       }
 
-      const imageReachable = await isUrlReachable(mappedMain, IMAGE_CHECK_TIMEOUT_MS);
-      if (!imageReachable) {
+      const mappedMain = await pickReachablePublicUrl(mainFileName);
+      if (!mappedMain) {
         return {
           ok: false,
           skipped: false,
           error: "image_host_unreachable",
-          imageUrl: mappedMain,
+          imageUrl: buildLocalImageUrl(localImageBase, mainFileName, { cacheBust: true }),
         };
       }
 
       imageUrl = mappedMain;
     }
 
-    const contentLocalUrls = contentImages.map((u) => downloaded.urlMap[u]).filter(Boolean);
+    // Content images: only keep URLs that are publicly reachable.
+    const contentLocalUrls = [];
+    for (const src of contentImages) {
+      const f = (downloaded.files || []).find((x) => x.imageUrl === src);
+      if (!f?.fileName) continue;
+      const pub = await pickReachablePublicUrl(f.fileName, { attempts: 4 });
+      if (pub) contentLocalUrls.push(pub);
+    }
+
     contentHtml = contentLocalUrls.length > 0 ? buildImageOnlyHtmlFromUrls(contentLocalUrls) : "";
   }
 
@@ -495,7 +601,9 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
     }
   }
 
-  const autoRequest = String(settings.autoRequest || "").trim() === "1";
+  // When true, Coupang will treat the product as "requested" on create (approval requested).
+  // Default: ON for /api/upload/execute so users get a real upload, not a temp draft.
+  const autoRequest = String(settings.autoRequest ?? settings.autoRequestApproval ?? "1").trim() === "1";
 
   const optionsUsed =
     Array.isArray(draft.options) && draft.options.length > 0
@@ -518,6 +626,51 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
 
   const sellerProductName = overrideTitle || autoSuggestedTitle || draft.title;
 
+  function extractQtyPerUnit(title) {
+    const t = String(title || "");
+    const m = t.match(/(\d{1,5})\s*(매|개|개입|입|장|pcs?|p)/i);
+    if (!m) return 1;
+    const n = Number(m[1]);
+    if (!Number.isFinite(n) || n <= 0) return 1;
+    return Math.min(99999, Math.max(1, Math.floor(n)));
+  }
+
+  function extractSize(title) {
+    const t = String(title || "");
+    const m = t.match(/(\d{1,4}\s*[xX×]\s*\d{1,4}(?:\s*[xX×]\s*\d{1,4})?)\s*(cm|mm|m)?/);
+    if (!m) return "FREE";
+    const raw = String(m[1] || "").replace(/\s*/g, "");
+    const unit = String(m[2] || "cm").trim();
+    return `${raw}${unit}`;
+  }
+
+  // Category 65906 (배변패드) mandatory attributes (from Wing capture): 사이즈, 개당 수량, 수량
+  let itemAttributes = null;
+  let itemUnit = null;
+  if (Number(finalCategoryCode) === 65906) {
+    const qtyPerUnit = extractQtyPerUnit(prev?.draft?.title || draft.title);
+    const size = extractSize(prev?.draft?.title || draft.title);
+    // For QUANTITY-related mandatory fields, Wing hint suggests including unit text.
+    // (e.g. "50매", "5개입", "1개")
+    itemAttributes = [
+      { attributeTypeName: "사이즈", attributeValueName: String(size || 'FREE') },
+      { attributeTypeName: "개당 수량", attributeValueName: `${qtyPerUnit}개입` },
+      { attributeTypeName: "수량", attributeValueName: `1개` },
+    ];
+
+    // unitCount/unitType seems to be the actual "단위수량" field.
+    // From Wing meta: QUANTITY baseUnit=PIECE.
+    itemUnit = { unitCount: qtyPerUnit, unitType: 'PIECE' };
+  }
+
+  // Final safety: force Wing-captured representation image when available (prevents external URL approval rejects).
+  if (useWingCaptureUploadedRep) {
+    const last = getLastWingUploadedImage({ imageType: 'REPRESENTATION' });
+    if (last?.vendorPath) {
+      imageUrl = last.vendorPath;
+    }
+  }
+
   const body = buildSellerProductBody({
     vendorId,
     vendorUserId,
@@ -532,6 +685,8 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
     contentText: contentHtml,
     notices,
     requested: autoRequest,
+    itemAttributes,
+    itemUnit,
     items:
       optionsUsed.length > 0
         ? optionsUsed.map((opt) => {
@@ -662,6 +817,11 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
     category: { requested: displayCategoryCode, used: finalCategoryCode, auto: allowAutoCategory, predicted: settings.__predictedCategory || null },
     optionsUsed: optionsUsed.map((opt) => opt.label),
     payloadCheck,
+    debug: {
+      usedMainImageVendorPath: imageUrl,
+      usedContentHtmlLen: String(contentHtml || '').length,
+      useWingCaptureUploadedRep,
+    },
     create: { status: res.status, body: createBody, sellerProductId: createdId },
     approval,
     followUp,

@@ -18,3 +18,6 @@ data/upload_history.json
 .server.pid
 .watcher.pid
 .env.bak.*
+# wing capture logs / local meta
+/data/coupang_meta_capture.jsonl
+/data/coupang_wing_meta/
