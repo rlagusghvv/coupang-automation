@@ -25,11 +25,18 @@ export function ensureTrailingSlash(url) {
   return s.endsWith("/") ? s : `${s}/`;
 }
 
-export function buildLocalImageUrl(baseUrl, fileName) {
+export function buildLocalImageUrl(baseUrl, fileName, opts = {}) {
   const base = ensureTrailingSlash(baseUrl);
   const safeName = String(fileName || "").replace(/^[\\/]+/, "");
   if (!base || !safeName) return "";
-  return new URL(safeName, base).toString();
+  const u = new URL(safeName, base);
+
+  // Cache-bust to avoid Cloudflare edge caching a transient 404 during first fetch.
+  // Safe for Coupang image validation.
+  const cacheBust = opts.cacheBust ?? true;
+  if (cacheBust) u.searchParams.set("v", String(Date.now()));
+
+  return u.toString();
 }
 
 export function buildOutPath(outDir, fileName) {
