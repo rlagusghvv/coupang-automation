@@ -17,3 +17,4 @@ data/upload_history.json
 .server-port
 .server.pid
 .watcher.pid
+.env.bak.*
