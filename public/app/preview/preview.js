@@ -58,6 +58,7 @@ const els = {
   previewKv: $("previewKv"),
   rawWrap: $("rawWrap"),
   log: $("log"),
+  btnCopyLog: $("btnCopyLog"),
 };
 
 function log(x) {
@@ -70,6 +71,28 @@ function log(x) {
     els.log.textContent = typeof x === "string" ? x : JSON.stringify(x, null, 2);
   } catch {
     els.log.textContent = String(x);
+  }
+}
+
+async function copyLogText() {
+  const text = String(els.log?.textContent || '').trim();
+  if (!text) return;
+  try {
+    await navigator.clipboard.writeText(text);
+    if (els.previewSub) els.previewSub.textContent = '로그 복사됨';
+  } catch {
+    // fallback
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+      if (els.previewSub) els.previewSub.textContent = '로그 복사됨';
+    } catch {
+      if (els.previewSub) els.previewSub.textContent = '로그 복사 실패';
+    }
   }
 }
 
@@ -427,6 +450,7 @@ els.btnFill?.addEventListener("click", fillRecommendations);
 els.btnRefresh?.addEventListener("click", loadRecommendations);
 els.btnPreview?.addEventListener("click", previewUpload);
 els.btnUpload?.addEventListener("click", executeUpload);
+els.btnCopyLog?.addEventListener("click", copyLogText);
 
 (async () => {
   const ok = await checkAuth();
