@@ -1206,7 +1206,16 @@ app.post('/api/recommendations/bulk-upload', authRequired, async (req, res) => {
 
           // serialize with existing upload lock
           uploadInProgress = true;
-          const r = await runUploadFromUrl(rec.sourceUrl, settings).catch((e) => ({ ok: false, error: String(e?.message || e) }));
+          const effectiveSettings = { ...settings };
+          // Theme guardrails: keep category stable for now to reduce create/approval failures.
+          if (theme.id === 'starter-toilet-pad') {
+            // 배변패드 테마는 카테고리 변동(예: 65905)되면 옵션/단위 검증이 빡세져서 실패가 많이 남.
+            // 운영 안정성 우선: 65906으로 고정하고 자동분류는 끔.
+            effectiveSettings.categoryOverrideCode = 65906;
+            effectiveSettings.autoCategoryMatch = '0';
+            effectiveSettings.autoCategoryPredict = '0';
+          }
+          const r = await runUploadFromUrl(rec.sourceUrl, effectiveSettings).catch((e) => ({ ok: false, error: String(e?.message || e) }));
           uploadInProgress = false;
 
           const ok = Boolean(r?.ok);

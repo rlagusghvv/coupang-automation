@@ -546,7 +546,12 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
   }
 
   // Allow manual override
-  const overrideCategoryCode = Number(settings.categoryOverrideCode);
+  const overrideCategoryCode = Number(
+    settings.categoryOverrideCode ??
+    settings.displayCategoryCode ??
+    settings.categoryOverride ??
+    settings.coupangDisplayCategoryCode
+  );
   let finalCategoryCode = Number.isFinite(overrideCategoryCode) && overrideCategoryCode > 0
     ? overrideCategoryCode
     : displayCategoryCode;
@@ -643,10 +648,14 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
   // Default: ON for /api/upload/execute so users get a real upload, not a temp draft.
   const autoRequest = String(settings.autoRequest ?? settings.autoRequestApproval ?? "1").trim() === "1";
 
-  const optionsUsed =
+  let optionsUsed =
     Array.isArray(draft.options) && draft.options.length > 0
       ? makeUniqueOptions(draft.options)
       : [];
+
+  // Stability-first: 옵션(구매옵션) 업로드는 쿠팡 단위수량/옵션유효성 이슈로 실패 확률이 높아서 기본 OFF.
+  const disableOptions = String(settings.disableOptions ?? "1").trim() === "1";
+  if (disableOptions) optionsUsed = [];
 
   const overrideTitle = String(settings.titleOverride || "").trim();
 
@@ -701,6 +710,13 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
     itemUnit = { unitCount: qtyPerUnit, unitType: 'PIECE' };
   }
 
+  // Some categories/options require unitCount/unitType; when we have 구매옵션(옵션Used)이 있는 경우,
+  // default a safe unit to avoid create rejection.
+  if (!itemUnit) {
+    // Default safe unit. Prevents occasional create rejection: "단위수량 값을 확인".
+    itemUnit = { unitCount: 1, unitType: 'PIECE' };
+  }
+
   // Final safety: force Wing-captured representation image when available (prevents external URL approval rejects).
   // Only do this in "upload-to-coupang/wing" mode. In external-URL mode (useCoupangImageUpload=0),
   // we must not override with Wing vendor_inventory paths.
@@ -745,6 +761,8 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
               contentText: contentHtml,
               notices,
               attributes: buildItemAttributesFromOptionValues(opt.values) || undefined,
+              unitCount: itemUnit?.unitCount,
+              unitType: itemUnit?.unitType,
             });
           })
         : undefined,
