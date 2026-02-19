@@ -3,6 +3,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { chromium } from "playwright";
 import { buildLocalImageUrl } from "./localImageHost.js";
+import { normalizeImageForCoupang } from "./imageNormalize.js";
 
 const CONTENT_TYPE_EXT = {
   "image/jpeg": ".jpg",
@@ -88,14 +89,46 @@ export async function downloadImagesWithPlaywright({
 
         const contentType = res.headers()["content-type"] || "";
         const ext = pickExt({ imageUrl, contentType });
-        const fileName = makeFileName(imageUrl, ext, i);
-        const filePath = path.join(outDir, fileName);
+        const tmpName = makeFileName(imageUrl, ext, i);
+        const tmpPath = path.join(outDir, tmpName);
         const buf = await res.body();
-        fs.writeFileSync(filePath, buf);
+        fs.writeFileSync(tmpPath, buf);
 
-        const localUrl = buildLocalImageUrl(baseUrl, fileName);
+        // Normalize (convert to safe JPEG size/dimensions for Coupang).
+        // Always output .jpg for stability.
+        const jpgName = makeFileName(imageUrl, ".jpg", i);
+        const jpgPath = path.join(outDir, jpgName);
+        const normPath = jpgPath === tmpPath ? `${tmpPath}.norm.jpg` : jpgPath;
+
+        try {
+          await normalizeImageForCoupang({ inputPath: tmpPath, outputPath: normPath });
+
+          // Replace target
+          if (normPath !== jpgPath) {
+            try {
+              // On macOS, rename won't overwrite an existing file.
+              if (fs.existsSync(jpgPath)) fs.unlinkSync(jpgPath);
+            } catch {}
+            try { fs.renameSync(normPath, jpgPath); } catch {}
+          }
+
+          // Remove original if different
+          if (jpgPath !== tmpPath) {
+            try { fs.unlinkSync(tmpPath); } catch {}
+          }
+        } catch {
+          // If normalization fails, fall back to original.
+          try {
+            if (normPath !== tmpPath && fs.existsSync(normPath)) fs.unlinkSync(normPath);
+          } catch {}
+        }
+
+        const finalName = fs.existsSync(jpgPath) ? jpgName : tmpName;
+        const finalPath = fs.existsSync(jpgPath) ? jpgPath : tmpPath;
+
+        const localUrl = buildLocalImageUrl(baseUrl, finalName);
         result.urlMap[imageUrl] = localUrl;
-        result.files.push({ imageUrl, fileName, filePath, localUrl, size: buf.length });
+        result.files.push({ imageUrl, fileName: finalName, filePath: finalPath, localUrl, size: buf.length });
       } catch {
         // ignore individual image failures
       }
