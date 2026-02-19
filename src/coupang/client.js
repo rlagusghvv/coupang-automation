@@ -1,4 +1,4 @@
-import { buildAuthorization, buildAuthorizationWithKeys } from "./sign.js";
+import { buildAuthorization, buildAuthorizationWithKeys, buildAuthorizationWithKeysQ, buildAuthorizationWithKeysAlt } from "./sign.js";
 
 const BASE_URL = "https://api-gateway.coupang.com";
 
@@ -15,7 +15,7 @@ export async function coupangRequest({
   const base = baseUrl || BASE_URL;
   const safeBase = String(base).replace(/^http:\/\//i, "https://");
   const url = `${safeBase}${path}${query ? "?" + query : ""}`;
-  const { authorization } =
+  const primary =
     accessKey && secretKey
       ? buildAuthorizationWithKeys({ method, path, query, accessKey, secretKey })
       : buildAuthorization({ method, path, query });
@@ -28,7 +28,7 @@ export async function coupangRequest({
       (typeof Blob !== "undefined" && body instanceof Blob));
 
   const baseHeaders = {
-    Authorization: authorization,
+    Authorization: primary.authorization,
     "X-Requested-By": "couplus-clone",
     ...(headers || {}),
   };
@@ -49,6 +49,34 @@ export async function coupangRequest({
   });
 
   const text = await res.text();
+
+  // Some endpoints reject our default signature with "HMAC format is invalid".
+  // Retry with alternate signature variants.
+  if (res.status === 401 && accessKey && secretKey && /HMAC format is invalid/i.test(text)) {
+    const variants = [
+      buildAuthorizationWithKeysQ({ method, path, query, accessKey, secretKey }),
+      buildAuthorizationWithKeysAlt({ method, path, query, accessKey, secretKey }),
+    ];
+
+    for (const v of variants) {
+      const retryHeaders = { ...baseHeaders, Authorization: v.authorization };
+      const res2 = await fetch(url, {
+        method,
+        headers: retryHeaders,
+        body: body
+          ? isFormData || isBinary
+            ? body
+            : JSON.stringify(body)
+          : undefined,
+      });
+      const text2 = await res2.text();
+      if (!(res2.status === 401 && /HMAC format is invalid/i.test(text2))) {
+        return { status: res2.status, body: text2 };
+      }
+    }
+
+    // if all variants failed, fall through
+  }
 
   return {
     status: res.status,

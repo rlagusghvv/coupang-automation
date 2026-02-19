@@ -1,9 +1,10 @@
-export function signedDateUTC() {
-  const d = new Date();
-  const yy = String(d.getUTCFullYear()).slice(2);
+function _fmt(d, yearDigits) {
+  const year = yearDigits === 4
+    ? String(d.getUTCFullYear())
+    : String(d.getUTCFullYear()).slice(2);
   const pad = (n) => String(n).padStart(2, "0");
   return (
-    yy +
+    year +
     pad(d.getUTCMonth() + 1) +
     pad(d.getUTCDate()) +
     "T" +
@@ -13,3 +14,14 @@ export function signedDateUTC() {
     "Z"
   );
 }
+
+// Default format (legacy): YYMMDDTHHMMSSZ
+export function signedDateUTC() {
+  return _fmt(new Date(), 2);
+}
+
+// Alternative format some endpoints enforce: YYYYMMDDTHHMMSSZ
+export function signedDateUTC4() {
+  return _fmt(new Date(), 4);
+}
+

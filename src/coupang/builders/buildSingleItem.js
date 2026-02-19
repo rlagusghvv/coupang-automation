@@ -32,9 +32,12 @@ export function buildSingleItem({
     overseasPurchased: "NOT_OVERSEAS_PURCHASED",
     overseasPurchase: "NOT_OVERSEAS_PURCHASED",
 
+    // unit fields (for purchase option unit quantity)
     unitCount: 1,
+    unitType: "COUNT",
 
     attributes: Array.isArray(attributes) && attributes.length > 0 ? attributes : buildAttributes(),
+
     images: [
       {
         imageOrder: 0,

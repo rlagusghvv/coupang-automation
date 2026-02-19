@@ -599,6 +599,20 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
         category: { requested: displayCategoryCode, used: finalCategoryCode, auto: allowAutoCategory, predicted: settings.__predictedCategory || null },
         optionsUsed: optionsUsed.map((opt) => opt.label),
         payloadCheck,
+        payloadSummary: {
+          displayCategoryCode: finalCategoryCode,
+          itemCount: Array.isArray(body?.items) ? body.items.length : 0,
+          firstItem: (() => {
+            const it = Array.isArray(body?.items) ? body.items[0] : null;
+            if (!it) return null;
+            return {
+              itemName: it.itemName,
+              unitCount: it.unitCount,
+              unitType: it.unitType,
+              attributes: it.attributes,
+            };
+          })(),
+        },
         create: { status: res.status, body: createBody, sellerProductId: null },
       };
     }
