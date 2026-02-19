@@ -1,4 +1,13 @@
-import { buildAuthorization, buildAuthorizationWithKeys, buildAuthorizationWithKeysQ, buildAuthorizationWithKeysAlt } from "./sign.js";
+import {
+  buildAuthorization,
+  buildAuthorizationWithKeys,
+  buildAuthorizationWithKeysQ,
+  buildAuthorizationWithKeysQAlways,
+  buildAuthorizationWithKeysAlt,
+  buildAuthorizationWithKeysAltAlways,
+  buildAuthorizationWithKeysNoZ,
+  buildAuthorizationWithKeys4NoZ,
+} from "./sign.js";
 
 const BASE_URL = "https://api-gateway.coupang.com";
 
@@ -55,7 +64,11 @@ export async function coupangRequest({
   if (res.status === 401 && accessKey && secretKey && /HMAC format is invalid/i.test(text)) {
     const variants = [
       buildAuthorizationWithKeysQ({ method, path, query, accessKey, secretKey }),
+      buildAuthorizationWithKeysQAlways({ method, path, query, accessKey, secretKey }),
       buildAuthorizationWithKeysAlt({ method, path, query, accessKey, secretKey }),
+      buildAuthorizationWithKeysAltAlways({ method, path, query, accessKey, secretKey }),
+      buildAuthorizationWithKeysNoZ({ method, path, query, accessKey, secretKey }),
+      buildAuthorizationWithKeys4NoZ({ method, path, query, accessKey, secretKey }),
     ];
 
     for (const v of variants) {

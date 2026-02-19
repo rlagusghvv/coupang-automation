@@ -12,6 +12,8 @@ export function buildSingleItem({
   contentText = "테스트 상품입니다.",
   notices,
   attributes,
+  unitCount,
+  unitType,
 } = {}) {
   if (!imageUrl) throw new Error("imageUrl required (item)");
 
@@ -32,18 +34,22 @@ export function buildSingleItem({
     overseasPurchased: "NOT_OVERSEAS_PURCHASED",
     overseasPurchase: "NOT_OVERSEAS_PURCHASED",
 
-    // unit fields (for purchase option unit quantity)
-    unitCount: 1,
-    unitType: "COUNT",
+    // Item attributes are category-dependent.
+    // We default to buildAttributes(), and override via caller when we have category metadata.
+    attributes:
+      Array.isArray(attributes) && attributes.length > 0 ? attributes : buildAttributes(),
 
-    attributes: Array.isArray(attributes) && attributes.length > 0 ? attributes : buildAttributes(),
+    ...(unitCount != null ? { unitCount: Number(unitCount) } : {}),
+    ...(unitType ? { unitType: String(unitType) } : {}),
 
     images: [
-      {
-        imageOrder: 0,
-        imageType: "REPRESENTATION",
-        vendorPath: imageUrl,
-      },
+      (() => {
+        const u = String(imageUrl || '').trim();
+        if (u.startsWith('vendor_inventory/')) {
+          return { imageOrder: 0, imageType: 'REPRESENTATION', cdnPath: u, vendorPath: u };
+        }
+        return { imageOrder: 0, imageType: 'REPRESENTATION', vendorPath: u };
+      })(),
     ],
     notices: notices ?? buildNoticesEtcGoods(),
     contents: buildContentsText({ text: contentText }),

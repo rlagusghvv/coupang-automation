@@ -19,8 +19,10 @@ export function buildSellerProductBody({
   allowAutoCategory = false,
   requested = false,
   items,
+  itemAttributes,
+  itemUnit,
   deliveryCompanyCode,
-} = {}) {
+} = {}) {  
   if (!vendorId) throw new Error("vendorId required");
   if (!vendorUserId) throw new Error("vendorUserId required");
   if (!outboundShippingPlaceCode) throw new Error("outboundShippingPlaceCode required");
@@ -60,6 +62,9 @@ export function buildSellerProductBody({
             imageUrl,
             contentText, // ✅ draft에서 내려온 상세 주입
             notices,
+            attributes: itemAttributes,
+            unitCount: itemUnit?.unitCount,
+            unitType: itemUnit?.unitType,
           }),
         ],
   };

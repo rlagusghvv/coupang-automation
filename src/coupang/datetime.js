@@ -20,8 +20,17 @@ export function signedDateUTC() {
   return _fmt(new Date(), 2);
 }
 
+// No trailing Z (some gateways are picky)
+export function signedDateUTCNoZ() {
+  return signedDateUTC().replace(/Z$/, "");
+}
+
 // Alternative format some endpoints enforce: YYYYMMDDTHHMMSSZ
 export function signedDateUTC4() {
   return _fmt(new Date(), 4);
+}
+
+export function signedDateUTC4NoZ() {
+  return signedDateUTC4().replace(/Z$/, "");
 }
 
