@@ -1,6 +1,9 @@
 import { classifyUrl } from "../utils/urlFilter.js";
 import { parseProductFromDomaeqq } from "../sources/domaeqq/parseProductFromDomaeqq.js";
+import { DOMEGGOOK_OPENAPI_KEY } from "../config/env.js";
+import { domeggookOpenApiGetItemView } from "../utils/domeggook_openapi.js";
 import { extractImageUrls } from "../utils/contentImages.js";
+import { requestHeadOrGetProbe } from "../utils/requestHeadOrGetProbe.js";
 import { computePrice } from "../utils/price.js";
 import { recommendCategory } from "../coupang/api/recommendCategory.js";
 import { suggestTitlesFromNaver, cleanTitle } from "../utils/titleSuggest.js";
@@ -90,14 +93,122 @@ export async function previewUploadFromUrl(inputUrl, settings = {}) {
     return { ok: false, reason: c.reason, url: c.url };
   }
 
-  const draft = await parseProductFromDomaeqq(c.url);
+  let draft = null;
+
+  // Prefer Domeggook OpenAPI detail for domeggook item URLs when key is available.
+  // This dramatically improves stability vs scraping (and yields structured desc/opts).
+  const mNo = String(c.url || '').match(/domeggook\.com\/(\d{6,})/);
+  const itemNo = mNo ? mNo[1] : '';
+
+  if (itemNo && String(DOMEGGOOK_OPENAPI_KEY || '').trim()) {
+    try {
+      const r = await domeggookOpenApiGetItemView({ itemNo, ver: '4.5', om: 'json' });
+      const root = r?.raw?.domeggook || r?.raw || {};
+      const basis = root?.basis || {};
+      const price = root?.price || {};
+      const deli = root?.deli || {};
+      const thumb = root?.thumb || {};
+      const desc = root?.desc || {};
+
+      const title = String(basis?.title || '').trim() || `도매꾹 상품 ${itemNo}`;
+
+      // Prefer dome price when available; fallback to supply.
+      const pDome = price?.dome;
+      const pSupply = price?.supply;
+      const picked = Number.isFinite(Number(pDome)) ? Number(pDome) : (Number.isFinite(Number(pSupply)) ? Number(pSupply) : null);
+
+      const imageUrl = String(thumb?.large || thumb?.original || thumb?.small || '').trim();
+
+      // Best-effort: build contentText from desc.contents.item/deli/event/otherItem.
+      const contents = desc?.contents || {};
+      const contentText = [contents?.item, contents?.deli, contents?.event, contents?.otherItem]
+        .map((x) => String(x || '').trim())
+        .filter(Boolean)
+        .join('\n\n');
+
+      // Shipping fee: use dome fee when fixed.
+      const shipFee = Number(deli?.dome?.fee);
+      const shippingFee = Number.isFinite(shipFee) ? shipFee : null;
+
+      // Options: OpenAPI exposes selectOpt as JSON string (per docs). Keep as raw string for now.
+      const selectOptRaw = root?.selectOpt;
+      const options = [];
+      if (selectOptRaw) {
+        try {
+          const obj = typeof selectOptRaw === 'string' ? JSON.parse(selectOptRaw) : selectOptRaw;
+          // We don't know the exact schema; store keys for downstream parsing later.
+          options.push({ name: 'selectOpt', priceDelta: 0, stock: 0, values: [], raw: obj });
+        } catch {
+          options.push({ name: 'selectOpt', priceDelta: 0, stock: 0, values: [], raw: String(selectOptRaw) });
+        }
+      }
+
+      draft = {
+        sourceUrl: c.url,
+        title,
+        price: picked ?? 0,
+        imageUrl: imageUrl || 'https://via.placeholder.com/1000',
+        contentText: contentText || title,
+        categoryText: '',
+        options,
+        shippingFee,
+      };
+    } catch {
+      draft = null;
+    }
+  }
+
+  if (!draft) {
+    draft = await parseProductFromDomaeqq(c.url);
+  }
 
   const rawMax = Number(settings.maxContentImages);
   const maxContentImages = Number.isFinite(rawMax) ? rawMax : 30;
-  const contentImages = extractImageUrls(draft.contentText)
-    .filter(isLikelyProductImage)
-    .slice(0, Math.max(0, maxContentImages))
-    .filter(Boolean);
+
+  // Extract detail images from HTML.
+  // Some vendors host images on external CDNs with non-standard URLs (no extension).
+  // In that case, a lightweight HEAD/GET probe can verify it's actually an image.
+  const extracted = extractImageUrls(draft.contentText);
+  const wanted = Math.max(0, maxContentImages);
+
+  const contentImages = [];
+  const seenImg = new Set();
+
+  const pushImg = (u) => {
+    const s = String(u || '').trim();
+    if (!s) return;
+    if (seenImg.has(s)) return;
+    seenImg.add(s);
+    contentImages.push(s);
+  };
+
+  // 1) Fast path: keep images that look like product images.
+  for (const u of extracted) {
+    if (contentImages.length >= wanted) break;
+    if (!isLikelyProductImage(u)) continue;
+    pushImg(u);
+  }
+
+  // 2) Probe remaining candidates (best-effort).
+  if (contentImages.length < wanted) {
+    const remain = extracted.filter((u) => !seenImg.has(String(u || '').trim())).slice(0, 60);
+    for (const u of remain) {
+      if (contentImages.length >= wanted) break;
+      try {
+        const pr = await requestHeadOrGetProbe(u, {
+          timeoutMs: 8000,
+          headers: { Referer: 'https://domeggook.com' },
+        });
+        const ct = String(pr?.headers?.['content-type'] || '').toLowerCase();
+        const finalUrl = String(pr?.finalUrl || '');
+        const looksImage = ct.startsWith('image/') || /\.(jpg|jpeg|png|webp|gif)(\?|#|$)/i.test(finalUrl);
+        if (pr?.ok && looksImage) pushImg(u);
+      } catch {
+        // ignore
+      }
+    }
+  }
+
 
   let finalPrice = computePrice(draft.price, {
     rate: settings.marginRate,

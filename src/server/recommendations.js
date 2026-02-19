@@ -345,7 +345,7 @@ export async function listRecommendations(userId, { limit = 50 } = {}) {
   const lim = Math.max(1, Math.min(200, Number(limit) || 50));
   const rows = await dbAll(
     db,
-    `SELECT id, source_url, keyword, title, main_image_url, source_price, shipping_fee, final_price, profit, margin_rate, score, reason, created_at
+    `SELECT id, source_url, keyword, title, main_image_url, source_price, shipping_fee, final_price, profit, margin_rate, score, reason, payload_json, created_at
      FROM recommendations
      WHERE user_id = ?
      ORDER BY score DESC
@@ -353,21 +353,33 @@ export async function listRecommendations(userId, { limit = 50 } = {}) {
     [userId, lim],
   );
   db.close();
-  return rows.map((r) => ({
-    id: r.id,
-    sourceUrl: r.source_url,
-    keyword: r.keyword,
-    title: r.title,
-    mainImageUrl: r.main_image_url,
-    sourcePrice: r.source_price,
-    shippingFee: r.shipping_fee,
-    finalPrice: r.final_price,
-    profit: r.profit,
-    marginRate: r.margin_rate,
-    score: r.score,
-    reason: r.reason,
-    createdAt: r.created_at,
-  }));
+  return rows.map((r) => {
+    let payload = {};
+    try { payload = JSON.parse(r.payload_json || '{}'); } catch {}
+
+    const qc = payload?.qc || null;
+    const prev = payload?.preview || null;
+    const detailImageCount = Number(qc?.detailImageCount ?? prev?.computed?.contentImageCount ?? 0) || 0;
+    const tier = String(qc?.tier || (detailImageCount >= 3 ? 'A' : (detailImageCount >= 1 ? 'B' : 'C')));
+    const eligibleUpload = Boolean(qc?.eligibleUpload ?? (tier === 'A'));
+
+    return {
+      id: r.id,
+      sourceUrl: r.source_url,
+      keyword: r.keyword,
+      title: r.title,
+      mainImageUrl: r.main_image_url,
+      sourcePrice: r.source_price,
+      shippingFee: r.shipping_fee,
+      finalPrice: r.final_price,
+      profit: r.profit,
+      marginRate: r.margin_rate,
+      score: r.score,
+      reason: r.reason,
+      qc: { tier, eligibleUpload, detailImageCount },
+      createdAt: r.created_at,
+    };
+  });
 }
 
 function parseWon(text) {
@@ -379,12 +391,47 @@ function parseWon(text) {
 }
 
 async function fetchFastCandidatesFromList({ keyword, limit = 80, storageStatePath = '' }) {
-  // v1: Prefer extracting (url,title,price) directly from list pages (far fewer requests).
-  // Fallback: fetch individual item HTML only when needed.
+  // v2: Prefer Domeggook OpenAPI if available.
+  // Fallback: Playwright list scraping (legacy).
   const q = String(keyword || '').trim();
   if (!q) return [];
 
-  // 1) Playwright list-page extraction
+  // 0) Try OpenAPI (best-effort). If docs/endpoint mismatch, it will throw.
+  try {
+    const { domeggookOpenApiGetItemList } = await import('../utils/domeggook_openapi.js');
+    const r = await domeggookOpenApiGetItemList({
+      keyword: q,
+      market: 'dome',
+      page: 1,
+      pageSize: Math.max(10, Math.min(80, Number(limit) || 40)),
+      sort: q ? 'se' : 'rd',
+      ver: '4.1',
+      om: 'json',
+    });
+
+    const raw = r?.raw || null;
+    const items = raw?.domeggook?.list?.item || raw?.list?.item;
+    const list = Array.isArray(items) ? items : (items ? [items] : []);
+
+    if (list.length) {
+      const out = [];
+      for (const it of list) {
+        const title = String(it?.title || '').trim();
+        const price = Number(it?.price);
+        const url = String(it?.url || '').trim() || '';
+        const no = String(it?.no || '').trim();
+        const finalUrl = url || (no ? `https://domeggook.com/${no}` : '');
+        if (!finalUrl || !title || !Number.isFinite(price)) continue;
+        out.push({ url: finalUrl.replace(/^http:\/\//, 'https://'), title: title.slice(0, 80), price });
+        if (out.length >= limit) break;
+      }
+      if (out.length) return out;
+    }
+  } catch {
+    // ignore and fallback
+  }
+
+  // 1) Playwright list-page extraction (legacy)
   try {
     const { chromium } = await import('playwright');
     const fs = await import('node:fs');
@@ -398,7 +445,10 @@ async function fetchFastCandidatesFromList({ keyword, limit = 80, storageStatePa
     await page.goto(listUrl, { waitUntil: 'domcontentloaded', timeout: 60_000 });
     await page.waitForTimeout(1800);
 
-    const rows = await page.evaluate(() => {
+    const rows = await page.evaluate(({ keyword }) => {
+      const kwRaw = String(keyword || '').trim().toLowerCase();
+      const kw = kwRaw.replace(/\s+/g, '');
+
       const parseWon = (s) => {
         const m = String(s || '').match(/(\d[\d,]{2,})\s*원/);
         if (!m) return null;
@@ -422,16 +472,20 @@ async function fetchFastCandidatesFromList({ keyword, limit = 80, storageStatePa
         const price = parseWon(text);
         if (!price) continue;
 
-        const title = text.replace(/\d[\d,]{2,}\s*원/g, '').trim().slice(0, 80);
+        const title = text.replace(/\d[\d,]{2,}\s*원/g, '').trim();
         if (!title) continue;
 
+        const hay = (title + ' ' + text).toLowerCase();
+        const hayNorm = hay.replace(/\s+/g, '');
+        if (kw && !hayNorm.includes(kw)) continue;
+
         seen.add(id);
-        out.push({ url: `https://domeggook.com/${id}`, title, price });
+        out.push({ url: `https://domeggook.com/${id}`, title: title.slice(0, 80), price });
         if (out.length >= 120) break;
       }
 
       return out;
-    });
+    }, { keyword: q });
 
     await browser.close();
 
@@ -475,6 +529,9 @@ async function fetchFastCandidatesFromList({ keyword, limit = 80, storageStatePa
       })();
 
       if (!title || !price) continue;
+      const hay = String(title).toLowerCase().replace(/\s+/g, '');
+      const needle = String(q).trim().toLowerCase().replace(/\s+/g, '');
+      if (needle && !hay.includes(needle)) continue;
       out.push({ url: u, title, price });
       if (out.length >= limit) break;
     } catch (e) {
@@ -492,9 +549,17 @@ function strictValidatePreview(preview, banKeywords = DEFAULT_BAN_KEYWORDS) {
   const title = String(preview?.draft?.title || '');
   if (!title) return { ok: false, reason: 'no_title' };
   if (containsBanKeyword(title, banKeywords)) return { ok: false, reason: 'banned_keyword' };
+
+  // Previously we required at least 1 detail image. In practice, many wholesale pages
+  // have missing/blocked detail images even when the product is valid. For preview-first
+  // workflows, allow 0 detail images as long as we have a main image.
   const contentImageCount = Number(preview?.computed?.contentImageCount) || 0;
-  if (contentImageCount < 1) return { ok: false, reason: 'detail_images_too_few', contentImageCount };
-  return { ok: true };
+  const images = Array.isArray(preview?.computed?.images) ? preview.computed.images : [];
+  const hasMain = Boolean(preview?.draft?.imageUrl);
+  const hasAnyImage = images.length > 0 || hasMain;
+
+  if (!hasAnyImage) return { ok: false, reason: 'no_images', contentImageCount };
+  return { ok: true, contentImageCount };
 }
 
 async function generateRecommendationsBatch({ settings, keywords, topN = 20, excludeUrls = new Set(), onProgress = null }) {
@@ -592,9 +657,27 @@ async function generateRecommendationsBatch({ settings, keywords, topN = 20, exc
     const v = strictValidatePreview(prev, DEFAULT_BAN_KEYWORDS);
     if (!v.ok) continue;
 
+    const detailCount = Number(prev?.computed?.contentImageCount) || 0;
+    const tier = detailCount >= 3 ? 'A' : (detailCount >= 1 ? 'B' : 'C');
+    const eligibleUpload = tier === 'A';
+
+    // Prefer fields from the real preview (more accurate than list-scraped/fake preview).
+    const prevTitle = String(prev?.draft?.title || '').trim();
+    const prevMainImageUrl = String(prev?.draft?.imageUrl || '').trim();
+    const prevPrice = Number(prev?.draft?.price);
+    const prevShip = prev?.draft?.shippingFee;
+
     final.push({
       ...cand,
-      payload: { ...cand.payload, preview: { url: prev.url, draft: prev.draft, computed: prev.computed } },
+      title: prevTitle || cand.title,
+      mainImageUrl: prevMainImageUrl || cand.mainImageUrl,
+      sourcePrice: Number.isFinite(prevPrice) ? prevPrice : cand.sourcePrice,
+      shippingFee: (prevShip == null ? cand.shippingFee : prevShip),
+      payload: {
+        ...cand.payload,
+        preview: { url: prev.url, draft: prev.draft, computed: prev.computed },
+        qc: { detailImageCount: detailCount, tier, eligibleUpload },
+      },
     });
   }
 

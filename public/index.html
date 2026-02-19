@@ -92,6 +92,26 @@
               </div>
             </section>
 
+            <!-- Auto Digger card -->
+            <section class="dash-card" aria-label="자동 디깅">
+              <div class="dash-head">
+                <h2 class="dash-title">자동 디깅 (추천 후보)</h2>
+                <div class="dash-sub">도매꾹/도매매 키워드로 후보를 뽑고, 미리보기로 업로드 전 검수</div>
+              </div>
+              <div class="dash-body">
+                <div class="row" style="gap: 10px; align-items: center;">
+                  <label class="sr-only" for="recoKeywords">키워드</label>
+                  <textarea id="recoKeywords" rows="2" placeholder="키워드(쉼표/줄바꿈 구분). 비우면 기본 키워드셋 사용" style="width: 100%;"></textarea>
+                </div>
+                <div class="btn-row" style="margin-top: 8px;">
+                  <button id="recoFill" type="button">후보 채우기</button>
+                  <button id="recoRefresh" type="button" class="ghost">목록 새로고침</button>
+                </div>
+                <p class="hint">‘후보 채우기’는 캐시에 쌓아두는 방식이라 안정적입니다. 각 후보는 ‘미리보기’로 확인 후 업로드하세요.</p>
+                <div class="mini-card" id="recoList"></div>
+              </div>
+            </section>
+
             <!-- Purchase/Payment card -->
             <section class="dash-card" aria-label="발주/결제">
               <div class="dash-head">

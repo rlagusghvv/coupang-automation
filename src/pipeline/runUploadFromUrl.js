@@ -6,7 +6,7 @@ import {
   COUPANG_DELIVERY_COMPANY_CODE,
 } from "../config/env.js";
 import { classifyUrl } from "../utils/urlFilter.js";
-import { parseProductFromDomaeqq } from "../sources/domaeqq/parseProductFromDomaeqq.js";
+import { previewUploadFromUrl } from "./previewUploadFromUrl.js";
 import { buildSellerProductBody } from "../coupang/builders/buildSellerProductBody.js";
 import { createSellerProduct } from "../coupang/api/createSellerProduct.js";
 import { requestProductApproval } from "../coupang/api/requestProductApproval.js";
@@ -125,11 +125,11 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
   // 사용자별 설정 우선
   const accessKey = String(settings.coupangAccessKey || COUPANG_ACCESS_KEY || "").trim();
   const secretKey = String(settings.coupangSecretKey || COUPANG_SECRET_KEY || "").trim();
-  const vendorId = String(settings.coupangVendorId || COUPANG_VENDOR_ID || "").trim();
-  const vendorUserId = String(
+  let vendorId = String(settings.coupangVendorId || COUPANG_VENDOR_ID || "").trim();
+  let vendorUserId = String(
     settings.coupangVendorUserId || COUPANG_VENDOR_USER_ID || "",
   ).trim();
-  const deliveryCompanyCode = String(
+  let deliveryCompanyCode = String(
     settings.coupangDeliveryCompanyCode || COUPANG_DELIVERY_COMPANY_CODE || "",
   ).trim();
 
@@ -144,84 +144,41 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
     if (missing.length > 0) {
       return { ok: false, skipped: true, reason: "missing_coupang_env", missing };
     }
+  } else {
+    // payloadOnly(dry-run) should work without real credentials.
+    // Provide safe placeholders so body builders don't throw.
+    if (!vendorId) {
+      vendorId = "DUMMY";
+      settings.coupangVendorId = settings.coupangVendorId || vendorId;
+    }
+    if (!vendorUserId) {
+      vendorUserId = "DUMMY";
+      settings.coupangVendorUserId = settings.coupangVendorUserId || vendorUserId;
+    }
+    if (!deliveryCompanyCode) {
+      deliveryCompanyCode = "DUMMY";
+      settings.coupangDeliveryCompanyCode = settings.coupangDeliveryCompanyCode || deliveryCompanyCode;
+    }
   }
 
-  const draft = await parseProductFromDomaeqq(c.url);
+  // IMPORTANT: Use the same preview pipeline for upload.
+  // This ensures Domeggook OpenAPI detail images & referer/probe logic are applied.
+  const prev = await previewUploadFromUrl(c.url, settings);
+  const draft = prev?.draft;
+  const computed = prev?.computed || {};
 
   const rawMax = Number(settings.maxContentImages);
   const maxContentImages = Number.isFinite(rawMax) ? rawMax : 20;
-
-  function isLikelyProductImage(url) {
-    try {
-      const u = new URL(url);
-      const host = u.hostname;
-      const p = u.pathname || "";
-
-      const bad = [
-        "img_lensSearch",
-        "kakaolink",
-        "/sns/",
-        "/upload/event/",
-        "/upload/banner/",
-        "/image/",
-        "/images/",
-        "_stt_",
-        "ico_",
-        "bnr_",
-        "arrow",
-        "close",
-        "warning",
-        "caution",
-        "pstatic.net/share",
-      ];
-      const lower = (p + " " + u.href).toLowerCase();
-      if (bad.some((k) => lower.includes(String(k).toLowerCase()))) return false;
-
-      const isDomeggook = host === "cdn1.domeggook.com" || host.endsWith(".domeggook.com");
-      const isUploadPath = p.includes("/upload/");
-      const isProductUpload = p.includes("/upload/item/") || p.includes("/upload/editor/") || p.includes("/upload/contents/");
-      if (isDomeggook && isUploadPath && isProductUpload) return true;
-
-      // allow external-hosted detail images if they look like real image files (small allowlist)
-      const allowedExternalHosts = ["gi.esmplus.com", "story-img.kakaocdn.net"];
-      const ext = (p.split("?")[0].split("#")[0].match(/\.(jpg|jpeg|png|webp|gif)$/i) || [])[0];
-
-      const externalBad = [
-        "공지",
-        "필독",
-        "인포",
-        "information",
-        "당일출고",
-        "배송",
-        "주의",
-        "warning",
-        "caution",
-        "bnr",
-        "banner",
-      ];
-      const hrefLower = u.href.toLowerCase();
-      const decoded = (() => {
-        try { return decodeURIComponent(u.href); } catch { return u.href; }
-      })().toLowerCase();
-      if (externalBad.some((k) => hrefLower.includes(String(k).toLowerCase()) || decoded.includes(String(k).toLowerCase()))) {
-        return false;
-      }
-
-      if (ext && allowedExternalHosts.includes(host)) return true;
-
-      return false;
-    } catch {
-      return false;
-    }
-  }
 
   const imagesOverride = Array.isArray(settings.imagesOverride)
     ? settings.imagesOverride.map((x) => String(x || "").trim()).filter(Boolean)
     : [];
 
-  const contentImages = (imagesOverride.length > 0
-    ? imagesOverride
-    : extractImageUrls(draft.contentText).filter(isLikelyProductImage))
+  // preview.computed.images contains [main, ...detail]
+  const computedImages = Array.isArray(computed.images) ? computed.images : [];
+  const detailFromPreview = computedImages.slice(1);
+
+  const contentImages = (imagesOverride.length > 0 ? imagesOverride : detailFromPreview)
     .slice(0, Math.max(0, maxContentImages))
     .filter(Boolean);
 

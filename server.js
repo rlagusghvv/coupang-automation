@@ -4,6 +4,7 @@ import express from "express";
 import fs from "node:fs";
 import path from "node:path";
 import { runUploadFromUrl } from "./src/server/externalAdapters.js";
+import { DOMEGGOOK_OPENAPI_KEY } from "./src/config/env.js";
 import { previewUploadFromUrl } from "./src/pipeline/previewUploadFromUrl.js";
 import { classifyUrl } from "./src/utils/urlFilter.js";
 import {
@@ -2076,6 +2077,7 @@ const HOST = (process.env.HOST || "0.0.0.0").trim();
 app.listen(PORT, HOST, async () => {
   const baseHost = HOST === "0.0.0.0" ? "localhost" : HOST;
   log(`server running: http://${baseHost}:${PORT}`);
+  log(`domeggook openapi key: ${DOMEGGOOK_OPENAPI_KEY ? 'present' : 'missing'}`);
   // kakao oauth removed
   log(`bind: ${HOST}:${PORT}`);
 

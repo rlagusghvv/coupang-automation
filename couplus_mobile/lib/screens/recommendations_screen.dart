@@ -1,4 +1,5 @@
 import 'package:couplus_mobile/api/api_client.dart';
+import 'package:couplus_mobile/screens/recommendation_detail_screen.dart';
 import 'package:couplus_mobile/ui/widgets.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -35,7 +36,8 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
         'limit': '50',
       });
       final list = (json['items'] as List?) ?? const [];
-      setState(() => _items = list.map((e) => (e as Map).cast<String, dynamic>()).toList());
+      setState(() => _items =
+          list.map((e) => (e as Map).cast<String, dynamic>()).toList());
     } catch (e) {
       setState(() => _error = e.toString());
     } finally {
@@ -43,100 +45,7 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
     }
   }
 
-  Future<void> _uploadNow(String url, {String? titleOverride}) async {
-    final u = url.trim();
-    if (u.isEmpty) return;
-
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
-
-    try {
-      final payload = <String, dynamic>{
-        'kind': 'upload',
-        'url': u,
-        'force': '0',
-      };
-      if (titleOverride != null && titleOverride.trim().isNotEmpty) {
-        payload['titleOverride'] = titleOverride.trim();
-      }
-
-      final json = await widget.api.postJson('/api/jobs/start', payload);
-      final job = (json['job'] as Map?)?.cast<String, dynamic>() ?? {};
-      final jobId = (job['id'] ?? '').toString();
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('업로드를 시작했어요. (백그라운드 작업)')),
-        );
-      }
-
-      if (jobId.isNotEmpty) {
-        // Poll job for up to ~10 minutes.
-        for (var i = 0; i < 300; i += 1) {
-          await Future<void>.delayed(const Duration(seconds: 2));
-          final j = await widget.api.getJson('/api/jobs/$jobId');
-          final job = (j['job'] as Map?)?.cast<String, dynamic>() ?? {};
-          final status = (job['status'] ?? '').toString();
-          final progress = (job['result']?['progress'] as Map?)?.cast<String, dynamic>() ?? {};
-
-          if (progress.isNotEmpty && mounted) {
-            final stage = (progress['stage'] ?? '').toString();
-            setState(() {
-              _error = stage.isEmpty ? null : '업로드 진행중: $stage';
-            });
-          }
-
-          if (status == 'success') {
-            if (mounted) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('업로드 완료!')),
-              );
-            }
-            break;
-          }
-          if (status == 'failed') {
-            throw Exception(job['errorMessage'] ?? '업로드 실패');
-          }
-        }
-      }
-    } catch (e) {
-      setState(() => _error = e.toString());
-    } finally {
-      if (mounted) setState(() => _loading = false);
-    }
-  }
-
-  Future<String?> _promptRename({required String initial}) async {
-    final c = TextEditingController(text: initial);
-    return showDialog<String>(
-      context: context,
-      builder: (ctx) {
-        return AlertDialog(
-          title: const Text('상품명 수정'),
-          content: TextField(
-            controller: c,
-            autofocus: true,
-            decoration: const InputDecoration(
-              hintText: '업로드할 상품명',
-            ),
-            onSubmitted: (_) => Navigator.of(ctx).pop(c.text),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(ctx).pop(null),
-              child: const Text('취소'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.of(ctx).pop(c.text),
-              child: const Text('적용'),
-            ),
-          ],
-        );
-      },
-    );
-  }
+  // Upload is done from the detail preview screen.
 
   Future<void> _uploadSelected() async {
     final urls = _selected.toList();
@@ -187,7 +96,8 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
       _error = null;
     });
     try {
-      final json = await widget.api.postJson('/api/recommendations/fill', {'targetCount': 20});
+      final json = await widget.api
+          .postJson('/api/recommendations/fill', {'targetCount': 20});
       final job = (json['job'] as Map?)?.cast<String, dynamic>() ?? {};
       final jobId = (job['id'] ?? '').toString();
 
@@ -204,7 +114,9 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
           final j = await widget.api.getJson('/api/jobs/$jobId');
           final job = (j['job'] as Map?)?.cast<String, dynamic>() ?? {};
           final status = (job['status'] ?? '').toString();
-          final progress = (job['result']?['progress'] as Map?)?.cast<String, dynamic>() ?? {};
+          final progress =
+              (job['result']?['progress'] as Map?)?.cast<String, dynamic>() ??
+                  {};
 
           if (progress.isNotEmpty && mounted) {
             final stage = (progress['stage'] ?? '').toString();
@@ -213,7 +125,8 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
             final kept = (progress['kept'] ?? 0).toString();
             final target = (progress['target'] ?? 0).toString();
             setState(() {
-              _error = '진행중: $stage (후보 $candidates / 검증 $validated / 유지 $kept/$target)';
+              _error =
+                  '진행중: $stage (후보 $candidates / 검증 $validated / 유지 $kept/$target)';
             });
           }
 
@@ -288,7 +201,10 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
               Text(
                 '기준: 순마진≥3,000원 / 마진율≥30% (검증 통과만 노출)',
                 style: TextStyle(
-                  color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6),
+                  color: Theme.of(context)
+                      .colorScheme
+                      .onSurface
+                      .withValues(alpha: 0.6),
                   fontSize: 12,
                 ),
               ),
@@ -304,7 +220,10 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
               child: Text(
                 '아직 추천이 없어요. 우측 상단 ▶︎ 버튼으로 지금 생성할 수 있어요. (매일 오전 9시에 자동 생성됩니다)',
                 style: TextStyle(
-                  color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.7),
+                  color: Theme.of(context)
+                      .colorScheme
+                      .onSurface
+                      .withValues(alpha: 0.7),
                 ),
               ),
             )
@@ -324,6 +243,11 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
                 final finalPrice = (it['finalPrice'] ?? 0);
                 final reason = (it['reason'] ?? '').toString();
                 final url = (it['sourceUrl'] ?? '').toString();
+                final qc = (it['qc'] as Map?)?.cast<String, dynamic>() ??
+                    const <String, dynamic>{};
+                final qcTier = (qc['tier'] ?? '-').toString();
+                final detailImageCount =
+                    int.tryParse((qc['detailImageCount'] ?? 0).toString()) ?? 0;
 
                 final selected = url.isNotEmpty && _selected.contains(url);
 
@@ -331,14 +255,18 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
                   onTap: url.isEmpty
                       ? null
                       : () {
-                          // Tap: toggle select (more useful than copy).
-                          setState(() {
-                            if (_selected.contains(url)) {
-                              _selected.remove(url);
-                            } else {
-                              _selected.add(url);
-                            }
-                          });
+                          Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (_) => RecommendationDetailScreen(
+                                api: widget.api,
+                                sourceUrl: url,
+                                title: title,
+                                thumbUrl: img,
+                                qcTier: qcTier,
+                                detailImageCount: detailImageCount,
+                              ),
+                            ),
+                          );
                         },
                   child: Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -366,9 +294,14 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
                             ? Container(
                                 width: 66,
                                 height: 66,
-                                color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                                color: Theme.of(context)
+                                    .colorScheme
+                                    .surfaceContainerHighest,
                                 child: Icon(Icons.image_outlined,
-                                    color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.5)),
+                                    color: Theme.of(context)
+                                        .colorScheme
+                                        .onSurface
+                                        .withValues(alpha: 0.5)),
                               )
                             : Image.network(
                                 widget.api.proxyImageUrl(img),
@@ -378,9 +311,14 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
                                 errorBuilder: (_, __, ___) => Container(
                                   width: 66,
                                   height: 66,
-                                  color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                                  color: Theme.of(context)
+                                      .colorScheme
+                                      .surfaceContainerHighest,
                                   child: Icon(Icons.broken_image,
-                                      color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.5)),
+                                      color: Theme.of(context)
+                                          .colorScheme
+                                          .onSurface
+                                          .withValues(alpha: 0.5)),
                                 ),
                               ),
                       ),
@@ -393,7 +331,8 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
                               title.isEmpty ? '(제목 없음)' : title,
                               maxLines: 2,
                               overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(fontWeight: FontWeight.w900),
+                              style:
+                                  const TextStyle(fontWeight: FontWeight.w900),
                             ),
                             const SizedBox(height: 6),
                             Wrap(
@@ -403,7 +342,8 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
                                 if (keyword.isNotEmpty)
                                   InfoChip(
                                     label: keyword,
-                                    color: Theme.of(context).colorScheme.outline,
+                                    color:
+                                        Theme.of(context).colorScheme.outline,
                                   ),
                                 InfoChip(
                                   label: '권장가 ${(finalPrice as num).round()}',
@@ -414,7 +354,8 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
                                   color: const Color(0xFF2F9E44),
                                 ),
                                 InfoChip(
-                                  label: '마진 ${(((marginRate as num)) * 100).round()}%',
+                                  label:
+                                      '마진 ${(((marginRate as num)) * 100).round()}%',
                                   color: const Color(0xFF2F9E44),
                                 ),
                               ],
@@ -425,13 +366,25 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
                                 FilledButton.tonalIcon(
                                   onPressed: (url.isEmpty || _loading)
                                       ? null
-                                      : () async {
-                                          final nextTitle = await _promptRename(initial: title);
-                                          if (nextTitle == null) return;
-                                          await _uploadNow(url, titleOverride: nextTitle);
+                                      : () {
+                                          Navigator.of(context).push(
+                                            MaterialPageRoute(
+                                              builder: (_) =>
+                                                  RecommendationDetailScreen(
+                                                api: widget.api,
+                                                sourceUrl: url,
+                                                title: title,
+                                                thumbUrl: img,
+                                                qcTier: qcTier,
+                                                detailImageCount:
+                                                    detailImageCount,
+                                              ),
+                                            ),
+                                          );
                                         },
-                                  icon: const Icon(Icons.cloud_upload_outlined, size: 18),
-                                  label: const Text('업로드'),
+                                  icon: const Icon(Icons.preview_outlined,
+                                      size: 18),
+                                  label: const Text('미리보기'),
                                 ),
                                 const SizedBox(width: 8),
                                 TextButton.icon(
@@ -440,7 +393,9 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
                                       : () async {
                                           final uri = Uri.tryParse(url);
                                           if (uri != null) {
-                                            await launchUrl(uri, mode: LaunchMode.externalApplication);
+                                            await launchUrl(uri,
+                                                mode: LaunchMode
+                                                    .externalApplication);
                                           }
                                         },
                                   icon: const Icon(Icons.open_in_new, size: 18),
@@ -451,9 +406,12 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
                                   onPressed: url.isEmpty
                                       ? null
                                       : () {
-                                          Clipboard.setData(ClipboardData(text: url));
-                                          ScaffoldMessenger.of(context).showSnackBar(
-                                            const SnackBar(content: Text('URL을 복사했어요.')),
+                                          Clipboard.setData(
+                                              ClipboardData(text: url));
+                                          ScaffoldMessenger.of(context)
+                                              .showSnackBar(
+                                            const SnackBar(
+                                                content: Text('URL을 복사했어요.')),
                                           );
                                         },
                                   icon: const Icon(Icons.copy, size: 18),
@@ -468,7 +426,10 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
                                 maxLines: 2,
                                 overflow: TextOverflow.ellipsis,
                                 style: TextStyle(
-                                  color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6),
+                                  color: Theme.of(context)
+                                      .colorScheme
+                                      .onSurface
+                                      .withValues(alpha: 0.6),
                                   fontSize: 12,
                                 ),
                               ),

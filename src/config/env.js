@@ -11,6 +11,14 @@ function getEnv(name, fallback = "") {
   return (v == null ? fallback : String(v)).trim();
 }
 
+function getEnvAny(names, fallback = "") {
+  for (const n of names || []) {
+    const v = getEnv(String(n || ""));
+    if (v) return v;
+  }
+  return String(fallback || "").trim();
+}
+
 export function assertNonEmpty(label, value) {
   return String(value || "").trim().length > 0;
 }
@@ -25,3 +33,12 @@ export const IMAGE_PROXY_BASE = getEnv(
   "IMAGE_PROXY_BASE",
   "https://coupang-automation.pages.dev",
 );
+
+// Domeggook OpenAPI (variable name may differ depending on docs/account)
+export const DOMEGGOOK_OPENAPI_KEY = getEnvAny([
+  "DOMEGGOOK_OPENAPI_KEY",
+  "DOMEGGOOK_API_KEY",
+  "DOMEGGOOK_KEY",
+  "DOMEGGOOK_SERVICE_KEY",
+  "DOMEGGOOK_CERT_KEY",
+]);

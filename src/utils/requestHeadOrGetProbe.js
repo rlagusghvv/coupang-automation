@@ -1,19 +1,19 @@
 export async function requestHeadOrGetProbe(url, opts = {}) {
-  const { timeoutMs = 15000 } = opts;
+  const { timeoutMs = 15000, headers = {} } = opts;
 
-  const head = await _req(url, "HEAD", timeoutMs);
+  const head = await _req(url, "HEAD", timeoutMs, false, headers);
   if (head.ok) return head;
 
-  const get = await _req(url, "GET", timeoutMs, true);
+  const get = await _req(url, "GET", timeoutMs, true, headers);
   return get;
 }
 
-async function _req(url, method, timeoutMs, useRange = false) {
+async function _req(url, method, timeoutMs, useRange = false, extraHeaders = {}) {
   const controller = new AbortController();
   const t = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
-    const headersObj = {};
+    const headersObj = { ...(extraHeaders || {}) };
     if (useRange) headersObj["Range"] = "bytes=0-0";
 
     const res = await fetch(url, {

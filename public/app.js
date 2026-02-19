@@ -83,6 +83,12 @@ const homeUploadGateEl = $("homeUploadGate");
 const uploadPreviewCard = $("uploadPreviewCard");
 const uploadPreviewKv = $("uploadPreviewKv");
 
+// Recommendations (auto digger)
+const recoKeywordsEl = $("recoKeywords");
+const recoFillBtn = $("recoFill");
+const recoRefreshBtn = $("recoRefresh");
+const recoListEl = $("recoList");
+
 const domeggookSessionBtn = $("createDomeggookSession");
 const domeggookSessionSaveBtn = $("saveDomeggookSession");
 const domeggookSessionStatusEl = $("domeggookSessionStatus");
@@ -859,6 +865,136 @@ async function previewUpload() {
   }
 }
 
+// ----- Recommendations / Auto digger -----
+function parseKeywords(raw) {
+  const s = String(raw || "");
+  // split by comma or newline
+  const parts = s
+    .split(/[,\n]/g)
+    .map((x) => x.trim())
+    .filter(Boolean);
+  // de-dupe, keep order
+  const seen = new Set();
+  const out = [];
+  for (const p of parts) {
+    if (seen.has(p)) continue;
+    seen.add(p);
+    out.push(p);
+  }
+  return out;
+}
+
+function formatWon(n) {
+  const num = Number(n);
+  if (!Number.isFinite(num)) return "-";
+  return num.toLocaleString("ko-KR") + "원";
+}
+
+function renderRecoList(items) {
+  if (!recoListEl) return;
+  const list = Array.isArray(items) ? items : [];
+  if (!list.length) {
+    recoListEl.innerHTML = `<div class="hint">아직 후보가 없어요. ‘후보 채우기’를 눌러주세요.</div>`;
+    return;
+  }
+
+  recoListEl.innerHTML = list
+    .map((it) => {
+      const title = it.title || "(제목 없음)";
+      const keyword = it.keyword || "";
+      const img = it.mainImageUrl || "";
+      const finalPrice = formatWon(it.finalPrice);
+      const profit = formatWon(it.profit);
+      const margin = Number(it.marginRate);
+      const marginText = Number.isFinite(margin) ? `${Math.round(margin * 100)}%` : "-";
+      const sourceUrl = it.sourceUrl || "";
+
+      return `
+        <div class="reco-item" style="display:flex; gap:12px; padding:10px 0; border-bottom:1px solid var(--line,#eee);">
+          <div style="width:72px; flex:0 0 72px;">
+            ${img ? `<img src="${img}" alt="thumb" style="width:72px; height:72px; object-fit:cover; border-radius:10px;" loading="lazy"/>` : `<div style="width:72px; height:72px; border-radius:10px; background:#f2f2f2;"></div>`}
+          </div>
+          <div style="flex:1 1 auto; min-width:0;">
+            <div style="font-weight:700; line-height:1.25;">${escapeHtml(title)}</div>
+            <div class="hint" style="margin-top:4px; display:flex; flex-wrap:wrap; gap:8px;">
+              ${keyword ? `<span class="chip">키워드: ${escapeHtml(keyword)}</span>` : ""}
+              <span class="chip">예상가: ${escapeHtml(finalPrice)}</span>
+              <span class="chip">예상이익: ${escapeHtml(profit)}</span>
+              <span class="chip">마진: ${escapeHtml(marginText)}</span>
+            </div>
+            <div class="btn-row" style="margin-top:8px;">
+              <button type="button" class="ghost" data-action="reco-preview" data-url="${escapeHtml(sourceUrl)}">미리보기</button>
+              <a class="btn-link" href="${escapeHtml(sourceUrl)}" target="_blank" rel="noreferrer">원문 열기</a>
+            </div>
+          </div>
+        </div>
+      `;
+    })
+    .join("");
+
+  // bind preview buttons
+  recoListEl.querySelectorAll('[data-action="reco-preview"]').forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const url = btn.getAttribute("data-url") || "";
+      if (!url) return;
+      // reuse existing preview UI card
+      if (urlInput) urlInput.value = url;
+      await previewUpload();
+      // scroll to upload card for visibility
+      document.getElementById("uploadPreviewCard")?.scrollIntoView({ behavior: "smooth", block: "center" });
+    });
+  });
+}
+
+async function loadRecommendations() {
+  try {
+    const res = await fetch("/api/recommendations?limit=40");
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok || !json.ok) {
+      renderRecoList([]);
+      return;
+    }
+    renderRecoList(json.items || []);
+  } catch {
+    renderRecoList([]);
+  }
+}
+
+async function fillRecommendations() {
+  if (recoFillBtn) recoFillBtn.disabled = true;
+  setStatus("후보 생성 중...", "");
+  try {
+    const keywords = parseKeywords(recoKeywordsEl?.value);
+    const body = { targetCount: 20 };
+    if (keywords.length) body.keywords = keywords;
+
+    const res = await fetch("/api/recommendations/fill", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok || !json.ok) {
+      setStatus("후보 생성 실패", "bad");
+      log(json);
+      return;
+    }
+
+    setStatus("후보 생성 요청 완료(잠시 후 목록 확인)", "ok");
+
+    // poll the list a few times
+    for (let i = 0; i < 6; i += 1) {
+      await new Promise((r) => setTimeout(r, 1800));
+      await loadRecommendations();
+    }
+  } catch (e) {
+    setStatus("후보 생성 에러", "bad");
+    log(String(e?.message || e));
+  } finally {
+    if (recoFillBtn) recoFillBtn.disabled = false;
+  }
+}
+
 function renderDuplicate(existing) {
   const title = existing?.title || "";
   const pid = existing?.sellerProductId || "";
@@ -905,7 +1041,7 @@ async function run(forceOverride = null) {
 
   try {
     const force = forceOverride == null ? Boolean(forceUploadEl?.checked) : Boolean(forceOverride);
-    const res = await fetch("/api/upload", {
+    const res = await fetch("/api/upload/execute", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ url, force: force ? "1" : "0" }),
@@ -919,6 +1055,14 @@ async function run(forceOverride = null) {
     }
 
     if (!res.ok || !json.ok) {
+      // Missing keys UX
+      if (json?.error === 'missing_coupang_keys' && Array.isArray(json?.missing)) {
+        setStatus("설정에 쿠팡 키가 필요합니다", "bad");
+        log(json);
+        renderSummary(null);
+        return;
+      }
+
       setStatus("실패", "bad");
       log(json);
       renderSummary(null);
@@ -1586,4 +1730,9 @@ domemeSessionSaveBtn?.addEventListener("click", async () => {
   evaluateUploadGate();
   await loadHomeActivity();
   await loadPurchaseLogsAndRenderHomePay();
+
+  // recommendations
+  recoFillBtn?.addEventListener("click", fillRecommendations);
+  recoRefreshBtn?.addEventListener("click", loadRecommendations);
+  await loadRecommendations();
 })();
