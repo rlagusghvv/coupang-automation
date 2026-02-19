@@ -10,7 +10,9 @@ export function buildTopImages({ url }) {
     ];
   }
 
+  // External URL mode: set both cdnPath and vendorPath to the URL.
+  // Some approvals reject when cdnPath is missing/invalid.
   return [
-    { imageOrder: 0, imageType: "REPRESENTATION", vendorPath: u },
+    { imageOrder: 0, imageType: "REPRESENTATION", cdnPath: u, vendorPath: u },
   ];
 }

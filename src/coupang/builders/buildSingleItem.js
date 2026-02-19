@@ -48,7 +48,8 @@ export function buildSingleItem({
         if (u.startsWith('vendor_inventory/')) {
           return { imageOrder: 0, imageType: 'REPRESENTATION', cdnPath: u, vendorPath: u };
         }
-        return { imageOrder: 0, imageType: 'REPRESENTATION', vendorPath: u };
+        // External URL mode: set both cdnPath and vendorPath to the URL.
+        return { imageOrder: 0, imageType: 'REPRESENTATION', cdnPath: u, vendorPath: u };
       })(),
     ],
     notices: notices ?? buildNoticesEtcGoods(),
