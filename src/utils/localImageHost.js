@@ -29,14 +29,18 @@ export function buildLocalImageUrl(baseUrl, fileName, opts = {}) {
   const base = ensureTrailingSlash(baseUrl);
   const safeName = String(fileName || "").replace(/^[\\/]+/, "");
   if (!base || !safeName) return "";
-  const u = new URL(safeName, base);
 
-  // Cache-bust to avoid Cloudflare edge caching a transient 404 during first fetch.
-  // Safe for Coupang image validation.
-  const cacheBust = opts.cacheBust ?? true;
-  if (cacheBust) u.searchParams.set("v", String(Date.now()));
+  // Cache-bust: use query param by default.
+  // NOTE: Some edges might ignore query in cache key, but we've observed certain setups
+  // treat /_cb/* paths unexpectedly. Prefer query here for compatibility.
+  const cacheBust = opts.cacheBust ?? false;
+  if (cacheBust) {
+    const u = new URL(safeName, base);
+    u.searchParams.set('cb', String(Date.now()));
+    return u.toString();
+  }
 
-  return u.toString();
+  return new URL(safeName, base).toString();
 }
 
 export function buildOutPath(outDir, fileName) {

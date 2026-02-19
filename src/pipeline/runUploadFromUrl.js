@@ -24,6 +24,7 @@ import { resolveDisplayCategoryCode } from "../utils/categoryMap.js";
 import { computePrice } from "../utils/price.js";
 import { resolveLocalImageBase, buildLocalImageUrl } from "../utils/localImageHost.js";
 import { downloadImagesWithPlaywright } from "../utils/playwrightImageDownload.js";
+import { normalizeImageForCoupang } from "../utils/imageNormalize.js";
 import { deployPagesAssets } from "../utils/pagesDeploy.js";
 import { downloadImageBufferWithPlaywright } from "../utils/downloadImage.js";
 import { uploadMarketplaceImage } from "../coupang/api/uploadMarketplaceImage.js";
@@ -187,8 +188,9 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
 
   // For approvals, external detail image URLs are the #1 rejection source.
   // Default: build detail images from Wing uploader captures (vendor_inventory paths).
-  const includeDetailImages = String(settings.includeDetailImages ?? '1').trim() === '1';
-  const useWingCaptureDetailImages = String(settings.useWingCaptureDetailImages ?? '1').trim() !== '0';
+  // Default: keep detail images off in execute (stability-first). Can be enabled per-run.
+  const includeDetailImages = String(settings.includeDetailImages ?? '0').trim() === '1';
+  const useWingCaptureDetailImages = String(settings.useWingCaptureDetailImages ?? '0').trim() !== '0';
   if (includeDetailImages && useWingCaptureDetailImages) {
     const wingDetails = getWingUploadedImages({ imageType: 'DETAIL' })
       .map((x) => x.vendorPath)
@@ -214,12 +216,14 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
 
   // ✅ Best-effort: Upload images to Coupang/Wing first (prevents image_host_unreachable)
   // If disabled, falls back to the previous "public hosting" approach.
-  const useCoupangImageUpload = String(settings.useCoupangImageUpload ?? "1").trim() !== "0";
+  // Default: no-login mode (external public image URLs).
+  const useCoupangImageUpload = String(settings.useCoupangImageUpload ?? "0").trim() !== "0";
 
   // Try image upload first; if it fails, fall back to public hosting instead of hard-failing.
   // NOTE: Wing internal uploader cannot be used headless reliably (Akamai). We can reuse
   // a recently uploaded Wing image from capture log as a temporary, stable representation.
-  const useWingCaptureUploadedRep = String(settings.useWingCaptureUploadedRep ?? '1').trim() !== '0';
+  // Default: off (no-login mode). Only enable when explicitly doing Wing-based uploads.
+  const useWingCaptureUploadedRep = String(settings.useWingCaptureUploadedRep ?? '0').trim() !== '0';
 
   if (!payloadOnly && useCoupangImageUpload) {
     try {
@@ -370,6 +374,17 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
       storageStatePath,
     });
 
+    // Safety: normalize downloaded files in-place to satisfy Coupang image constraints.
+    // Some sources provide tiny thumbnails (e.g. 330x330) which get approval-rejected.
+    for (const f of downloaded.files || []) {
+      try {
+        if (!f?.filePath) continue;
+        const tmp = `${f.filePath}.norm_${Date.now()}.jpg`;
+        await normalizeImageForCoupang({ inputPath: f.filePath, outputPath: tmp });
+        try { fs.renameSync(tmp, f.filePath); } catch { try { fs.copyFileSync(tmp, f.filePath); } catch {} try { fs.unlinkSync(tmp); } catch {} }
+      } catch {}
+    }
+
     if (String(settings.pagesAutoDeploy || "").trim() === "1") {
       const deployRes = await deployPagesAssets({
         directory: outDir,
@@ -394,12 +409,35 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
       await new Promise((r) => setTimeout(r, 3000));
     }
 
-    // Helper: for a downloaded file, generate a fresh cache-busted public URL and
-    // verify it's reachable from the internet (Cloudflare edge can cache a transient 404).
+    // Helper: ensure a local out/<file> meets Coupang image constraints.
+    // We always normalize to 1200x1200 JPEG to avoid approval rejects on small thumbs (e.g. 330x330).
+    async function forceNormalizeOutFile(fileName) {
+      try {
+        if (!fileName) return fileName;
+        const baseName = String(fileName);
+        const p = path.join(outDir, baseName);
+        if (!fs.existsSync(p)) return fileName;
+
+        // Write to a new stable filename to avoid any race/overwrite issues.
+        const ext = path.extname(baseName) || '.jpg';
+        const stem = ext ? baseName.slice(0, -ext.length) : baseName;
+        const normalizedName = `${stem}.cp_norm.jpg`;
+        const outPath = path.join(outDir, normalizedName);
+
+        await normalizeImageForCoupang({ inputPath: p, outputPath: outPath });
+        return normalizedName;
+      } catch {
+        return fileName;
+      }
+    }
+
+    // Helper: for a downloaded file, generate a public URL and verify it's reachable.
     async function pickReachablePublicUrl(fileName, { attempts = 8, timeoutMs = IMAGE_CHECK_TIMEOUT_MS } = {}) {
       if (!fileName) return "";
+      // Normalize first to ensure >=500x500
+      const normalizedName = await forceNormalizeOutFile(fileName);
       for (let i = 0; i < attempts; i += 1) {
-        const u = buildLocalImageUrl(localImageBase, fileName, { cacheBust: true });
+        const u = buildLocalImageUrl(localImageBase, normalizedName, { cacheBust: false });
         const ok = await isUrlReachable(u, timeoutMs);
         if (ok) return u;
         // backoff
@@ -422,7 +460,7 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
           ok: false,
           skipped: false,
           error: "image_host_unreachable",
-          imageUrl: buildLocalImageUrl(localImageBase, mainFileName, { cacheBust: true }),
+          imageUrl: buildLocalImageUrl(localImageBase, mainFileName, { cacheBust: false }),
         };
       }
 
@@ -664,7 +702,9 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
   }
 
   // Final safety: force Wing-captured representation image when available (prevents external URL approval rejects).
-  if (useWingCaptureUploadedRep) {
+  // Only do this in "upload-to-coupang/wing" mode. In external-URL mode (useCoupangImageUpload=0),
+  // we must not override with Wing vendor_inventory paths.
+  if (useCoupangImageUpload && useWingCaptureUploadedRep) {
     const last = getLastWingUploadedImage({ imageType: 'REPRESENTATION' });
     if (last?.vendorPath) {
       imageUrl = last.vendorPath;

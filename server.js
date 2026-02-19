@@ -77,6 +77,30 @@ await initDb();
 
 // ✅ out 폴더(이미지 파일) 정적 서빙
 // 쿠팡이 접근 가능한 공개 URL(imageProxyBase/localImageBaseUrl)의 /couplus-out/<file> 로 매핑된다.
+// Cache-bust path handler: /couplus-out/_cb/<ts>/<file>
+// Important: Coupang often probes with HEAD before GET.
+function handleCouplusOutCb(req, res) {
+  try {
+    const file = String(req.params.file || '').replace(/^[\\/]+/, '');
+    const p = path.join(process.cwd(), 'out', file);
+
+    // Prevent caching (especially negative caching) on any edge.
+    res.setHeader('Cache-Control', 'no-store');
+
+    // Existence check: avoid delayed file-write race turning into cached 404.
+    if (!fs.existsSync(p)) return res.status(404).type('text').send('Not Found');
+
+    // HEAD: only headers
+    if (req.method === 'HEAD') return res.status(200).end();
+
+    return res.sendFile(p);
+  } catch {
+    return res.status(404).type('text').send('Not Found');
+  }
+}
+app.get('/couplus-out/_cb/:ts/:file', handleCouplusOutCb);
+app.head('/couplus-out/_cb/:ts/:file', handleCouplusOutCb);
+
 app.use(
   "/couplus-out",
   express.static(path.join(process.cwd(), "out"), {

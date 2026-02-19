@@ -44,7 +44,9 @@ export async function normalizeImageForCoupang({ inputPath, outputPath }) {
   const vf =
     "scale=1200:1200:force_original_aspect_ratio=decrease,pad=1200:1200:(ow-iw)/2:(oh-ih)/2:white";
 
-  await run("ffmpeg", [
+  const ffmpeg = process.env.FFMPEG_PATH || "/opt/homebrew/bin/ffmpeg";
+
+  await run(ffmpeg, [
     "-hide_banner",
     "-loglevel",
     "error",
