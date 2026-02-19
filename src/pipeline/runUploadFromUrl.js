@@ -587,7 +587,9 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
   let createBodyObj = null;
   try {
     createBodyObj = typeof res.body === "string" ? JSON.parse(res.body) : res.body;
-    if (createBodyObj?.code && String(createBodyObj.code).toUpperCase() !== "SUCCESS") {
+
+    const code = String(createBodyObj?.code || "").toUpperCase();
+    if (code && code !== "SUCCESS") {
       return {
         ok: false,
         error: "coupang_create_failed",
@@ -600,6 +602,25 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
         create: { status: res.status, body: createBody, sellerProductId: null },
       };
     }
+
+    // Even with code=SUCCESS, Coupang may return errorItems for required attributes.
+    const errorItems = Array.isArray(createBodyObj?.errorItems) ? createBodyObj.errorItems : [];
+    if (errorItems.length > 0) {
+      createdId = createBodyObj?.data ?? null;
+      return {
+        ok: false,
+        error: "coupang_required_attributes_missing",
+        detail: createBodyObj,
+        draft: { title: sellerProductName, price: draft.price, imageUrl: draft.imageUrl },
+        finalPrice,
+        category: { requested: displayCategoryCode, used: finalCategoryCode, auto: allowAutoCategory, predicted: settings.__predictedCategory || null },
+        optionsUsed: optionsUsed.map((opt) => opt.label),
+        payloadCheck,
+        create: { status: res.status, body: createBody, sellerProductId: createdId },
+        followUp: createdId ? await pollApprovalStatus({ sellerProductId: createdId, accessKey, secretKey, attempts: 1, delayMs: 500 }) : null,
+      };
+    }
+
     createdId = createBodyObj?.data ?? null;
   } catch {}
 
