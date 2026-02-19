@@ -15,7 +15,7 @@ import { getSellerProductHistories } from "../coupang/api/getSellerProductHistor
 import { getCategoryMetas } from "../coupang/api/getCategoryMetas.js";
 import { checkAutoCategoryAgreed } from "../coupang/api/checkAutoCategoryAgreed.js";
 import { recommendCategory } from "../coupang/api/recommendCategory.js";
-import { suggestTitlesFromNaver, cleanTitle } from "../utils/titleSuggest.js";
+import { suggestTitlesHybrid, cleanTitle } from "../utils/titleSuggest.js";
 import { buildSingleItem } from "../coupang/builders/buildSingleItem.js";
 import fs from "node:fs";
 import path from "node:path";
@@ -656,7 +656,7 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
   const autoTitleSuggest = String(settings.autoTitleSuggest ?? "1").trim() !== "0";
   if (!overrideTitle && autoTitleSuggest) {
     try {
-      const sug = await suggestTitlesFromNaver({ title: draft.title, maxLen: 15 });
+      const sug = await suggestTitlesHybrid({ title: draft.title, maxLen: 15, useNaver: true });
       const first = sug?.suggestions?.[0]?.title;
       if (first) autoSuggestedTitle = String(first).trim();
     } catch {}

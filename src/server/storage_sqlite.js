@@ -240,6 +240,21 @@ export async function initDb() {
     )`,
   );
 
+  // Themes (keyword presets for recommendations)
+  await dbRun(
+    db,
+    `CREATE TABLE IF NOT EXISTS themes (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      keywords_json TEXT NOT NULL DEFAULT '[]',
+      is_starter INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      UNIQUE(user_id, name)
+    )`,
+  );
+
   // Catalog events (sync/change log)
   await dbRun(
     db,

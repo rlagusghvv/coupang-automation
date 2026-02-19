@@ -6,7 +6,7 @@ import { extractImageUrls } from "../utils/contentImages.js";
 import { requestHeadOrGetProbe } from "../utils/requestHeadOrGetProbe.js";
 import { computePrice } from "../utils/price.js";
 import { recommendCategory } from "../coupang/api/recommendCategory.js";
-import { suggestTitlesFromNaver, cleanTitle } from "../utils/titleSuggest.js";
+import { suggestTitlesHybrid, cleanTitle } from "../utils/titleSuggest.js";
 import { resolveDisplayCategoryCode } from "../utils/categoryMap.js";
 
 const DISPLAY_CATEGORY_CODE = 77723;
@@ -256,7 +256,7 @@ export async function previewUploadFromUrl(inputUrl, settings = {}) {
   // Title suggestions (best-effort)
   let titleSuggestions = null;
   try {
-    titleSuggestions = await suggestTitlesFromNaver({ title: draft.title, maxLen: 15 });
+    titleSuggestions = await suggestTitlesHybrid({ title: draft.title, maxLen: 15, useNaver: true });
   } catch {
     titleSuggestions = null;
   }

@@ -43,6 +43,13 @@ import {
   upsertPreset,
   deletePreset,
 } from "./src/server/presets_sqlite.js";
+import {
+  listThemes,
+  getTheme,
+  createTheme,
+  updateTheme as updateThemeRow,
+  deleteTheme as deleteThemeRow,
+} from "./src/server/themes.js";
 import { addOrder, clearOrders, listOrders, refreshShippingStatusesFromCoupang } from "./src/server/orders_sqlite.js";
 import { exportOrdersToDomeme } from "./src/pipeline/exportOrdersToDomeme.js";
 import { uploadDomemeExcel } from "./src/pipeline/uploadDomemeExcel.js";
@@ -908,11 +915,63 @@ app.get('/api/catalog/:id/events', authRequired, async (req, res) => {
   }
 });
 
+// Themes (keyword presets)
+app.get('/api/themes', authRequired, async (req, res) => {
+  try {
+    const themes = await listThemes(req.user.id);
+    return res.json({ ok: true, themes });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+app.post('/api/themes', authRequired, async (req, res) => {
+  try {
+    const name = String(req.body?.name || '').trim();
+    const keywordsRaw = req.body?.keywords;
+    const keywords = Array.isArray(keywordsRaw) ? keywordsRaw : [];
+    const theme = await createTheme(req.user.id, { name, keywords });
+    return res.json({ ok: true, theme });
+  } catch (e) {
+    return res.status(400).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+app.put('/api/themes/:id', authRequired, async (req, res) => {
+  try {
+    const id = String(req.params.id || '').trim();
+    const patch = {
+      name: req.body?.name,
+      keywords: req.body?.keywords,
+    };
+    const theme = await updateThemeRow(req.user.id, id, patch);
+    return res.json({ ok: true, theme });
+  } catch (e) {
+    return res.status(400).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+app.delete('/api/themes/:id', authRequired, async (req, res) => {
+  try {
+    const id = String(req.params.id || '').trim();
+    const result = await deleteThemeRow(req.user.id, id);
+    return res.json({ ok: true, result });
+  } catch (e) {
+    return res.status(400).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
 // Recommendations
 app.get('/api/recommendations', authRequired, async (req, res) => {
   try {
     const limit = Math.max(1, Math.min(200, Number(req.query.limit || 50) || 50));
-    const items = await listRecommendations(req.user.id, { limit });
+    const tier = String(req.query.tier || '').trim().toUpperCase();
+    const eligibleOnly = String(req.query.eligibleOnly || '').trim() === '1';
+
+    let items = await listRecommendations(req.user.id, { limit });
+    if (tier) items = items.filter((it) => String(it?.qc?.tier || '').toUpperCase() === tier);
+    if (eligibleOnly) items = items.filter((it) => Boolean(it?.qc?.eligibleUpload));
+
     return res.json({ ok: true, items });
   } catch (e) {
     return res.status(500).json({ ok: false, error: String(e?.message || e) });
@@ -923,7 +982,14 @@ app.get('/api/recommendations', authRequired, async (req, res) => {
 app.post('/api/recommendations/run', authRequired, async (req, res) => {
   try {
     const topN = Math.max(1, Math.min(50, Number(req.body?.topN || 20) || 20));
-    const keywords = Array.isArray(req.body?.keywords) ? req.body.keywords : defaultKeywordSet();
+
+    let keywords = Array.isArray(req.body?.keywords) ? req.body.keywords : defaultKeywordSet();
+    const themeId = String(req.body?.themeId || '').trim();
+    if (themeId) {
+      const theme = await getTheme(req.user.id, themeId);
+      if (!theme) return res.status(404).json({ ok: false, error: 'theme_not_found' });
+      if (Array.isArray(theme.keywords) && theme.keywords.length > 0) keywords = theme.keywords;
+    }
 
     const active = await getActiveJobByKind(req.user.id, 'recommendations', ['queued', 'running']);
     if (active) {
@@ -980,7 +1046,14 @@ app.post('/api/recommendations/run', authRequired, async (req, res) => {
 app.post('/api/recommendations/fill', authRequired, async (req, res) => {
   try {
     const targetCount = Math.max(1, Math.min(60, Number(req.body?.targetCount || 20) || 20));
-    const keywords = Array.isArray(req.body?.keywords) ? req.body.keywords : defaultKeywordSet();
+
+    let keywords = Array.isArray(req.body?.keywords) ? req.body.keywords : defaultKeywordSet();
+    const themeId = String(req.body?.themeId || '').trim();
+    if (themeId) {
+      const theme = await getTheme(req.user.id, themeId);
+      if (!theme) return res.status(404).json({ ok: false, error: 'theme_not_found' });
+      if (Array.isArray(theme.keywords) && theme.keywords.length > 0) keywords = theme.keywords;
+    }
 
     const active = await getActiveJobByKind(req.user.id, 'recommendations_fill', ['queued', 'running']);
     if (active) {
@@ -1046,6 +1119,140 @@ app.post('/api/recommendations/fill', authRequired, async (req, res) => {
     return res.json({ ok: true, job });
   } catch (e) {
     return res.status(400).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+// Bulk upload from recommendations (theme + A-tier only)
+let bulkUploadInProgress = false;
+app.post('/api/recommendations/bulk-upload', authRequired, async (req, res) => {
+  try {
+    const themeId = String(req.body?.themeId || '').trim();
+    if (!themeId) return res.status(400).json({ ok: false, error: 'missing themeId' });
+
+    const theme = await getTheme(req.user.id, themeId);
+    if (!theme) return res.status(404).json({ ok: false, error: 'theme_not_found' });
+
+    const lim = Math.max(1, Math.min(50, Number(req.body?.limit || 10) || 10));
+    const dryRun = String(req.body?.dryRun || '').trim() === '1';
+    const force = String(req.body?.force || '').trim() === '1';
+
+    if (uploadInProgress || bulkUploadInProgress) {
+      return res.status(409).json({ ok: false, error: 'upload in progress' });
+    }
+
+    // ensure coupang keys exist (same as /api/upload-from-url)
+    const settings = req.user.settings || {};
+    const missing = [];
+    if (!String(settings.coupangAccessKey || '').trim()) missing.push('coupangAccessKey');
+    if (!String(settings.coupangSecretKey || '').trim()) missing.push('coupangSecretKey');
+    if (!String(settings.coupangVendorId || '').trim()) missing.push('coupangVendorId');
+    if (!String(settings.coupangVendorUserId || '').trim()) missing.push('coupangVendorUserId');
+    if (!String(settings.coupangDeliveryCompanyCode || '').trim()) missing.push('coupangDeliveryCompanyCode');
+    if (missing.length > 0) {
+      return res.status(400).json({
+        ok: false,
+        error: 'missing_coupang_keys',
+        missing,
+        hint: '설정 탭에서 쿠팡 키/벤더 정보를 저장하세요.',
+      });
+    }
+
+    const job = await createJob({ userId: req.user.id, kind: 'bulk_upload_recommendations', inputUrl: `theme:${theme.id}`, force: force ? '1' : '0', catalogId: null });
+
+    setTimeout(async () => {
+      bulkUploadInProgress = true;
+      try {
+        await updateJob({ id: job.id, patch: { status: 'running' } });
+
+        const all = await listRecommendations(req.user.id, { limit: 200 });
+        const themeKeywords = new Set((theme.keywords || []).map((k) => String(k || '').trim()).filter(Boolean));
+
+        const eligible = all
+          .filter((r) => (themeKeywords.size === 0 ? true : themeKeywords.has(String(r.keyword || '').trim())))
+          .filter((r) => Boolean(r?.qc?.eligibleUpload)); // A-tier default (detail images >= 3)
+
+        const queue = eligible.slice(0, lim);
+
+        const progress = {
+          stage: dryRun ? 'dry_run' : 'upload',
+          themeId: theme.id,
+          themeName: theme.name,
+          total: queue.length,
+          uploaded: 0,
+          skipped: 0,
+          failed: 0,
+          lastUrl: '',
+        };
+
+        const results = [];
+
+        for (const rec of queue) {
+          progress.lastUrl = rec.sourceUrl;
+          await updateJob({ id: job.id, patch: { resultJson: { progress, results: results.slice(-5) } } }).catch(() => {});
+
+          // Dedupe unless force
+          const existing = await getUploadedProductByUrl(req.user.id, rec.sourceUrl);
+          if (!force && existing?.seller_product_id) {
+            progress.skipped += 1;
+            results.push({ url: rec.sourceUrl, ok: true, skipped: true, reason: 'duplicate_product', sellerProductId: existing.seller_product_id });
+            continue;
+          }
+
+          if (dryRun) {
+            progress.skipped += 1;
+            results.push({ url: rec.sourceUrl, ok: true, skipped: true, reason: 'dry_run' });
+            continue;
+          }
+
+          // serialize with existing upload lock
+          uploadInProgress = true;
+          const r = await runUploadFromUrl(rec.sourceUrl, settings).catch((e) => ({ ok: false, error: String(e?.message || e) }));
+          uploadInProgress = false;
+
+          const ok = Boolean(r?.ok);
+          if (ok) progress.uploaded += 1;
+          else progress.failed += 1;
+
+          // Store upload record for dedupe (only when created)
+          try {
+            const sellerProductId = r?.create?.sellerProductId ?? null;
+            if (sellerProductId) {
+              await upsertUploadedProduct({
+                userId: req.user.id,
+                sourceUrl: rec.sourceUrl,
+                sellerProductId,
+                title: r?.draft?.title || rec.title || '',
+                finalPrice: r?.finalPrice ?? rec.finalPrice ?? null,
+              });
+            }
+          } catch {}
+
+          results.push({ url: rec.sourceUrl, ok, sellerProductId: r?.create?.sellerProductId ?? null, error: r?.error || r?.create?.error || null });
+          await new Promise((rr) => setTimeout(rr, 700));
+        }
+
+        await updateJob({ id: job.id, patch: { status: 'success', resultJson: { progress, results } } });
+      } catch (e) {
+        try {
+          await updateJob({
+            id: job.id,
+            patch: {
+              status: 'failed',
+              errorCode: 'bulk_upload_failed',
+              errorMessage: String(e?.message || e),
+            },
+          });
+        } catch {}
+      } finally {
+        uploadInProgress = false;
+        bulkUploadInProgress = false;
+      }
+    }, 0);
+
+    return res.json({ ok: true, job });
+  } catch (e) {
+    bulkUploadInProgress = false;
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
   }
 });
 

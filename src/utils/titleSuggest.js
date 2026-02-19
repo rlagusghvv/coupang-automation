@@ -260,3 +260,89 @@ export async function suggestTitlesFromNaver({ title, maxLen = 15 } = {}) {
     raw: volRes.raw,
   };
 }
+
+function extractQtyHint(title) {
+  const t = cleanTitle(title);
+  // common Korean quantity patterns
+  const m = t.match(/(\d{1,4})\s*(매|장|개|팩|입|롤|캡슐|포|매입)/);
+  if (!m) return '';
+  return `${m[1]}${m[2]}`;
+}
+
+export function ruleBasedShortSeoTitle(title, { maxLen = 15 } = {}) {
+  const base = cleanTitle(String(title || '').split('|')[0]);
+  const head = pickProductHead(base);
+  const qty = extractQtyHint(base);
+
+  const tokens = base
+    .split(' ')
+    .map((t) => t.trim())
+    .filter(Boolean)
+    .filter((t) => t.length >= 2)
+    .filter((t) => !STOPWORDS.some((w) => t.includes(w)));
+
+  const uniq = [];
+  for (const t of tokens) {
+    if (uniq.includes(t)) continue;
+    uniq.push(t);
+    if (uniq.length >= 6) break;
+  }
+
+  // Ensure head is included early
+  const parts = [];
+  if (head) parts.push(head);
+  for (const t of uniq) {
+    if (parts.includes(t)) continue;
+    parts.push(t);
+    if (parts.join(' ').length >= maxLen) break;
+  }
+  if (qty && !parts.join(' ').includes(qty)) parts.push(qty);
+
+  const out = parts.join(' ').replace(/\s+/g, ' ').trim();
+  if (!out) return fit15(base).slice(0, maxLen);
+  return fit15(out).slice(0, maxLen);
+}
+
+export async function suggestTitlesHybrid({ title, maxLen = 15, useNaver = true } = {}) {
+  const base = cleanTitle(title);
+  const head = pickProductHead(base);
+
+  const ruleTitle = ruleBasedShortSeoTitle(base, { maxLen });
+
+  let naver = null;
+  if (useNaver) {
+    try {
+      naver = await suggestTitlesFromNaver({ title: base, maxLen });
+    } catch {
+      naver = null;
+    }
+  }
+
+  const merged = [];
+  const push = (t, meta = {}) => {
+    const tt = String(t || '').trim();
+    if (!tt) return;
+    if (merged.some((x) => x.title === tt)) return;
+    merged.push({ title: tt, ...meta });
+  };
+
+  if (naver?.ok && Array.isArray(naver.suggestions)) {
+    for (const s of naver.suggestions) push(s?.title, { source: 'naver', score: s?.score ?? 0, keywords: s?.keywords ?? [] });
+  }
+
+  push(ruleTitle, { source: 'rules', score: 0, keywords: ruleTitle.split(' ').filter(Boolean) });
+  push(fit15(base).slice(0, maxLen), { source: 'fallback', score: 0, keywords: base.split(' ').filter(Boolean) });
+
+  // Keep only reasonably related suggestions.
+  const filtered = merged.filter((s) => jaccardTokenSimilarity(base, s.title) >= 0.15 || includesHead(s.title, head));
+
+  return {
+    ok: true,
+    baseTitle: base,
+    head,
+    ruleTitle,
+    suggestions: (filtered.length ? filtered : merged).slice(0, 3),
+    source: naver?.source || 'hybrid',
+    raw: naver?.raw,
+  };
+}
