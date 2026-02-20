@@ -635,13 +635,17 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
       } catch {}
     }
 
-    try {
-      const meta = await getCategoryMetas({ displayCategoryCode: finalCategoryCode, accessKey, secretKey });
-      if (meta.status !== 200) {
+    // Validate category code only when we actually have keys.
+    // (payloadOnly/dry-run should work without credentials and should respect manual overrides.)
+    if (accessKey && secretKey) {
+      try {
+        const meta = await getCategoryMetas({ displayCategoryCode: finalCategoryCode, accessKey, secretKey });
+        if (meta.status !== 200) {
+          finalCategoryCode = DISPLAY_CATEGORY_CODE;
+        }
+      } catch {
         finalCategoryCode = DISPLAY_CATEGORY_CODE;
       }
-    } catch {
-      finalCategoryCode = DISPLAY_CATEGORY_CODE;
     }
   }
 
@@ -712,12 +716,19 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
   }
 
   // Wet wipes / sanitizing wipes
-  // Meta (seller_api category-related-metas) indicates mandatory attributes for 63908/111860:
-  //  - 평량 (NUMBER)
-  //  - 개당 수량 (NUMBER, QUANTITY unitGroup)
-  //  - 수량 (NUMBER, QUANTITY unitGroup)
-  // Also, seller API requires unitCount/unitType ("단위수량") for these categories.
-  if ([63908, 111860].includes(Number(finalCategoryCode))) {
+  // IMPORTANT: Wing category selection for wipes has been observed as displayCategoryCode=76872.
+  // We also have older meta-driven handling for 63908/111860.
+  // Seller API is strict about unitCount/unitType ("단위수량") for some wipe categories.
+  // Learnings (via getSellerProduct on an existing successful listing in 76872): unitCount=1.
+  // The GET response does not expose unitType; empirically unitType=PIECE with unitCount=1 works.
+  if (Number(finalCategoryCode) === 76872) {
+    // 76872 has no exposed mandatory attributes in category metas.
+    // Keep it minimal: provide unitCount/unitType only.
+    itemAttributes = null;
+    const overrideUnitType = String(settings.wetWipesUnitType || '').trim();
+    const unitType = overrideUnitType || 'PIECE';
+    itemUnit = { unitCount: 1, unitType };
+  } else if ([63908, 111860].includes(Number(finalCategoryCode))) {
     const title0 = prev?.draft?.title || draft.title;
 
     const qtyPerUnit = extractQtyPerUnit(title0);
