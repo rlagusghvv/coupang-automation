@@ -1206,7 +1206,7 @@ app.post('/api/recommendations/bulk-upload', authRequired, async (req, res) => {
 
           // serialize with existing upload lock
           uploadInProgress = true;
-          const effectiveSettings = { ...settings };
+          const effectiveSettings = { ...settings, ...(req.body?.imageProxyBase ? { imageProxyBase: String(req.body.imageProxyBase) } : {}) };
           // Theme guardrails: keep category stable for now to reduce create/approval failures.
           if (theme.id === 'starter-toilet-pad') {
             // 배변패드 테마는 카테고리 변동(예: 65905)되면 옵션/단위 검증이 빡세져서 실패가 많이 남.
