@@ -878,8 +878,9 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
       const patchedItems = Array.isArray(body?.items)
         ? body.items.map((it) => ({
             ...it,
-            // Force explicit attributes array to satisfy seller_api validation in some categories.
-            attributes: Array.isArray(it?.attributes) ? it.attributes : [],
+            // Force an explicit attributes array. In some categories, non-empty/placeholder attributes
+            // (e.g. {수량:1}) can be rejected; empty array is safer.
+            attributes: [],
             unitCount: it?.unitCount ?? 1,
             unitType: it?.unitType || "PIECE",
           }))
@@ -893,7 +894,7 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
       const patchedOptionItems = Array.isArray(body?.optionItems)
         ? body.optionItems.map((it) => ({
             ...it,
-            attributes: Array.isArray(it?.attributes) ? it.attributes : [],
+            attributes: [],
             unitCount: it?.unitCount ?? 1,
             unitType: it?.unitType || "PIECE",
           }))
