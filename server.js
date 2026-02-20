@@ -1968,13 +1968,16 @@ app.post("/api/upload/execute", authRequired, async (req, res) => {
     const c = classifyUrl(url);
     if (!c.ok) return res.status(400).json({ ok: false, error: c.reason, url: c.url });
 
-    // Require explicit confirmation for uploads.
+    // Approval gate: when requireApproval=1, explicit confirm=1 is mandatory.
+    // Default is ON to keep real uploads confirmation-first.
+    const requireApproval = String(req.body?.requireApproval ?? '1').trim() === '1';
     const confirmed = String(req.body?.confirm || '').trim() === '1';
-    if (!confirmed) {
-      return res.status(400).json({
+    if (requireApproval && !confirmed) {
+      return res.status(403).json({
         ok: false,
         error: 'confirm_required',
-        hint: '업로드/판매요청은 반드시 컨펌(confirm=1)이 필요합니다. 미리보기 확인 후 다시 실행하세요.',
+        requireApproval: true,
+        hint: '실업로드는 승인 게이트가 켜져 있습니다. 미리보기 확인 후 confirm=1로 다시 실행하세요.',
       });
     }
 
