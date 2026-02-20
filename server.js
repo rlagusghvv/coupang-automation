@@ -1219,6 +1219,17 @@ app.post('/api/recommendations/bulk-upload', authRequired, async (req, res) => {
             effectiveSettings.autoCategoryMatch = '0';
             effectiveSettings.autoCategoryPredict = '0';
           }
+
+          if (theme.id === 'starter-wet-wipes') {
+            // 물티슈: 2카테고리 분기
+            // - 일반 물티슈: 63908
+            // - 손소독/알코올/살균 계열: 111860
+            const t = `${rec.keyword || ''} ${rec.title || ''}`.toLowerCase();
+            const isSanitize = /손\s*소독|소독|알코올|살균|항균|세정/.test(t);
+            effectiveSettings.categoryOverrideCode = isSanitize ? 111860 : 63908;
+            effectiveSettings.autoCategoryMatch = '0';
+            effectiveSettings.autoCategoryPredict = '0';
+          }
           const r = await runUploadFromUrl(rec.sourceUrl, effectiveSettings).catch((e) => ({ ok: false, error: String(e?.message || e) }));
           uploadInProgress = false;
 
