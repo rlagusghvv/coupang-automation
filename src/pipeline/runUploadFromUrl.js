@@ -854,12 +854,39 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
     };
   }
 
-  const res = await createSellerProduct({
+  // Create (with one safe retry for unitCount/unitType errors)
+  let res = await createSellerProduct({
     vendorId,
     body,
     accessKey,
     secretKey,
   });
+
+  // If seller_api complains about "단위수량" and we didn't send unit fields,
+  // retry once with a conservative default (unitCount=1, unitType=PIECE).
+  try {
+    const bodyObj0 = typeof res.body === "string" ? JSON.parse(res.body) : res.body;
+    const msg0 = String(bodyObj0?.message || "");
+    const code0 = String(bodyObj0?.code || "").toUpperCase();
+    const needsUnit = msg0.includes("단위수량") || msg0.includes("구매 옵션") || msg0.includes("단위가 존재");
+    const hasUnit = Array.isArray(body?.items) && body.items.some((it) => it?.unitCount != null || it?.unitType);
+
+    if (code0 && code0 !== "SUCCESS" && needsUnit && !hasUnit) {
+      const patchedItems = Array.isArray(body?.items)
+        ? body.items.map((it) => ({ ...it, unitCount: 1, unitType: "PIECE" }))
+        : body?.items;
+      const patchedOptionItems = Array.isArray(body?.optionItems)
+        ? body.optionItems.map((it) => ({ ...it, unitCount: 1, unitType: "PIECE" }))
+        : body?.optionItems;
+      body = {
+        ...body,
+        items: patchedItems,
+        optionItems: patchedOptionItems,
+      };
+
+      res = await createSellerProduct({ vendorId, body, accessKey, secretKey });
+    }
+  } catch {}
 
   let createdId = null;
   let createBody = res.body;
