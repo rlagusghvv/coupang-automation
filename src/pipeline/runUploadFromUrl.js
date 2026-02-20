@@ -30,7 +30,7 @@ import { downloadImageBufferWithPlaywright } from "../utils/downloadImage.js";
 import { uploadMarketplaceImage } from "../coupang/api/uploadMarketplaceImage.js";
 import { uploadWingImage } from "../coupang/api/uploadWingImage.js";
 import { getLastWingUploadedImage, getWingUploadedImages } from "../utils/wingCapture.js";
-import { getCategoryTemplate, logListingAttempt } from "../server/storage_sqlite.js";
+import { getCategoryTemplate, upsertCategoryTemplate, logListingAttempt } from "../server/storage_sqlite.js";
 
 const OUTBOUND_SHIPPING_PLACE_CODE = "24093380";
 const DISPLAY_CATEGORY_CODE = 77723;
@@ -944,6 +944,20 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
           errorMessage: String(createBodyObj?.message || ''),
         });
       } catch {}
+      // Persist failure for alerting (best-effort)
+      try {
+        await logListingAttempt({
+          userId: settings.userId || null,
+          sourceUrl: url,
+          marketplace: 'coupang',
+          displayCategoryCode: finalCategoryCode,
+          payloadSummary,
+          resultStatus: 'failed',
+          errorCode: 'coupang_create_failed',
+          errorMessage: String(createBodyObj?.message || ''),
+        });
+      } catch {}
+
       return {
         ok: false,
         error: "coupang_create_failed",
