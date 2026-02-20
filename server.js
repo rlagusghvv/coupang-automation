@@ -1234,8 +1234,23 @@ app.post('/api/recommendations/bulk-upload', authRequired, async (req, res) => {
           uploadInProgress = false;
 
           const ok = Boolean(r?.ok);
-          if (ok) progress.uploaded += 1;
-          else progress.failed += 1;
+          const err = String(r?.error || "").trim();
+
+          // Safety-first skips: avoid spamming Coupang with likely-invalid payloads.
+          const skippable = new Set([
+            'coupang_create_failed',
+            'image_host_unreachable',
+            'shipping_fee_unknown',
+            'main_image_download_failed',
+          ]);
+
+          if (ok) {
+            progress.uploaded += 1;
+          } else if (skippable.has(err)) {
+            progress.skipped += 1;
+          } else {
+            progress.failed += 1;
+          }
 
           // Store upload record for dedupe (only when created)
           try {
@@ -1251,7 +1266,29 @@ app.post('/api/recommendations/bulk-upload', authRequired, async (req, res) => {
             }
           } catch {}
 
-          results.push({ url: rec.sourceUrl, ok, sellerProductId: r?.create?.sellerProductId ?? null, error: r?.error || r?.create?.error || null });
+          const sellerProductId = r?.create?.sellerProductId ?? null;
+          const errMsg = r?.error || r?.create?.error || null;
+          const entry = { url: rec.sourceUrl, ok, sellerProductId, error: errMsg };
+
+          if (!ok) {
+            const err = String(r?.error || '').trim();
+            if (err === 'coupang_create_failed') {
+              entry.skipped = true;
+              entry.reason = 'coupang_create_failed';
+              try {
+                const body = r?.create?.body;
+                if (typeof body === 'string' && body.includes('message')) {
+                  entry.detail = body.slice(0, 400);
+                }
+              } catch {}
+            }
+            if (err === 'image_host_unreachable') {
+              entry.skipped = true;
+              entry.reason = 'image_host_unreachable';
+            }
+          }
+
+          results.push(entry);
           await new Promise((rr) => setTimeout(rr, 700));
         }
 
