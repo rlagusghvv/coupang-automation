@@ -201,19 +201,38 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
     }
   }
 
-  // If still not set, skip detail images by default.
+  // If detail-image appending is disabled, we still keep source HTML images (sourceHtmlImages)
+  // and mirror them for reliability.
   if (!includeDetailImages) {
     contentImages = [];
   }
 
-  function stripImgTags(html) {
-    return String(html || "").replace(/<img\b[^>]*>/gi, "");
+  function uniq(list) {
+    return Array.from(new Set((Array.isArray(list) ? list : []).filter(Boolean)));
+  }
+
+  function sanitizeHtmlBasic(html) {
+    let s = String(html || '').trim();
+    if (!s) return '';
+    // remove obvious dangerous/unsupported tags
+    s = s
+      .replace(/<\s*(script|iframe|object|embed|link|meta)[\s\S]*?>[\s\S]*?<\s*\/\s*\1\s*>/gi, '')
+      .replace(/<\s*(script|iframe|object|embed|link|meta)[^>]*?>/gi, '');
+    // remove inline event handlers
+    s = s.replace(/\son\w+\s*=\s*(["']).*?\1/gi, '');
+    return s;
   }
 
   // Default outputs
   let imageUrl = draft.imageUrl;
-  // Never fall back to raw page text; keep details image-only.
-  let contentHtml = "";
+
+  // Base content: prefer source HTML from upstream (Domeggook OpenAPI etc).
+  // We'll preserve <img> tags but rewrite src to our hosted URLs later.
+  const sourceContentRaw = sanitizeHtmlBasic(draft.contentText);
+  let contentHtml = sourceContentRaw;
+
+  // Images embedded in source HTML (we will mirror/normalize and rewrite src)
+  const sourceHtmlImages = uniq(extractImageUrls(sourceContentRaw)).slice(0, Math.max(0, maxContentImages));
 
   // ✅ Best-effort: Upload images to Coupang/Wing first (prevents image_host_unreachable)
   // If disabled, falls back to the previous "public hosting" approach.
@@ -335,9 +354,10 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
 
       // Build clean HTML with only Coupang-hosted images
       if (uploadedContentUrls.length > 0) {
-        contentHtml = buildImageOnlyHtmlFromUrls(uploadedContentUrls);
+        const imgHtml = buildImageOnlyHtmlFromUrls(uploadedContentUrls);
+        contentHtml = contentHtml ? `${contentHtml}\n\n<hr/>\n\n${imgHtml}` : imgHtml;
       } else if (mainUp?.endpoint === 'wing-capture') {
-        contentHtml = '';
+        // keep text-only
       }
     } catch {
       // Fall back to public hosting approach below
@@ -348,7 +368,9 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
     (
       !useCoupangImageUpload ||
       imageUrl === draft.imageUrl ||
-      (contentImages.length > 0 && !contentHtml)
+      (contentImages.length > 0 && !contentHtml) ||
+      // If upstream HTML contains <img>, we must mirror/rewrite to stable hosted URLs.
+      (sourceHtmlImages.length > 0 && /<img\b/i.test(String(contentHtml || '')))
     );
 
   if (needFallbackHosting) {
@@ -360,8 +382,8 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
     const downloadList = Array.from(
       new Set(
         imageUrl === draft.imageUrl
-          ? [draft.imageUrl, ...contentImages]
-          : [...contentImages],
+          ? [draft.imageUrl, ...contentImages, ...sourceHtmlImages]
+          : [...contentImages, ...sourceHtmlImages],
       ),
     ).filter(Boolean);
 
@@ -477,7 +499,23 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
       if (pub) contentLocalUrls.push(pub);
     }
 
-    contentHtml = contentLocalUrls.length > 0 ? buildImageOnlyHtmlFromUrls(contentLocalUrls) : "";
+    // Rewrite embedded <img src> in upstream HTML to our hosted URLs (sourceHtmlImages)
+    const rewriteMap = new Map();
+    for (const src of sourceHtmlImages) {
+      const f = (downloaded.files || []).find((x) => x.imageUrl === src);
+      if (!f?.fileName) continue;
+      const pub = await pickReachablePublicUrl(f.fileName, { attempts: 4 });
+      if (pub) rewriteMap.set(src, pub);
+    }
+
+    if (rewriteMap.size > 0 && contentHtml) {
+      for (const [from, to] of rewriteMap.entries()) {
+        contentHtml = String(contentHtml).split(from).join(to);
+      }
+    }
+
+    const imgHtml = contentLocalUrls.length > 0 ? buildImageOnlyHtmlFromUrls(contentLocalUrls) : "";
+    contentHtml = imgHtml ? (contentHtml ? `${contentHtml}\n\n<hr/>\n\n${imgHtml}` : imgHtml) : contentHtml;
   }
 
   const displayCategoryCode = resolveDisplayCategoryCode({
