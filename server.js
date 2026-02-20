@@ -1221,12 +1221,12 @@ app.post('/api/recommendations/bulk-upload', authRequired, async (req, res) => {
           }
 
           if (theme.id === 'starter-wet-wipes') {
-            // 물티슈: 2카테고리 분기
-            // - 일반 물티슈: 63908
-            // - 손소독/알코올/살균 계열: 111860
-            const t = `${rec.keyword || ''} ${rec.title || ''}`.toLowerCase();
-            const isSanitize = /손\s*소독|소독|알코올|살균|항균|세정/.test(t);
-            effectiveSettings.categoryOverrideCode = isSanitize ? 111860 : 63908;
+            // 물티슈: Wing 신규등록에서 실제로 선택되는 카테고리 코드가 76872로 관측됨.
+            // seller_api는 이 카테고리에서 unitCount/unitType(단위수량) 검증이 빡세서,
+            // 안정화 우선으로 카테고리를 76872로 고정 + unitType 기본값(PIECE) 사용.
+            // (손소독/알코올 분기는 111860이 계속 create 실패여서, 템플릿 확정 전까지 동일 카테고리로 우선 운영)
+            effectiveSettings.categoryOverrideCode = 76872;
+            effectiveSettings.wetWipesUnitType = effectiveSettings.wetWipesUnitType || 'PIECE';
             effectiveSettings.autoCategoryMatch = '0';
             effectiveSettings.autoCategoryPredict = '0';
           }
