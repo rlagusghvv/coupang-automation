@@ -1941,7 +1941,8 @@ app.post("/api/dev/orders/seed", authRequired, async (req, res) => {
   }
 });
 
-// ✅ 업로드 Execute API (쿠팡 키 필요) - MVP stub
+// ✅ 업로드 Execute API (쿠팡 키 필요)
+// IMPORTANT: real upload MUST be explicitly confirmed by the user.
 app.post("/api/upload/execute", authRequired, async (req, res) => {
   try {
     const url = String(req.body?.url || "").trim();
@@ -1966,6 +1967,16 @@ app.post("/api/upload/execute", authRequired, async (req, res) => {
 
     const c = classifyUrl(url);
     if (!c.ok) return res.status(400).json({ ok: false, error: c.reason, url: c.url });
+
+    // Require explicit confirmation for uploads.
+    const confirmed = String(req.body?.confirm || '').trim() === '1';
+    if (!confirmed) {
+      return res.status(400).json({
+        ok: false,
+        error: 'confirm_required',
+        hint: '업로드/판매요청은 반드시 컨펌(confirm=1)이 필요합니다. 미리보기 확인 후 다시 실행하세요.',
+      });
+    }
 
     const force = String(req.body?.force || "").trim() === "1";
 

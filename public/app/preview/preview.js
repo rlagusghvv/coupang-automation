@@ -248,10 +248,16 @@ async function executeUpload() {
 
   try {
     const force = Boolean(els.forceUpload?.checked);
+    const okConfirm = window.confirm('업로드/판매요청을 실행할까요? (컨펌)');
+    if (!okConfirm) {
+      if (els.previewSub) els.previewSub.textContent = '업로드 취소됨';
+      return;
+    }
+
     const res = await fetch("/api/upload/execute", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url, force: force ? "1" : "0" }),
+      body: JSON.stringify({ url, force: force ? "1" : "0", confirm: "1" }),
     });
     const json = await res.json().catch(() => ({}));
 
