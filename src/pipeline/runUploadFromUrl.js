@@ -862,25 +862,46 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
     secretKey,
   });
 
-  // If seller_api complains about "단위수량" and we didn't send unit fields,
-  // retry once with a conservative default (unitCount=1, unitType=PIECE).
+  // Some categories are strict about unitCount/unitType and/or expect an explicit attributes array.
+  // Retry once with a conservative default (unitCount=1, unitType=PIECE) and attributes=[].
   try {
     const bodyObj0 = typeof res.body === "string" ? JSON.parse(res.body) : res.body;
     const msg0 = String(bodyObj0?.message || "");
     const code0 = String(bodyObj0?.code || "").toUpperCase();
+
     const needsUnit = msg0.includes("단위수량") || msg0.includes("구매 옵션") || msg0.includes("단위가 존재");
+    const needsAttrs = msg0.includes("속성값") || msg0.includes("속성") || msg0.includes("attribute");
+
     const hasUnit = Array.isArray(body?.items) && body.items.some((it) => it?.unitCount != null || it?.unitType);
 
-    if (code0 && code0 !== "SUCCESS" && needsUnit && !hasUnit) {
+    if (code0 && code0 !== "SUCCESS" && (needsUnit || needsAttrs)) {
       const patchedItems = Array.isArray(body?.items)
-        ? body.items.map((it) => ({ ...it, unitCount: 1, unitType: "PIECE" }))
+        ? body.items.map((it) => ({
+            ...it,
+            // Force explicit attributes array to satisfy seller_api validation in some categories.
+            attributes: Array.isArray(it?.attributes) ? it.attributes : [],
+            unitCount: it?.unitCount ?? 1,
+            unitType: it?.unitType || "PIECE",
+          }))
         : body?.items;
+
+      // If the failure was unit-related and unit fields are missing, force them.
+      const finalItems = needsUnit && !hasUnit
+        ? (Array.isArray(patchedItems) ? patchedItems.map((it) => ({ ...it, unitCount: 1, unitType: "PIECE" })) : patchedItems)
+        : patchedItems;
+
       const patchedOptionItems = Array.isArray(body?.optionItems)
-        ? body.optionItems.map((it) => ({ ...it, unitCount: 1, unitType: "PIECE" }))
+        ? body.optionItems.map((it) => ({
+            ...it,
+            attributes: Array.isArray(it?.attributes) ? it.attributes : [],
+            unitCount: it?.unitCount ?? 1,
+            unitType: it?.unitType || "PIECE",
+          }))
         : body?.optionItems;
+
       body = {
         ...body,
-        items: patchedItems,
+        items: finalItems,
         optionItems: patchedOptionItems,
       };
 
