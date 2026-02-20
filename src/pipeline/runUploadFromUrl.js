@@ -990,7 +990,9 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
             if (n.includes('개당 수량')) return '1개입';
             if (n.includes('총 수량')) return '1개';
             if (n === '수량' || n.endsWith(' 수량') || n.includes('수량')) return '1개';
+            if (n.includes('대중소') && n.includes('사이즈')) return '중';
             if (n.includes('사이즈')) return 'FREE';
+            if (n.includes('길이')) return '1cm';
             if (n.includes('색상')) return '기타';
             if (n.includes('평량')) return '55';
             if (n.includes('무게') || n.includes('중량')) return '1g';
@@ -1028,6 +1030,19 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
             res = res2;
             createBody = res2.body;
             createBodyObj = obj2;
+
+            // Learn a category template from this successful fix (best-effort).
+            try {
+              await upsertCategoryTemplate({
+                marketplace: 'coupang',
+                displayCategoryCode: finalCategoryCode,
+                name: `auto-learned from required-attrs retry (${finalCategoryCode})`,
+                template: {
+                  itemUnit: { unitCount: 1, unitType: 'PIECE' },
+                  itemAttributes: miss.map((name) => ({ attributeTypeName: name, attributeValueName: pickDefault(name) })),
+                },
+              });
+            } catch {}
           }
         }
       } catch {}
