@@ -986,11 +986,15 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
         if (miss.length > 0 && Array.isArray(body?.items) && body.items.length > 0) {
           const pickDefault = (name) => {
             const n = String(name || '');
-            if (n.includes('수량')) return '1';
+            // QUANTITY-like fields often expect unit-suffixed strings.
+            if (n.includes('개당 수량')) return '1개입';
+            if (n.includes('총 수량')) return '1개';
+            if (n === '수량' || n.endsWith(' 수량') || n.includes('수량')) return '1개';
             if (n.includes('사이즈')) return 'FREE';
             if (n.includes('색상')) return '기타';
-            if (n.includes('무게') || n.includes('중량')) return '1';
-            if (n.includes('용량')) return '1';
+            if (n.includes('평량')) return '55';
+            if (n.includes('무게') || n.includes('중량')) return '1g';
+            if (n.includes('용량')) return '1ml';
             return '기타';
           };
 
