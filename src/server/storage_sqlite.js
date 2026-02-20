@@ -270,11 +270,133 @@ export async function initDb() {
     )`,
   );
 
+  // Category schema cache + templates (schema-driven marketplace support)
+  await dbRun(
+    db,
+    `CREATE TABLE IF NOT EXISTS category_schema_cache (
+      id TEXT PRIMARY KEY,
+      marketplace TEXT NOT NULL,              -- coupang
+      display_category_code INTEGER NOT NULL,
+      schema_version TEXT,                    -- if marketplace provides a version
+      schema_hash TEXT,                       -- sha256 of schema_json
+      schema_json TEXT NOT NULL DEFAULT '{}',
+      fetched_at TEXT NOT NULL,
+      UNIQUE(marketplace, display_category_code)
+    )`,
+  );
+
+  await dbRun(
+    db,
+    `CREATE TABLE IF NOT EXISTS category_templates (
+      id TEXT PRIMARY KEY,
+      marketplace TEXT NOT NULL,              -- coupang
+      display_category_code INTEGER NOT NULL,
+      name TEXT NOT NULL DEFAULT '',
+      template_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      UNIQUE(marketplace, display_category_code)
+    )`,
+  );
+
+  await dbRun(
+    db,
+    `CREATE TABLE IF NOT EXISTS listing_attempts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id TEXT,
+      source_url TEXT,
+      marketplace TEXT NOT NULL DEFAULT 'coupang',
+      display_category_code INTEGER,
+      payload_summary_json TEXT NOT NULL DEFAULT '{}',
+      result_status TEXT NOT NULL,            -- success|failed|skipped
+      error_code TEXT,
+      error_message TEXT,
+      created_at TEXT NOT NULL
+    )`,
+  );
+
   // Migrations
   try { await ensureColumn(db, 'jobs', 'catalog_id', 'TEXT'); } catch {}
   try { await ensureColumn(db, 'catalog_products', 'last_source_snapshot_json', "TEXT NOT NULL DEFAULT '{}'" ); } catch {}
   try { await ensureColumn(db, 'catalog_products', 'last_synced_at', 'TEXT'); } catch {}
 
+  db.close();
+}
+
+export async function upsertCategoryTemplate({ marketplace = 'coupang', displayCategoryCode, name = '', template }) {
+  if (!displayCategoryCode) throw new Error('displayCategoryCode required');
+  const db = openDb();
+  const now = new Date().toISOString();
+  const existing = await dbGet(
+    db,
+    `SELECT id FROM category_templates WHERE marketplace = ? AND display_category_code = ?`,
+    [marketplace, Number(displayCategoryCode)],
+  );
+  const id = existing?.id || crypto.randomUUID();
+  const templateJson = JSON.stringify(template || {});
+  if (existing) {
+    await dbRun(
+      db,
+      `UPDATE category_templates SET name = ?, template_json = ?, updated_at = ? WHERE id = ?`,
+      [name, templateJson, now, id],
+    );
+  } else {
+    await dbRun(
+      db,
+      `INSERT INTO category_templates (id, marketplace, display_category_code, name, template_json, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [id, marketplace, Number(displayCategoryCode), name, templateJson, now, now],
+    );
+  }
+  db.close();
+  return { id };
+}
+
+export async function getCategoryTemplate({ marketplace = 'coupang', displayCategoryCode }) {
+  if (!displayCategoryCode) return null;
+  const db = openDb();
+  const row = await dbGet(
+    db,
+    `SELECT template_json FROM category_templates WHERE marketplace = ? AND display_category_code = ?`,
+    [marketplace, Number(displayCategoryCode)],
+  );
+  db.close();
+  if (!row) return null;
+  try {
+    return JSON.parse(row.template_json || '{}');
+  } catch {
+    return null;
+  }
+}
+
+export async function logListingAttempt({
+  userId = null,
+  sourceUrl = '',
+  marketplace = 'coupang',
+  displayCategoryCode = null,
+  payloadSummary = {},
+  resultStatus,
+  errorCode = null,
+  errorMessage = null,
+}) {
+  if (!resultStatus) throw new Error('resultStatus required');
+  const db = openDb();
+  await dbRun(
+    db,
+    `INSERT INTO listing_attempts (user_id, source_url, marketplace, display_category_code, payload_summary_json, result_status, error_code, error_message, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      userId,
+      sourceUrl || '',
+      marketplace,
+      displayCategoryCode == null ? null : Number(displayCategoryCode),
+      JSON.stringify(payloadSummary || {}),
+      String(resultStatus),
+      errorCode,
+      errorMessage,
+      new Date().toISOString(),
+    ],
+  );
   db.close();
 }
 

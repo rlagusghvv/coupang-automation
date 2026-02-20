@@ -30,6 +30,7 @@ import { downloadImageBufferWithPlaywright } from "../utils/downloadImage.js";
 import { uploadMarketplaceImage } from "../coupang/api/uploadMarketplaceImage.js";
 import { uploadWingImage } from "../coupang/api/uploadWingImage.js";
 import { getLastWingUploadedImage, getWingUploadedImages } from "../utils/wingCapture.js";
+import { getCategoryTemplate, logListingAttempt } from "../server/storage_sqlite.js";
 
 const OUTBOUND_SHIPPING_PLACE_CODE = "24093380";
 const DISPLAY_CATEGORY_CODE = 77723;
@@ -751,6 +752,15 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
     itemUnit = { unitCount: qtyPerUnit, unitType };
   }
 
+  // Apply per-category template overrides (schema/template-driven marketplace approach)
+  try {
+    const tmpl = await getCategoryTemplate({ marketplace: 'coupang', displayCategoryCode: finalCategoryCode });
+    if (tmpl && typeof tmpl === 'object') {
+      if (Array.isArray(tmpl.itemAttributes)) itemAttributes = tmpl.itemAttributes;
+      if (tmpl.itemUnit && typeof tmpl.itemUnit === 'object') itemUnit = tmpl.itemUnit;
+    }
+  } catch {}
+
   // Some payloads/options require unitCount/unitType.
   // Only default it when we actually have option items.
   if (!itemUnit && optionsUsed.length > 0) {
@@ -843,6 +853,32 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
 
     const code = String(createBodyObj?.code || "").toUpperCase();
     if (code && code !== "SUCCESS") {
+      const payloadSummary = {
+        displayCategoryCode: finalCategoryCode,
+        itemCount: Array.isArray(body?.items) ? body.items.length : 0,
+        firstItem: (() => {
+          const it = Array.isArray(body?.items) ? body.items[0] : null;
+          if (!it) return null;
+          return {
+            itemName: it.itemName,
+            unitCount: it.unitCount,
+            unitType: it.unitType,
+            attributes: it.attributes,
+          };
+        })(),
+      };
+      try {
+        await logListingAttempt({
+          userId: settings.userId || null,
+          sourceUrl: url,
+          marketplace: 'coupang',
+          displayCategoryCode: finalCategoryCode,
+          payloadSummary,
+          resultStatus: 'failed',
+          errorCode: 'coupang_create_failed',
+          errorMessage: String(createBodyObj?.message || ''),
+        });
+      } catch {}
       return {
         ok: false,
         error: "coupang_create_failed",
@@ -852,20 +888,7 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
         category: { requested: displayCategoryCode, used: finalCategoryCode, auto: allowAutoCategory, predicted: settings.__predictedCategory || null },
         optionsUsed: optionsUsed.map((opt) => opt.label),
         payloadCheck,
-        payloadSummary: {
-          displayCategoryCode: finalCategoryCode,
-          itemCount: Array.isArray(body?.items) ? body.items.length : 0,
-          firstItem: (() => {
-            const it = Array.isArray(body?.items) ? body.items[0] : null;
-            if (!it) return null;
-            return {
-              itemName: it.itemName,
-              unitCount: it.unitCount,
-              unitType: it.unitType,
-              attributes: it.attributes,
-            };
-          })(),
-        },
+        payloadSummary,
         create: { status: res.status, body: createBody, sellerProductId: null },
       };
     }
@@ -907,6 +930,20 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
       delayMs: 3000,
     });
   }
+
+  try {
+    await logListingAttempt({
+      userId: settings.userId || null,
+      sourceUrl: url,
+      marketplace: 'coupang',
+      displayCategoryCode: finalCategoryCode,
+      payloadSummary: {
+        displayCategoryCode: finalCategoryCode,
+        itemCount: Array.isArray(body?.items) ? body.items.length : 0,
+      },
+      resultStatus: 'success',
+    });
+  } catch {}
 
   return {
     ok: true,
