@@ -975,31 +975,88 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
     // Even with code=SUCCESS, Coupang may return errorItems for required attributes.
     const errorItems = Array.isArray(createBodyObj?.errorItems) ? createBodyObj.errorItems : [];
     if (errorItems.length > 0) {
-      createdId = createBodyObj?.data ?? null;
+      // One safe retry: inject missing attributes with conservative defaults, then recreate.
+      // This is particularly useful for some kitchen-supplies categories where seller_api rejects
+      // placeholder attributes but still requires a few mandatory fields.
       try {
-        await logListingAttempt({
-          userId: settings.userId || null,
-          sourceUrl: url,
-          marketplace: 'coupang',
-          displayCategoryCode: finalCategoryCode,
-          payloadSummary: { displayCategoryCode: finalCategoryCode, errorItems },
-          resultStatus: 'failed',
-          errorCode: 'coupang_required_attributes_missing',
-          errorMessage: 'required_attributes_missing',
-        });
+        const miss = (errorItems[0]?.itemAttributes || [])
+          .map((a) => String(a?.attributeTypeName || '').trim())
+          .filter(Boolean);
+
+        if (miss.length > 0 && Array.isArray(body?.items) && body.items.length > 0) {
+          const pickDefault = (name) => {
+            const n = String(name || '');
+            if (n.includes('수량')) return '1';
+            if (n.includes('사이즈')) return 'FREE';
+            if (n.includes('색상')) return '기타';
+            if (n.includes('무게') || n.includes('중량')) return '1';
+            if (n.includes('용량')) return '1';
+            return '기타';
+          };
+
+          const patchAttrs = (attrs) => {
+            const list = Array.isArray(attrs) ? [...attrs] : [];
+            const seen = new Set(list.map((x) => String(x?.attributeTypeName || '').trim()));
+            for (const name of miss) {
+              if (seen.has(name)) continue;
+              list.push({ attributeTypeName: name, attributeValueName: pickDefault(name) });
+              seen.add(name);
+            }
+            return list;
+          };
+
+          body = {
+            ...body,
+            items: body.items.map((it) => ({
+              ...it,
+              attributes: patchAttrs(it?.attributes),
+              unitCount: it?.unitCount ?? 1,
+              unitType: it?.unitType || 'PIECE',
+            })),
+          };
+
+          const res2 = await createSellerProduct({ vendorId, body, accessKey, secretKey });
+          const obj2 = typeof res2.body === 'string' ? JSON.parse(res2.body) : res2.body;
+          const code2 = String(obj2?.code || '').toUpperCase();
+          const err2 = Array.isArray(obj2?.errorItems) ? obj2.errorItems : [];
+          if (code2 === 'SUCCESS' && err2.length === 0) {
+            // Success on retry: replace original response.
+            res = res2;
+            createBody = res2.body;
+            createBodyObj = obj2;
+          }
+        }
       } catch {}
-      return {
-        ok: false,
-        error: "coupang_required_attributes_missing",
-        detail: createBodyObj,
-        draft: { title: sellerProductName, price: draft.price, imageUrl: draft.imageUrl },
-        finalPrice,
-        category: { requested: displayCategoryCode, used: finalCategoryCode, auto: allowAutoCategory, predicted: settings.__predictedCategory || null },
-        optionsUsed: optionsUsed.map((opt) => opt.label),
-        payloadCheck,
-        create: { status: res.status, body: createBody, sellerProductId: createdId },
-        followUp: createdId ? await pollApprovalStatus({ sellerProductId: createdId, accessKey, secretKey, attempts: 1, delayMs: 500 }) : null,
-      };
+
+      // Re-check after retry attempt
+      const errorItems2 = Array.isArray(createBodyObj?.errorItems) ? createBodyObj.errorItems : [];
+      if (errorItems2.length > 0) {
+        createdId = createBodyObj?.data ?? null;
+        try {
+          await logListingAttempt({
+            userId: settings.userId || null,
+            sourceUrl: url,
+            marketplace: 'coupang',
+            displayCategoryCode: finalCategoryCode,
+            payloadSummary: { displayCategoryCode: finalCategoryCode, errorItems: errorItems2 },
+            resultStatus: 'failed',
+            errorCode: 'coupang_required_attributes_missing',
+            errorMessage: 'required_attributes_missing',
+          });
+        } catch {}
+        return {
+          ok: false,
+          error: "coupang_required_attributes_missing",
+          detail: createBodyObj,
+          draft: { title: sellerProductName, price: draft.price, imageUrl: draft.imageUrl },
+          finalPrice,
+          category: { requested: displayCategoryCode, used: finalCategoryCode, auto: allowAutoCategory, predicted: settings.__predictedCategory || null },
+          optionsUsed: optionsUsed.map((opt) => opt.label),
+          payloadCheck,
+          create: { status: res.status, body: createBody, sellerProductId: createdId },
+          followUp: createdId ? await pollApprovalStatus({ sellerProductId: createdId, accessKey, secretKey, attempts: 1, delayMs: 500 }) : null,
+        };
+      }
     }
 
     createdId = createBodyObj?.data ?? null;
