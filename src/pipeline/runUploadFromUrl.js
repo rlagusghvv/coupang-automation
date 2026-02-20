@@ -710,10 +710,50 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
     itemUnit = { unitCount: qtyPerUnit, unitType: 'PIECE' };
   }
 
-  // Some categories/options require unitCount/unitType; when we have 구매옵션(옵션Used)이 있는 경우,
-  // default a safe unit to avoid create rejection.
-  if (!itemUnit) {
-    // Default safe unit. Prevents occasional create rejection: "단위수량 값을 확인".
+  // Wet wipes / sanitizing wipes
+  // Meta (seller_api category-related-metas) indicates mandatory attributes for 63908/111860:
+  //  - 평량 (NUMBER)
+  //  - 개당 수량 (NUMBER, QUANTITY unitGroup)
+  //  - 수량 (NUMBER, QUANTITY unitGroup)
+  // Also, seller API requires unitCount/unitType ("단위수량") for these categories.
+  if ([63908, 111860].includes(Number(finalCategoryCode))) {
+    const title0 = prev?.draft?.title || draft.title;
+
+    const qtyPerUnit = extractQtyPerUnit(title0);
+
+    // Try to parse gsm/평량 from title (e.g. 55gsm, 55 gsm)
+    const mGsm = String(title0 || '').match(/(\d{2,3})\s*(gsm|g\s*\/\s*m2|g\/m2)/i);
+    const gsm = (() => {
+      const n = mGsm ? Number(mGsm[1]) : NaN;
+      if (!Number.isFinite(n) || n <= 0) return 55; // safe default
+      return Math.min(999, Math.max(1, Math.floor(n)));
+    })();
+
+    // Pack quantity (수량) — default 1.
+    const mPack = String(title0 || '').match(/(?:x|\*|×)\s*(\d{1,4})\s*(?:팩|pack|개|ea|입)?/i);
+    const packQty = (() => {
+      const n = mPack ? Number(mPack[1]) : NaN;
+      if (!Number.isFinite(n) || n <= 0) return 1;
+      return Math.min(9999, Math.max(1, Math.floor(n)));
+    })();
+
+    // Build mandatory item attributes (Wing accepts unit-suffixed strings for QUANTITY group).
+    itemAttributes = [
+      { attributeTypeName: '평량', attributeValueName: String(gsm) },
+      { attributeTypeName: '개당 수량', attributeValueName: `${qtyPerUnit}매` },
+      { attributeTypeName: '수량', attributeValueName: `${packQty}개` },
+    ];
+
+    // unitCount/unitType is the seller_api "단위수량"; unfortunately some accounts/categories
+    // are strict about unitType. Default to SHEET for wipes, but allow override via settings.
+    const overrideUnitType = String(settings.wetWipesUnitType || '').trim();
+    const unitType = overrideUnitType || 'SHEET';
+    itemUnit = { unitCount: qtyPerUnit, unitType };
+  }
+
+  // Some payloads/options require unitCount/unitType.
+  // Only default it when we actually have option items.
+  if (!itemUnit && optionsUsed.length > 0) {
     itemUnit = { unitCount: 1, unitType: 'PIECE' };
   }
 
