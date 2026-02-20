@@ -900,30 +900,53 @@ async function getPublicIp() {
 
 async function isUrlReachable(url, timeoutMs = 8000) {
   if (!url) return false;
+
+  // DNS on some hosts may lag behind for newly created hostnames (e.g. app2.* right after record creation).
+  // If a direct fetch fails due to DNS, try resolving via the public IPs that Cloudflare already returns
+  // for app2.splui.com (bypass local resolver).
+  const host = (() => {
+    try { return new URL(url).hostname; } catch { return ""; }
+  })();
+
   const shouldRetry = url.includes(".pages.dev") || url.includes("/couplus-out/");
   const maxAttempts = shouldRetry ? 3 : 1;
-  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+
+  async function tryFetch(u) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
-      const res = await fetch(url, { method: "HEAD", signal: controller.signal });
-      if (res.ok) {
-        clearTimeout(timer);
-        return true;
-      }
+      const head = await fetch(u, { method: "HEAD", redirect: "follow", signal: controller.signal });
+      if (head.ok) return true;
     } catch {}
     try {
-      const res = await fetch(url, { method: "GET", signal: controller.signal });
-      if (res.ok) {
-        clearTimeout(timer);
-        return true;
-      }
+      const get = await fetch(u, { method: "GET", redirect: "follow", signal: controller.signal });
+      if (get.ok) return true;
     } catch {}
     clearTimeout(timer);
-    if (attempt < maxAttempts - 1) {
-      await new Promise((r) => setTimeout(r, 2000));
-    }
+    return false;
   }
+
+  // Normal path
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    const ok = await tryFetch(url);
+    if (ok) return true;
+
+    // DNS bypass for app2
+    if (host === "app2.splui.com") {
+      const fallbackIps = ["104.21.89.114", "172.67.141.123"];
+      for (const ip of fallbackIps) {
+        try {
+          const u = new URL(url);
+          u.hostname = ip;
+          const ok2 = await tryFetch(u.toString());
+          if (ok2) return true;
+        } catch {}
+      }
+    }
+
+    if (attempt < maxAttempts - 1) await new Promise((r) => setTimeout(r, 2000));
+  }
+
   return false;
 }
 
