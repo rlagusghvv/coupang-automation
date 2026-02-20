@@ -793,7 +793,7 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
     }
   }
 
-  const body = buildSellerProductBody({
+  let body = buildSellerProductBody({
     vendorId,
     vendorUserId,
     outboundShippingPlaceCode: OUTBOUND_SHIPPING_PLACE_CODE,
