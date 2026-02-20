@@ -1135,6 +1135,7 @@ app.post('/api/recommendations/bulk-upload', authRequired, async (req, res) => {
     const lim = Math.max(1, Math.min(50, Number(req.body?.limit || 10) || 10));
     const dryRun = String(req.body?.dryRun || '').trim() === '1';
     const force = String(req.body?.force || '').trim() === '1';
+    const autoRequest = String(req.body?.autoRequest || '').trim() === '1';
 
     if (uploadInProgress || bulkUploadInProgress) {
       return res.status(409).json({ ok: false, error: 'upload in progress' });
@@ -1210,6 +1211,8 @@ app.post('/api/recommendations/bulk-upload', authRequired, async (req, res) => {
           const effectiveSettings = {
             ...settings,
             ...(bodyImageProxyBase ? { imageProxyBase: bodyImageProxyBase, localImageBaseUrl: bodyImageProxyBase } : {}),
+            // Allow forcing approval request at create time ("판매요청")
+            ...(autoRequest ? { autoRequest: '1' } : {}),
           };
           // Theme guardrails: keep category stable for now to reduce create/approval failures.
           if (theme.id === 'starter-toilet-pad') {
