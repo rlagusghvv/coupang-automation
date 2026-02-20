@@ -976,6 +976,18 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
     const errorItems = Array.isArray(createBodyObj?.errorItems) ? createBodyObj.errorItems : [];
     if (errorItems.length > 0) {
       createdId = createBodyObj?.data ?? null;
+      try {
+        await logListingAttempt({
+          userId: settings.userId || null,
+          sourceUrl: url,
+          marketplace: 'coupang',
+          displayCategoryCode: finalCategoryCode,
+          payloadSummary: { displayCategoryCode: finalCategoryCode, errorItems },
+          resultStatus: 'failed',
+          errorCode: 'coupang_required_attributes_missing',
+          errorMessage: 'required_attributes_missing',
+        });
+      } catch {}
       return {
         ok: false,
         error: "coupang_required_attributes_missing",
