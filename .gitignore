@@ -21,3 +21,5 @@ data/upload_history.json
 # wing capture logs / local meta
 /data/coupang_meta_capture.jsonl
 /data/coupang_wing_meta/
+/data/alert_state.json
+/data/purge_report.json
