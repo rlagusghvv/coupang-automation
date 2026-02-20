@@ -607,7 +607,12 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
     } catch {}
   }
 
-  if (allowAutoCategory) {
+  // Auto category (Coupang-side matching) should not override explicit manual category overrides.
+  // Also allow turning it off via settings.autoCategoryMatch=0.
+  const hasManualOverride = Number.isFinite(overrideCategoryCode) && overrideCategoryCode > 0;
+  const useAutoMatch = String(settings.autoCategoryMatch ?? "1").trim() !== "0";
+
+  if (allowAutoCategory && useAutoMatch && !hasManualOverride) {
     finalCategoryCode = null;
     notices = null;
   } else {
