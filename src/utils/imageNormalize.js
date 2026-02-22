@@ -32,17 +32,16 @@ function run(cmd, args, timeoutMs = 60000) {
  * - keep size comfortably under 10MB
  *
  * Strategy:
- * - scale to fit within 1200x1200
- * - pad to square 1200x1200 with white background
+ * - enforce readable width (1200px) for mobile detail rendering
+ * - keep aspect ratio (no square padding)
  * - output JPEG (quality ~2)
  */
 export async function normalizeImageForCoupang({ inputPath, outputPath }) {
   if (!inputPath || !outputPath) throw new Error("missing_path");
 
-  // ffmpeg filter: scale to fit within 1200x1200, keep aspect;
-  // then pad to exact 1200x1200.
-  const vf =
-    "scale=1200:1200:force_original_aspect_ratio=decrease,pad=1200:1200:(ow-iw)/2:(oh-ih)/2:white";
+  // ffmpeg filter: force width=1200 for readability on mobile,
+  // keep aspect ratio and avoid white side padding that makes images look tiny.
+  const vf = "scale=1200:-2:flags=lanczos";
 
   const ffmpeg = process.env.FFMPEG_PATH || "/opt/homebrew/bin/ffmpeg";
 
