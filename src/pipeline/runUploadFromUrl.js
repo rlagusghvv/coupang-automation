@@ -721,8 +721,22 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
     } catch {}
   }
 
-  const baseTitle = String(draft.title || '').replace(/\s+/g, ' ').trim();
-  const sellerProductName = overrideTitle || autoSuggestedTitle || baseTitle;
+  function humanizeTitle(raw) {
+    let t = String(raw || '').replace(/\s+/g, ' ').trim();
+    if (!t) return '';
+    // 브랜드/광고성 꼬리표 정리
+    t = t
+      .replace(/\[[^\]]{1,24}\]/g, ' ')
+      .replace(/\((당일출고|국내발송|해외직구|무료배송|정품)\)/gi, ' ')
+      .replace(/\b(당일출고|초특가|핫딜|대박할인)\b/gi, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (t.length > 80) t = t.slice(0, 80).trim();
+    return t;
+  }
+
+  const baseTitle = humanizeTitle(draft.title || '');
+  const sellerProductName = humanizeTitle(overrideTitle || autoSuggestedTitle || baseTitle || draft.title || '단품');
 
   function extractQtyPerUnit(title) {
     const t = String(title || "");

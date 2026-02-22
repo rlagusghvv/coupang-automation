@@ -18,6 +18,7 @@ import {
   addPreviewHistory,
   listPreviewHistory,
   getUploadedProductByUrl,
+  getUploadedProductByTitle,
   upsertUploadedProduct,
   upsertPushSubscription,
   deletePushSubscription,
@@ -1173,6 +1174,7 @@ app.post('/api/recommendations/bulk-upload', authRequired, async (req, res) => {
           .filter((r) => Boolean(r?.qc?.eligibleUpload)); // A-tier default (detail images >= 3)
 
         const queue = eligible.slice(0, lim);
+        const seenTitles = new Set();
 
         const progress = {
           stage: dryRun ? 'dry_run' : 'upload',
@@ -1198,6 +1200,29 @@ app.post('/api/recommendations/bulk-upload', authRequired, async (req, res) => {
             results.push({ url: rec.sourceUrl, ok: true, skipped: true, reason: 'duplicate_product', sellerProductId: existing.seller_product_id });
             continue;
           }
+
+          // Same-title dedupe (prevents near-duplicate uploads across different source URLs)
+          const normalizedTitle = String(rec.title || '').replace(/\s+/g, ' ').trim().toLowerCase();
+          if (!force && normalizedTitle && seenTitles.has(normalizedTitle)) {
+            progress.skipped += 1;
+            results.push({ url: rec.sourceUrl, ok: true, skipped: true, reason: 'duplicate_title_in_batch' });
+            continue;
+          }
+          if (!force && normalizedTitle) {
+            const existingByTitle = await getUploadedProductByTitle(req.user.id, rec.title || '');
+            if (existingByTitle?.seller_product_id) {
+              progress.skipped += 1;
+              results.push({
+                url: rec.sourceUrl,
+                ok: true,
+                skipped: true,
+                reason: 'duplicate_title',
+                sellerProductId: existingByTitle.seller_product_id,
+              });
+              continue;
+            }
+          }
+          if (normalizedTitle) seenTitles.add(normalizedTitle);
 
           if (dryRun) {
             progress.skipped += 1;

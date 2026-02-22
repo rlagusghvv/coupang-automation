@@ -583,6 +583,25 @@ export async function getUploadedProductByUrl(userId, sourceUrl) {
   return row || null;
 }
 
+export async function getUploadedProductByTitle(userId, title) {
+  if (!userId) throw new Error("userId required");
+  const t = String(title || "").replace(/\s+/g, " ").trim();
+  if (!t) return null;
+  const db = openDb();
+  const row = await dbGet(
+    db,
+    `SELECT id, user_id, source_url, seller_product_id, title, final_price, created_at
+       FROM uploaded_products
+      WHERE user_id = ?
+        AND lower(trim(title)) = lower(trim(?))
+      ORDER BY created_at DESC
+      LIMIT 1`,
+    [userId, t],
+  );
+  db.close();
+  return row || null;
+}
+
 export async function upsertUploadedProduct({
   userId,
   sourceUrl,
