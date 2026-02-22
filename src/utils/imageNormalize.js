@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 
-function run(cmd, args, timeoutMs = 60000) {
+function run(cmd, args, timeoutMs = 60000, allowNonZero = false) {
   return new Promise((resolve, reject) => {
     const p = spawn(cmd, args, { stdio: ["ignore", "pipe", "pipe"] });
     let out = "";
@@ -18,7 +18,7 @@ function run(cmd, args, timeoutMs = 60000) {
     });
     p.on("close", (code) => {
       clearTimeout(t);
-      if (code === 0) return resolve({ ok: true, out, err });
+      if (code === 0 || allowNonZero) return resolve({ ok: code === 0, code, out, err });
       return reject(new Error(`${cmd} exited ${code}: ${err || out}`));
     });
   });
@@ -39,11 +39,42 @@ function run(cmd, args, timeoutMs = 60000) {
 export async function normalizeImageForCoupang({ inputPath, outputPath }) {
   if (!inputPath || !outputPath) throw new Error("missing_path");
 
-  // ffmpeg filter: force width=1200 for readability on mobile,
-  // keep aspect ratio and avoid white side padding that makes images look tiny.
-  const vf = "scale=1200:-2:flags=lanczos";
-
   const ffmpeg = process.env.FFMPEG_PATH || "/opt/homebrew/bin/ffmpeg";
+
+  // 1) Try to detect and remove large white margins first.
+  // Some supplier detail images are tiny posters centered in a wide white canvas.
+  let cropExpr = "";
+  try {
+    const probe = await run(
+      ffmpeg,
+      [
+        "-hide_banner",
+        "-loglevel",
+        "info",
+        "-i",
+        inputPath,
+        "-vf",
+        "cropdetect=24:16:0",
+        "-frames:v",
+        "30",
+        "-f",
+        "null",
+        "-",
+      ],
+      30000,
+      true,
+    );
+
+    const lines = String(probe.err || "").split("\n").filter((l) => l.includes("crop="));
+    if (lines.length > 0) {
+      // pick the last detected crop rectangle
+      const m = lines[lines.length - 1].match(/crop=([0-9:]+)/);
+      if (m?.[1]) cropExpr = `crop=${m[1]}`;
+    }
+  } catch {}
+
+  // 2) Make detail readable on mobile: width 1200, keep aspect ratio.
+  const vf = [cropExpr, "scale=1200:-2:flags=lanczos"].filter(Boolean).join(",");
 
   await run(ffmpeg, [
     "-hide_banner",
