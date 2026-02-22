@@ -221,6 +221,20 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
       .replace(/<\s*(script|iframe|object|embed|link|meta)[^>]*?>/gi, '');
     // remove inline event handlers
     s = s.replace(/\son\w+\s*=\s*(["']).*?\1/gi, '');
+
+    // Normalize tiny source HTML images to mobile-friendly width.
+    // Many domeggook pages ship narrow wrappers/inline styles (e.g. width:120px) causing mini images in Coupang.
+    s = s
+      .replace(/<img\b([^>]*?)>/gi, (_m, attrs) => {
+        let a = String(attrs || '');
+        a = a
+          .replace(/\swidth\s*=\s*(["']).*?\1/gi, '')
+          .replace(/\sheight\s*=\s*(["']).*?\1/gi, '')
+          .replace(/\sstyle\s*=\s*(["']).*?\1/gi, '');
+        return `<img${a} style="display:block;width:100%;max-width:860px;height:auto;margin:0 auto;" loading="lazy">`;
+      })
+      .replace(/<(div|p)\b([^>]*)>/gi, '<$1$2 style="max-width:860px;margin:0 auto;">');
+
     return s;
   }
 
