@@ -189,8 +189,9 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
 
   // For approvals, external detail image URLs are the #1 rejection source.
   // Default: build detail images from Wing uploader captures (vendor_inventory paths).
-  // Default: keep detail images off in execute (stability-first). Can be enabled per-run.
-  const includeDetailImages = String(settings.includeDetailImages ?? '0').trim() === '1';
+  // Default: include detail images so 상세페이지가 비지 않게 한다.
+  // 필요 시 실행 단위로 includeDetailImages=0 으로 끌 수 있다.
+  const includeDetailImages = String(settings.includeDetailImages ?? '1').trim() === '1';
   const useWingCaptureDetailImages = String(settings.useWingCaptureDetailImages ?? '0').trim() !== '0';
   if (includeDetailImages && useWingCaptureDetailImages) {
     const wingDetails = getWingUploadedImages({ imageType: 'DETAIL' })
@@ -713,13 +714,15 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
   const autoTitleSuggest = String(settings.autoTitleSuggest ?? "1").trim() !== "0";
   if (!overrideTitle && autoTitleSuggest) {
     try {
-      const sug = await suggestTitlesHybrid({ title: draft.title, maxLen: 15, useNaver: true });
-      const first = sug?.suggestions?.[0]?.title;
-      if (first) autoSuggestedTitle = String(first).trim();
+      const sug = await suggestTitlesHybrid({ title: draft.title, maxLen: 30, useNaver: true });
+      const first = String(sug?.suggestions?.[0]?.title || '').trim();
+      // 너무 짧거나 성의 없는 제목은 버리고 원본 제목을 우선한다.
+      if (first.length >= 10) autoSuggestedTitle = first;
     } catch {}
   }
 
-  const sellerProductName = overrideTitle || autoSuggestedTitle || draft.title;
+  const baseTitle = String(draft.title || '').replace(/\s+/g, ' ').trim();
+  const sellerProductName = overrideTitle || autoSuggestedTitle || baseTitle;
 
   function extractQtyPerUnit(title) {
     const t = String(title || "");
