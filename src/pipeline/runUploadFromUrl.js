@@ -241,13 +241,17 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
   // Default outputs
   let imageUrl = draft.imageUrl;
 
-  // Base content: prefer source HTML from upstream (Domeggook OpenAPI etc).
-  // We'll preserve <img> tags but rewrite src to our hosted URLs later.
+  // Default: source HTML(원본 상세 템플릿) 사용 안 함.
+  // 이유: 일부 공급처 템플릿은 폭이 매우 좁거나 잘려서 모바일에서 작게 보임.
+  // 필요하면 preserveSourceHtml=1로 켤 수 있다.
+  const preserveSourceHtml = String(settings.preserveSourceHtml ?? '0').trim() === '1';
   const sourceContentRaw = sanitizeHtmlBasic(draft.contentText);
-  let contentHtml = sourceContentRaw;
+  let contentHtml = preserveSourceHtml ? sourceContentRaw : '';
 
-  // Images embedded in source HTML (we will mirror/normalize and rewrite src)
-  const sourceHtmlImages = uniq(extractImageUrls(sourceContentRaw)).slice(0, Math.max(0, maxContentImages));
+  // Images embedded in source HTML (preserve 모드에서만 사용)
+  const sourceHtmlImages = preserveSourceHtml
+    ? uniq(extractImageUrls(sourceContentRaw)).slice(0, Math.max(0, maxContentImages))
+    : [];
 
   // ✅ Best-effort: Upload images to Coupang/Wing first (prevents image_host_unreachable)
   // If disabled, falls back to the previous "public hosting" approach.
@@ -370,7 +374,7 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
       // Build clean HTML with only Coupang-hosted images
       if (uploadedContentUrls.length > 0) {
         const imgHtml = buildImageOnlyHtmlFromUrls(uploadedContentUrls);
-        contentHtml = contentHtml ? `${contentHtml}\n\n<hr/>\n\n${imgHtml}` : imgHtml;
+        contentHtml = imgHtml;
       } else if (mainUp?.endpoint === 'wing-capture') {
         // keep text-only
       }
@@ -530,7 +534,7 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
     }
 
     const imgHtml = contentLocalUrls.length > 0 ? buildImageOnlyHtmlFromUrls(contentLocalUrls) : "";
-    contentHtml = imgHtml ? (contentHtml ? `${contentHtml}\n\n<hr/>\n\n${imgHtml}` : imgHtml) : contentHtml;
+    if (imgHtml) contentHtml = imgHtml;
   }
 
   const displayCategoryCode = resolveDisplayCategoryCode({
