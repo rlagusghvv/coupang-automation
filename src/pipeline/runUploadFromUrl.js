@@ -793,6 +793,27 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
     itemUnit = { unitCount: qtyPerUnit, unitType: 'PIECE' };
   }
 
+  // 차량 내비게이션 액세서리(78838) 필수 속성 보정
+  // 해당 카테고리는 '모델명/품번', 'RAM / 메모리 용량' 누락 시 임시저장으로 남는다.
+  if (Number(finalCategoryCode) === 78838) {
+    const t0 = String(prev?.draft?.title || draft.title || '');
+    const model = (() => {
+      const m = t0.match(/([A-Z]{2,}[\-\d]{0,8}|\d{3,6}[A-Z]?)/i);
+      return String(m?.[1] || '범용').slice(0, 30);
+    })();
+    const mem = (() => {
+      const m = t0.match(/(\d{1,3})\s*(GB|MB)/i);
+      if (m) return `${m[1]}${String(m[2]).toUpperCase()}`;
+      return '1GB';
+    })();
+
+    itemAttributes = [
+      { attributeTypeName: '모델명/품번', attributeValueName: model || '범용' },
+      { attributeTypeName: 'RAM / 메모리 용량', attributeValueName: mem || '1GB' },
+    ];
+    itemUnit = { unitCount: 1, unitType: 'PIECE' };
+  }
+
   // Wet wipes / sanitizing wipes
   // IMPORTANT: Wing category selection for wipes has been observed as displayCategoryCode=76872.
   // We also have older meta-driven handling for 63908/111860.
@@ -1068,6 +1089,7 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
             if (n.includes('길이')) return '1cm';
             if (n.includes('색상')) return '기타';
             if (n.includes('평량')) return '55';
+            if (n.includes('RAM') || n.includes('메모리')) return '1GB';
             if (n.includes('무게') || n.includes('중량')) return '1g';
             if (n.includes('용량')) return '1ml';
             return '기타';
