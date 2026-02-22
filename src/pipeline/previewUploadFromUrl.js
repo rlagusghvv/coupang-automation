@@ -171,6 +171,37 @@ export async function previewUploadFromUrl(inputUrl, settings = {}) {
   const extracted = extractImageUrls(draft.contentText);
   const wanted = Math.max(0, maxContentImages);
 
+  // Strict same-product detail filter (default ON)
+  // - prefer URLs that share the main image token (very strong signal)
+  // - fallback to same host when token is unavailable
+  const strictSameProduct = String(settings.strictSameProductImages ?? '1').trim() !== '0';
+  const mainHost = (() => {
+    try { return new URL(String(draft.imageUrl || '')).hostname; } catch { return ''; }
+  })();
+  const mainToken = (() => {
+    try {
+      const p = new URL(String(draft.imageUrl || '')).pathname || '';
+      const b = p.split('/').pop() || '';
+      const m = b.match(/([0-9A-F]{12,})_img_/i);
+      return m?.[1] || '';
+    } catch { return ''; }
+  })();
+
+  const isSameProductCandidate = (u) => {
+    if (!strictSameProduct) return true;
+    const s = String(u || '');
+    if (!s) return false;
+    if (mainToken && s.includes(mainToken)) return true;
+    try {
+      const host = new URL(s).hostname;
+      return !!mainHost && host === mainHost;
+    } catch {
+      return false;
+    }
+  };
+
+  const filteredExtracted = extracted.filter((u) => isSameProductCandidate(u));
+
   const contentImages = [];
   const seenImg = new Set();
 
@@ -183,17 +214,28 @@ export async function previewUploadFromUrl(inputUrl, settings = {}) {
   };
 
   // 1) Fast path: keep images that look like product images.
-  for (const u of extracted) {
+  for (const u of filteredExtracted) {
     if (contentImages.length >= wanted) break;
     if (!isLikelyProductImage(u)) continue;
     pushImg(u);
   }
 
-  // 2) Probe remaining candidates (best-effort).
+  // 2) Probe remaining candidates (best-effort, strict mode).
+  // IMPORTANT: default to strict host filtering to avoid unrelated detail images.
+  // (Some sellers embed cross-sell/other-product banners in description HTML.)
+  const strictDetailHost = String(settings.strictDetailHost ?? '1').trim() !== '0';
   if (contentImages.length < wanted) {
-    const remain = extracted.filter((u) => !seenImg.has(String(u || '').trim())).slice(0, 60);
+    const remain = filteredExtracted.filter((u) => !seenImg.has(String(u || '').trim())).slice(0, 60);
     for (const u of remain) {
       if (contentImages.length >= wanted) break;
+
+      if (strictDetailHost) {
+        let host = '';
+        try { host = new URL(u).hostname; } catch {}
+        // only allow same-host detail candidates in strict mode
+        if (!host || !mainHost || host !== mainHost) continue;
+      }
+
       try {
         const pr = await requestHeadOrGetProbe(u, {
           timeoutMs: 8000,
@@ -209,6 +251,12 @@ export async function previewUploadFromUrl(inputUrl, settings = {}) {
     }
   }
 
+  // Final same-product guard: if main token exists, keep only token-matching detail images.
+  if (strictSameProduct && mainToken) {
+    const narrowed = contentImages.filter((u) => String(u || '').includes(mainToken));
+    contentImages.length = 0;
+    for (const u of narrowed) contentImages.push(u);
+  }
 
   let finalPrice = computePrice(draft.price, {
     rate: settings.marginRate,
