@@ -886,11 +886,15 @@ function openUploadConfirmModal({ url, preview, qc, force }) {
   uploadConfirmProceedBtn.dataset.url = url;
   uploadConfirmProceedBtn.dataset.force = force ? "1" : "0";
   uploadConfirmModal.classList.remove("hidden");
+  uploadConfirmModal.style.display = "flex";
 }
 
 function closeUploadConfirmModal() {
-  uploadConfirmModal?.classList.add("hidden");
+  if (!uploadConfirmModal) return;
+  uploadConfirmModal.classList.add("hidden");
+  uploadConfirmModal.style.display = "none";
 }
+window.__closeUploadConfirmModal = closeUploadConfirmModal;
 
 async function previewUpload() {
   const url = urlInput?.value?.trim?.() || "";
@@ -1640,6 +1644,9 @@ previewBtn?.addEventListener("click", previewUpload);
 uploadConfirmCancelBtn?.addEventListener("click", closeUploadConfirmModal);
 uploadConfirmModal?.addEventListener("click", (e) => {
   if (e.target === uploadConfirmModal) closeUploadConfirmModal();
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") closeUploadConfirmModal();
 });
 uploadConfirmProceedBtn?.addEventListener("click", async () => {
   const url = uploadConfirmProceedBtn.dataset.url || "";
