@@ -1,377 +1,280 @@
+import crypto from "node:crypto";
 import { classifyUrl } from "../utils/urlFilter.js";
 import { parseProductFromDomaeqq } from "../sources/domaeqq/parseProductFromDomaeqq.js";
-import { DOMEGGOOK_OPENAPI_KEY } from "../config/env.js";
-import { domeggookOpenApiGetItemView } from "../utils/domeggook_openapi.js";
 import { extractImageUrls } from "../utils/contentImages.js";
-import { requestHeadOrGetProbe } from "../utils/requestHeadOrGetProbe.js";
-import { computePrice } from "../utils/price.js";
-import { recommendCategory } from "../coupang/api/recommendCategory.js";
-import { suggestTitlesHybrid, cleanTitle } from "../utils/titleSuggest.js";
-import { resolveDisplayCategoryCode } from "../utils/categoryMap.js";
 
-const DISPLAY_CATEGORY_CODE = 77723;
+const TRACKING_QUERY_KEYS = new Set([
+  "utm_source",
+  "utm_medium",
+  "utm_campaign",
+  "utm_term",
+  "utm_content",
+  "from",
+  "advcnt",
+  "traceid",
+  "rank",
+  "searchid",
+  "sourceType",
+]);
 
-function uniq(list) {
-  return Array.from(new Set((Array.isArray(list) ? list : []).filter(Boolean)));
+const GENERIC_TOKENS = new Set([
+  "http",
+  "https",
+  "www",
+  "img",
+  "image",
+  "images",
+  "detail",
+  "goods",
+  "item",
+  "product",
+  "thumb",
+  "thumbnail",
+  "upload",
+  "cdn",
+  "com",
+  "net",
+  "jpg",
+  "jpeg",
+  "png",
+  "webp",
+  "gif",
+  "php",
+  "html",
+  "asp",
+  "do",
+  "kr",
+]);
+
+function toUrl(raw) {
+  try {
+    if (!raw) return null;
+    return new URL(String(raw).trim());
+  } catch {
+    return null;
+  }
 }
 
-function isLikelyProductImage(url) {
-  try {
-    const u = new URL(url);
-    const host = u.hostname;
-    const p = u.pathname || "";
+function normalizeHost(hostname) {
+  return String(hostname || "")
+    .trim()
+    .toLowerCase()
+    .replace(/^www\./, "");
+}
 
-    // Block obvious UI/icon/banner assets
-    const bad = [
-      "img_lensSearch",
-      "kakaolink",
-      "/sns/",
-      "/upload/event/",
-      "/upload/banner/",
-      // NOTE: don't block generic /image/ paths (e.g. image.coupangcdn.com)
+function getDomain(hostname) {
+  const host = normalizeHost(hostname);
+  if (!host) return "";
+  const parts = host.split(".").filter(Boolean);
+  if (parts.length <= 2) return host;
+  return parts.slice(-2).join(".");
+}
 
-      "_stt_",
-      "ico_",
-      "bnr_",
-      "arrow",
-      "close",
-      "warning",
-      "caution",
-      "pstatic.net/share",
-    ];
-    const lower = (p + " " + u.href).toLowerCase();
-    if (bad.some((k) => lower.includes(String(k).toLowerCase()))) return false;
+function normalizeUrlForMatch(raw) {
+  const u = toUrl(raw);
+  if (!u) return "";
+  u.hash = "";
+  for (const key of [...u.searchParams.keys()]) {
+    if (TRACKING_QUERY_KEYS.has(key)) {
+      u.searchParams.delete(key);
+    }
+  }
+  const sorted = [...u.searchParams.entries()].sort(([a], [b]) => a.localeCompare(b));
+  u.search = "";
+  for (const [k, v] of sorted) {
+    u.searchParams.append(k, v);
+  }
+  return u.toString();
+}
 
-    // Accept domeggook product upload assets
-    const isDomeggook = host === "cdn1.domeggook.com" || host.endsWith(".domeggook.com");
-    const isUploadPath = p.includes("/upload/");
-    const isProductUpload = p.includes("/upload/item/") || p.includes("/upload/editor/") || p.includes("/upload/contents/");
-    if (isDomeggook && isUploadPath && isProductUpload) return true;
+function tokenize(raw) {
+  return String(raw || "")
+    .toLowerCase()
+    .split(/[^a-z0-9가-힣]+/)
+    .map((t) => t.trim())
+    .filter((t) => t.length >= 4 && !GENERIC_TOKENS.has(t));
+}
 
-    // Some sellers host detail images on external CDNs (e.g. esmplus). Allow a small allowlist.
-    const allowedExternalHosts = [
-      "gi.esmplus.com",
-      "story-img.kakaocdn.net",
-      // Domeggook detail pages sometimes embed Coupang CDN images in the description.
-      "image.coupangcdn.com",
-    ];
-    const ext = (p.split("?")[0].split("#")[0].match(/\.(jpg|jpeg|png|webp|gif)$/i) || [])[0];
+function tokenizeUrl(rawUrl) {
+  const u = toUrl(rawUrl);
+  if (!u) return [];
+  const base = [u.hostname, u.pathname, u.search]
+    .filter(Boolean)
+    .join("|");
+  return tokenize(base);
+}
 
-    // Filter common non-product banners/notices hosted on external CDNs
-    const externalBad = [
-      "공지",
-      "필독",
-      "인포",
-      "information",
-      "당일출고",
-      "배송",
-      "주의",
-      "warning",
-      "caution",
-      "bnr",
-      "banner",
-    ];
-    const hrefLower = u.href.toLowerCase();
-    const decoded = (() => {
-      try { return decodeURIComponent(u.href); } catch { return u.href; }
-    })().toLowerCase();
-    if (externalBad.some((k) => hrefLower.includes(String(k).toLowerCase()) || decoded.includes(String(k).toLowerCase()))) {
-      return false;
+function unique(arr) {
+  return Array.from(new Set((arr || []).filter(Boolean)));
+}
+
+function countOverlap(tokens, referenceSet) {
+  let n = 0;
+  for (const t of tokens) {
+    if (referenceSet.has(t)) n += 1;
+  }
+  return n;
+}
+
+export function buildImageFingerprint({
+  sourceUrl,
+  title,
+  mainImageUrl,
+  filteredImageUrls,
+} = {}) {
+  const normalizedSource = normalizeUrlForMatch(sourceUrl);
+  const normalizedMain = normalizeUrlForMatch(mainImageUrl);
+  const normalizedDetail = unique(filteredImageUrls || [])
+    .map((u) => normalizeUrlForMatch(u))
+    .filter(Boolean)
+    .slice(0, 12);
+  const titleNorm = tokenize(title || "").join("|");
+  const payload = [normalizedSource, titleNorm, normalizedMain, ...normalizedDetail].join("||");
+  return crypto.createHash("sha1").update(payload).digest("hex");
+}
+
+export function analyzeSameProductImages({
+  sourceUrl,
+  mainImageUrl,
+  contentImageUrls,
+  strict = true,
+} = {}) {
+  const main = toUrl(mainImageUrl);
+  const rawImages = unique(contentImageUrls || []);
+
+  if (!main) {
+    return {
+      filteredImageUrls: [],
+      rejectedImages: rawImages.map((url) => ({ url, reason: "invalid_main_image" })),
+      metrics: {
+        imageCountRaw: rawImages.length,
+        imageCountFiltered: 0,
+        imageCountRejected: rawImages.length,
+        hostDiversityRaw: 0,
+        hostDiversityFiltered: 0,
+        tokenMatchRate: 0,
+        rejectedRate: rawImages.length > 0 ? 1 : 0,
+        strictMode: Boolean(strict),
+        mainImageHost: "",
+        mainImageTokenCount: 0,
+      },
+    };
+  }
+
+  const mainHost = normalizeHost(main.hostname);
+  const mainDomain = getDomain(mainHost);
+  const mainTokens = tokenizeUrl(mainImageUrl);
+  const sourceTokens = tokenizeUrl(sourceUrl);
+  const referenceTokens = new Set([...mainTokens, ...sourceTokens]);
+  const mainTokenSet = new Set(mainTokens);
+
+  const kept = [];
+  const rejected = [];
+
+  let tokenMatchedCount = 0;
+  const rawHosts = new Set();
+  const filteredHosts = new Set();
+
+  for (const url of rawImages) {
+    const u = toUrl(url);
+    if (!u) {
+      rejected.push({ url, reason: "invalid_image_url" });
+      continue;
     }
 
-    if (ext && allowedExternalHosts.includes(host)) return true;
+    const host = normalizeHost(u.hostname);
+    const domain = getDomain(host);
+    rawHosts.add(host);
 
-    return false;
-  } catch {
-    return false;
+    const tokens = tokenizeUrl(url);
+    const overlap = countOverlap(tokens, referenceTokens);
+    const mainOverlap = countOverlap(tokens, mainTokenSet);
+
+    if (overlap > 0) tokenMatchedCount += 1;
+
+    const sameDomain = domain && mainDomain && domain === mainDomain;
+    const keepStrict = (sameDomain && overlap >= 1) || mainOverlap >= 2;
+    const keepLoose = sameDomain || overlap >= 2 || mainOverlap >= 1;
+    const keep = strict ? keepStrict : keepLoose;
+
+    if (keep) {
+      kept.push(url);
+      filteredHosts.add(host);
+    } else {
+      const reasonBits = [];
+      if (!sameDomain) reasonBits.push("domain_mismatch");
+      if (overlap < 1) reasonBits.push("token_overlap_low");
+      rejected.push({
+        url,
+        reason: reasonBits.length > 0 ? reasonBits.join("+") : "unmatched",
+        host,
+        overlap,
+        mainOverlap,
+      });
+    }
   }
+
+  const imageCountRaw = rawImages.length;
+  const imageCountFiltered = kept.length;
+  const imageCountRejected = rejected.length;
+  const tokenMatchRate = imageCountRaw > 0 ? tokenMatchedCount / imageCountRaw : 0;
+  const rejectedRate = imageCountRaw > 0 ? imageCountRejected / imageCountRaw : 0;
+
+  return {
+    filteredImageUrls: kept,
+    rejectedImages: rejected,
+    metrics: {
+      imageCountRaw,
+      imageCountFiltered,
+      imageCountRejected,
+      hostDiversityRaw: rawHosts.size,
+      hostDiversityFiltered: filteredHosts.size,
+      tokenMatchRate: Number(tokenMatchRate.toFixed(4)),
+      rejectedRate: Number(rejectedRate.toFixed(4)),
+      strictMode: Boolean(strict),
+      mainImageHost: mainHost,
+      mainImageTokenCount: mainTokens.length,
+    },
+  };
 }
 
 export async function previewUploadFromUrl(inputUrl, settings = {}) {
   const c = classifyUrl(inputUrl);
   if (!c.ok) {
-    return { ok: false, reason: c.reason, url: c.url };
+    return { ok: false, skipped: true, reason: c.reason, url: c.url };
   }
 
-  let draft = null;
-
-  // Prefer Domeggook OpenAPI detail for domeggook item URLs when key is available.
-  // This dramatically improves stability vs scraping (and yields structured desc/opts).
-  const mNo = String(c.url || '').match(/domeggook\.com\/(\d{6,})/);
-  const itemNo = mNo ? mNo[1] : '';
-
-  if (itemNo && String(DOMEGGOOK_OPENAPI_KEY || '').trim()) {
-    try {
-      const r = await domeggookOpenApiGetItemView({ itemNo, ver: '4.5', om: 'json' });
-      const root = r?.raw?.domeggook || r?.raw || {};
-      const basis = root?.basis || {};
-      const price = root?.price || {};
-      const deli = root?.deli || {};
-      const thumb = root?.thumb || {};
-      const desc = root?.desc || {};
-
-      const title = String(basis?.title || '').trim() || `도매꾹 상품 ${itemNo}`;
-
-      // Prefer dome price when available; fallback to supply.
-      const pDome = price?.dome;
-      const pSupply = price?.supply;
-      const picked = Number.isFinite(Number(pDome)) ? Number(pDome) : (Number.isFinite(Number(pSupply)) ? Number(pSupply) : null);
-
-      const imageUrl = String(thumb?.large || thumb?.original || thumb?.small || '').trim();
-
-      // Best-effort: build contentText from desc.contents.item/deli/event/otherItem.
-      const contents = desc?.contents || {};
-      const contentText = [contents?.item, contents?.deli, contents?.event, contents?.otherItem]
-        .map((x) => String(x || '').trim())
-        .filter(Boolean)
-        .join('\n\n');
-
-      // Shipping fee: use dome fee when fixed.
-      const shipFee = Number(deli?.dome?.fee);
-      const shippingFee = Number.isFinite(shipFee) ? shipFee : null;
-
-      // Options: OpenAPI exposes selectOpt as JSON string (per docs). Keep as raw string for now.
-      const selectOptRaw = root?.selectOpt;
-      const options = [];
-      if (selectOptRaw) {
-        try {
-          const obj = typeof selectOptRaw === 'string' ? JSON.parse(selectOptRaw) : selectOptRaw;
-          // We don't know the exact schema; store keys for downstream parsing later.
-          options.push({ name: 'selectOpt', priceDelta: 0, stock: 0, values: [], raw: obj });
-        } catch {
-          options.push({ name: 'selectOpt', priceDelta: 0, stock: 0, values: [], raw: String(selectOptRaw) });
-        }
-      }
-
-      draft = {
-        sourceUrl: c.url,
-        title,
-        price: picked ?? 0,
-        imageUrl: imageUrl || 'https://via.placeholder.com/1000',
-        contentText: contentText || title,
-        categoryText: '',
-        options,
-        shippingFee,
-      };
-    } catch {
-      draft = null;
-    }
-  }
-
-  if (!draft) {
-    draft = await parseProductFromDomaeqq(c.url);
-  }
-
-  const rawMax = Number(settings.maxContentImages);
-  const maxContentImages = Number.isFinite(rawMax) ? rawMax : 30;
-
-  // Extract detail images from HTML.
-  // Some vendors host images on external CDNs with non-standard URLs (no extension).
-  // In that case, a lightweight HEAD/GET probe can verify it's actually an image.
-  const extracted = extractImageUrls(draft.contentText);
-  const wanted = Math.max(0, maxContentImages);
-
-  // Strict same-product detail filter (default ON)
-  // - prefer URLs that share the main image token (very strong signal)
-  // - fallback to same host when token is unavailable
-  const strictSameProduct = String(settings.strictSameProductImages ?? '1').trim() !== '0';
-  const mainHost = (() => {
-    try { return new URL(String(draft.imageUrl || '')).hostname; } catch { return ''; }
-  })();
-  const mainToken = (() => {
-    try {
-      const p = new URL(String(draft.imageUrl || '')).pathname || '';
-      const b = p.split('/').pop() || '';
-      const m = b.match(/([0-9A-F]{12,})_img_/i);
-      return m?.[1] || '';
-    } catch { return ''; }
-  })();
-
-  const isSameProductCandidate = (u) => {
-    if (!strictSameProduct) return true;
-    const s = String(u || '');
-    if (!s) return false;
-    if (mainToken && s.includes(mainToken)) return true;
-    try {
-      const host = new URL(s).hostname;
-      return !!mainHost && host === mainHost;
-    } catch {
-      return false;
-    }
-  };
-
-  const filteredExtracted = extracted.filter((u) => isSameProductCandidate(u));
-
-  const contentImages = [];
-  const seenImg = new Set();
-
-  const pushImg = (u) => {
-    const s = String(u || '').trim();
-    if (!s) return;
-    if (seenImg.has(s)) return;
-    seenImg.add(s);
-    contentImages.push(s);
-  };
-
-  // 1) Fast path: keep images that look like product images.
-  for (const u of filteredExtracted) {
-    if (contentImages.length >= wanted) break;
-    if (!isLikelyProductImage(u)) continue;
-    pushImg(u);
-  }
-
-  // 2) Probe remaining candidates (best-effort, strict mode).
-  // IMPORTANT: default to strict host filtering to avoid unrelated detail images.
-  // (Some sellers embed cross-sell/other-product banners in description HTML.)
-  const strictDetailHost = String(settings.strictDetailHost ?? '1').trim() !== '0';
-  if (contentImages.length < wanted) {
-    const remain = filteredExtracted.filter((u) => !seenImg.has(String(u || '').trim())).slice(0, 60);
-    for (const u of remain) {
-      if (contentImages.length >= wanted) break;
-
-      if (strictDetailHost) {
-        let host = '';
-        try { host = new URL(u).hostname; } catch {}
-        // only allow same-host detail candidates in strict mode
-        if (!host || !mainHost || host !== mainHost) continue;
-      }
-
-      try {
-        const pr = await requestHeadOrGetProbe(u, {
-          timeoutMs: 8000,
-          headers: { Referer: 'https://domeggook.com' },
-        });
-        const ct = String(pr?.headers?.['content-type'] || '').toLowerCase();
-        const finalUrl = String(pr?.finalUrl || '');
-        const looksImage = ct.startsWith('image/') || /\.(jpg|jpeg|png|webp|gif)(\?|#|$)/i.test(finalUrl);
-        if (pr?.ok && looksImage) pushImg(u);
-      } catch {
-        // ignore
-      }
-    }
-  }
-
-  // Final same-product guard: if main token exists, keep only token-matching detail images.
-  if (strictSameProduct && mainToken) {
-    const narrowed = contentImages.filter((u) => String(u || '').includes(mainToken));
-    contentImages.length = 0;
-    for (const u of narrowed) contentImages.push(u);
-  }
-
-  let finalPrice = computePrice(draft.price, {
-    rate: settings.marginRate,
-    add: settings.marginAdd,
-    min: settings.priceMin,
-    roundUnit: settings.roundUnit,
+  const strictMode = String(settings.strictImageMatch || "1").trim() !== "0";
+  const draft = await parseProductFromDomaeqq(c.url);
+  const rawContentImages = unique(extractImageUrls(draft.contentText));
+  const filtered = analyzeSameProductImages({
+    sourceUrl: draft.sourceUrl,
+    mainImageUrl: draft.imageUrl,
+    contentImageUrls: rawContentImages,
+    strict: strictMode,
   });
 
-  const shippingFee = Number(draft.shippingFee);
-  const shippingPolicy = String(settings.shippingPolicy || "actual").trim();
-  const shippingFixed = Number.isFinite(Number(settings.shippingFixedAmount))
-    ? Number(settings.shippingFixedAmount)
-    : 2500;
-
-  let shippingSurcharge = 0;
-  if (shippingPolicy === "none") shippingSurcharge = 0;
-  else if (shippingPolicy === "fixed") shippingSurcharge = shippingFee > 0 || shippingFee === -1 ? shippingFixed : 0;
-  else if (shippingPolicy === "actual") shippingSurcharge = shippingFee > 0 ? shippingFee : 0;
-  else if (shippingPolicy === "error_unknown") shippingSurcharge = shippingFee > 0 ? shippingFee : 0;
-
-  const shouldAddShipping = shippingSurcharge > 0;
-  if (shouldAddShipping) {
-    finalPrice += shippingSurcharge;
-    const roundUnit = Number.isFinite(Number(settings.roundUnit)) ? Number(settings.roundUnit) : 10;
-    if (roundUnit > 1) finalPrice = Math.floor(finalPrice / roundUnit) * roundUnit;
-    const min = Number.isFinite(Number(settings.priceMin)) ? Number(settings.priceMin) : 1000;
-    if (Number.isFinite(min)) finalPrice = Math.max(min, finalPrice);
-  }
-
-  const mainImageUrl = draft.imageUrl || "";
-  const images = uniq([mainImageUrl, ...contentImages]);
-
-  const overrideCategoryCode = Number(settings.categoryOverrideCode);
-  const resolvedCategoryCode = resolveDisplayCategoryCode({
+  const imageFingerprint = buildImageFingerprint({
+    sourceUrl: draft.sourceUrl,
     title: draft.title,
-    categoryText: draft.categoryText,
-    fallback: DISPLAY_CATEGORY_CODE,
+    mainImageUrl: draft.imageUrl,
+    filteredImageUrls: filtered.filteredImageUrls,
   });
-  // Prefer predicted category when available (unless overridden).
-  let usedCategoryCode = Number.isFinite(overrideCategoryCode) && overrideCategoryCode > 0
-    ? overrideCategoryCode
-    : resolvedCategoryCode;
-  const options = Array.isArray(draft.options) ? draft.options : [];
-
-  // Title suggestions (best-effort)
-  let titleSuggestions = null;
-  try {
-    titleSuggestions = await suggestTitlesHybrid({ title: draft.title, maxLen: 15, useNaver: true });
-  } catch {
-    titleSuggestions = null;
-  }
-
-  // Category prediction (best-effort, requires Coupang keys)
-  let predictedCategory = null;
-  try {
-    const accessKey = String(settings.coupangAccessKey || "").trim();
-    const secretKey = String(settings.coupangSecretKey || "").trim();
-    const usePredict = String(settings.autoCategoryPredict ?? "1").trim() !== "0";
-    if (usePredict && accessKey && secretKey) {
-      const productName = cleanTitle(String(draft.title || "").split("|")[0]).slice(0, 80);
-      const pred = await recommendCategory({
-        productName,
-        // Avoid noisy page text that can mislead categorization.
-        productDescription: "",
-        productImageUrl: mainImageUrl,
-        accessKey,
-        secretKey,
-      });
-      if (pred.status === 200) {
-        const bodyObj = typeof pred.body === "string" ? JSON.parse(pred.body) : pred.body;
-        predictedCategory = {
-          id: bodyObj?.data?.predictedCategoryId ?? null,
-          name: bodyObj?.data?.predictedCategoryName ?? null,
-        };
-      }
-    }
-  } catch {}
-
-  // After prediction, prefer predicted category when available (unless overridden).
-  if (!(Number.isFinite(overrideCategoryCode) && overrideCategoryCode > 0)) {
-    const pid = predictedCategory?.id;
-    const n = Number(pid);
-    if (pid && Number.isFinite(n) && n > 0) usedCategoryCode = n;
-  }
 
   return {
     ok: true,
+    skipped: false,
     url: c.url,
-    draft: {
-      title: draft.title || "",
-      categoryText: draft.categoryText || "",
-      price: draft.price ?? null,
-      shippingFee: Number.isFinite(Number(draft.shippingFee)) ? Number(draft.shippingFee) : null,
-      imageUrl: mainImageUrl,
-      sourceUrl: draft.sourceUrl || c.url,
+    draft,
+    preview: {
+      sourceUrl: draft.sourceUrl,
+      title: draft.title,
+      mainImageUrl: draft.imageUrl,
+      contentImagesRaw: rawContentImages,
+      contentImagesFiltered: filtered.filteredImageUrls,
+      contentImagesRejected: filtered.rejectedImages,
+      imageFingerprint,
+      ...filtered.metrics,
     },
-    computed: {
-      finalPrice,
-      shippingPolicy,
-      shippingFixedAmount: shippingFixed,
-      shippingSurchargeApplied: Boolean(shouldAddShipping),
-      shippingSurcharge,
-      shippingFeeUnknown: shippingFee === -1,
-      images,
-      contentImageCount: contentImages.length,
-      optionsCount: options.length,
-    },
-    category: {
-      overrideCode: settings.categoryOverrideCode ?? null,
-      resolvedCode: resolvedCategoryCode,
-      usedCode: usedCategoryCode,
-      predicted: predictedCategory,
-    },
-    options,
-    titleSuggestions,
-    debug: draft.__debug || null,
   };
 }

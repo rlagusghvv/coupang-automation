@@ -6,7 +6,6 @@ import {
   COUPANG_DELIVERY_COMPANY_CODE,
 } from "../config/env.js";
 import { classifyUrl } from "../utils/urlFilter.js";
-import { previewUploadFromUrl } from "./previewUploadFromUrl.js";
 import { buildSellerProductBody } from "../coupang/builders/buildSellerProductBody.js";
 import { createSellerProduct } from "../coupang/api/createSellerProduct.js";
 import { requestProductApproval } from "../coupang/api/requestProductApproval.js";
@@ -15,34 +14,30 @@ import { getSellerProductHistories } from "../coupang/api/getSellerProductHistor
 import { getCategoryMetas } from "../coupang/api/getCategoryMetas.js";
 import { checkAutoCategoryAgreed } from "../coupang/api/checkAutoCategoryAgreed.js";
 import { recommendCategory } from "../coupang/api/recommendCategory.js";
-import { suggestTitlesHybrid, cleanTitle } from "../utils/titleSuggest.js";
 import { buildSingleItem } from "../coupang/builders/buildSingleItem.js";
-import fs from "node:fs";
 import path from "node:path";
-import { extractImageUrls, buildImageOnlyHtmlFromUrls } from "../utils/contentImages.js";
+import { buildImageOnlyHtmlFromUrls } from "../utils/contentImages.js";
 import { resolveDisplayCategoryCode } from "../utils/categoryMap.js";
 import { computePrice } from "../utils/price.js";
-import { resolveLocalImageBase, buildLocalImageUrl } from "../utils/localImageHost.js";
+import { resolveLocalImageBase } from "../utils/localImageHost.js";
 import { downloadImagesWithPlaywright } from "../utils/playwrightImageDownload.js";
-import { normalizeImageForCoupang } from "../utils/imageNormalize.js";
 import { deployPagesAssets } from "../utils/pagesDeploy.js";
-import { downloadImageBufferWithPlaywright } from "../utils/downloadImage.js";
-import { uploadMarketplaceImage } from "../coupang/api/uploadMarketplaceImage.js";
-import { uploadWingImage } from "../coupang/api/uploadWingImage.js";
-import { getLastWingUploadedImage, getWingUploadedImages } from "../utils/wingCapture.js";
-import { getCategoryTemplate, upsertCategoryTemplate, logListingAttempt } from "../server/storage_sqlite.js";
+import { previewUploadFromUrl } from "./previewUploadFromUrl.js";
+import { evaluateQcGate } from "./qcGate.js";
 
 const OUTBOUND_SHIPPING_PLACE_CODE = "24093380";
 const DISPLAY_CATEGORY_CODE = 77723;
 const IP_CHECK_URLS = ["https://ifconfig.me/ip", "https://api.ipify.org"];
 const IMAGE_CHECK_TIMEOUT_MS = 8000;
+const CREATE_RETRY_MAX = 1;
 
-function limitLen(s, max = 30) {
-  const str = String(s || "").replace(/\s+/g, " ").trim();
-  if (!str) return "";
-  if (str.length <= max) return str;
-  return str.slice(0, Math.max(0, max - 1)).trimEnd() + "…";
-}
+const CATEGORY_REQUIRED_ATTRIBUTES = {
+  78838: [
+    { attributeTypeName: "차종", attributeValueName: "상세페이지 참조" },
+    { attributeTypeName: "제품상태", attributeValueName: "새상품" },
+    { attributeTypeName: "수량", attributeValueName: "1개" },
+  ],
+};
 
 function makeUniqueOptions(list) {
   const seen = new Map();
@@ -69,12 +64,11 @@ function makeUniqueOptions(list) {
     const key = `${base.toLowerCase()}::${priceDelta}::${valueKey}`;
     const count = (seen.get(key) || 0) + 1;
     seen.set(key, count);
-    const uniqNameRaw = count === 1 ? base : `${base} (${count})`;
-    const uniqName = limitLen(uniqNameRaw, 30);
+    const uniqName = count === 1 ? base : `${base} (${count})`;
     const hasValues = Array.isArray(values) && values.length > 0;
     idx += 1;
     out.push({
-      label: hasValues ? `${uniqName}` : limitLen(`${idx}. ${uniqName}`, 30),
+      label: hasValues ? `${uniqName}` : `${idx}. ${uniqName}`,
       priceDelta,
       stock,
       values,
@@ -88,13 +82,10 @@ function buildItemAttributesFromOptionValues(values) {
   const attrs = values
     .map((v) => {
       const rawName = String(v?.optionName || "").trim();
-      const attributeTypeName = limitLen(
-        rawName
-          .replace(/색깔/g, "색상")
-          .replace(/크기|사이즈/g, "사이즈"),
-        30,
-      );
-      const attributeValueName = limitLen(String(v?.optionValue || "").trim(), 30);
+      const attributeTypeName = rawName
+        .replace(/색깔/g, "색상")
+        .replace(/크기|사이즈/g, "사이즈");
+      const attributeValueName = String(v?.optionValue || "").trim();
       if (!attributeTypeName || !attributeValueName) return null;
       return { attributeTypeName, attributeValueName };
     })
@@ -102,18 +93,17 @@ function buildItemAttributesFromOptionValues(values) {
   return attrs.length > 0 ? attrs : null;
 }
 
-export async function runUploadFromUrl(inputUrl, settings = {}) {
+export async function runUploadFromUrl(inputUrl, settings = {}, runtime = {}) {
   const c = classifyUrl(inputUrl);
   if (!c.ok) {
     return { ok: false, skipped: true, reason: c.reason, url: c.url };
   }
 
   const payloadOnly = String(settings.payloadOnly || "").trim() === "1";
-  const allowedIpsRaw =
-    String(settings.allowedIps || process.env.COUPANG_ALLOWED_IPS || "")
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean);
+  const allowedIpsRaw = String(settings.allowedIps || process.env.COUPANG_ALLOWED_IPS || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
   if (!payloadOnly && allowedIpsRaw.length > 0) {
     const currentIp = await getPublicIp().catch(() => "");
     if (!currentIp || !allowedIpsRaw.includes(currentIp)) {
@@ -128,414 +118,105 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
   }
 
   // 사용자별 설정 우선
-  const accessKey = String(settings.coupangAccessKey || COUPANG_ACCESS_KEY || "").trim();
-  const secretKey = String(settings.coupangSecretKey || COUPANG_SECRET_KEY || "").trim();
-  let vendorId = String(settings.coupangVendorId || COUPANG_VENDOR_ID || "").trim();
-  let vendorUserId = String(
-    settings.coupangVendorUserId || COUPANG_VENDOR_USER_ID || "",
-  ).trim();
-  let deliveryCompanyCode = String(
-    settings.coupangDeliveryCompanyCode || COUPANG_DELIVERY_COMPANY_CODE || "",
-  ).trim();
+  const accessKey = settings.coupangAccessKey || COUPANG_ACCESS_KEY;
+  const secretKey = settings.coupangSecretKey || COUPANG_SECRET_KEY;
+  const vendorId = settings.coupangVendorId || COUPANG_VENDOR_ID;
+  const vendorUserId = settings.coupangVendorUserId || COUPANG_VENDOR_USER_ID;
+  const deliveryCompanyCode = settings.coupangDeliveryCompanyCode || COUPANG_DELIVERY_COMPANY_CODE;
 
-  // 서버는 키 없이도 뜰 수 있어야 하므로, 여기서만 검증한다.
-  if (!payloadOnly) {
-    const missing = [];
-    if (!accessKey) missing.push("COUPANG_ACCESS_KEY");
-    if (!secretKey) missing.push("COUPANG_SECRET_KEY");
-    if (!vendorId) missing.push("COUPANG_VENDOR_ID");
-    if (!vendorUserId) missing.push("COUPANG_VENDOR_USER_ID");
-    if (!deliveryCompanyCode) missing.push("COUPANG_DELIVERY_COMPANY_CODE");
-    if (missing.length > 0) {
-      return { ok: false, skipped: true, reason: "missing_coupang_env", missing };
-    }
-  } else {
-    // payloadOnly(dry-run) should work without real credentials.
-    // Provide safe placeholders so body builders don't throw.
-    if (!vendorId) {
-      vendorId = "DUMMY";
-      settings.coupangVendorId = settings.coupangVendorId || vendorId;
-    }
-    if (!vendorUserId) {
-      vendorUserId = "DUMMY";
-      settings.coupangVendorUserId = settings.coupangVendorUserId || vendorUserId;
-    }
-    if (!deliveryCompanyCode) {
-      deliveryCompanyCode = "DUMMY";
-      settings.coupangDeliveryCompanyCode = settings.coupangDeliveryCompanyCode || deliveryCompanyCode;
-    }
+  const previewResult = runtime?.preview?.ok
+    ? runtime.preview
+    : await previewUploadFromUrl(c.url, settings);
+
+  if (!previewResult?.ok || !previewResult?.draft) {
+    return {
+      ok: false,
+      skipped: true,
+      error: previewResult?.error || "preview_failed",
+      reason: previewResult?.reason || "preview_failed",
+      preview: previewResult?.preview || null,
+    };
   }
 
-  // IMPORTANT: Use the same preview pipeline for upload.
-  // This ensures Domeggook OpenAPI detail images & referer/probe logic are applied.
-  const prev = await previewUploadFromUrl(c.url, settings);
-  const draft = prev?.draft;
-  const computed = prev?.computed || {};
+  const draft = previewResult.draft;
+  const qcGate = evaluateQcGate(previewResult.preview || {}, settings);
+  if (!qcGate.ok) {
+    return {
+      ok: false,
+      skipped: true,
+      error: "qc_gate_failed",
+      detail: {
+        reasons: qcGate.reasons,
+        metrics: qcGate.metrics,
+      },
+      preview: previewResult.preview,
+      draft: { title: draft.title, price: draft.price, imageUrl: draft.imageUrl },
+    };
+  }
 
+  const localImageBase = resolveLocalImageBase(settings);
+
+  const outDir = path.join(process.cwd(), "out");
   const rawMax = Number(settings.maxContentImages);
-  const maxContentImages = Number.isFinite(rawMax) ? rawMax : 20;
-
-  const imagesOverride = Array.isArray(settings.imagesOverride)
-    ? settings.imagesOverride.map((x) => String(x || "").trim()).filter(Boolean)
+  const maxContentImages = Number.isFinite(rawMax) ? rawMax : 30;
+  const filteredImages = Array.isArray(previewResult?.preview?.contentImagesFiltered)
+    ? previewResult.preview.contentImagesFiltered
     : [];
+  const contentImages = filteredImages.slice(0, Math.max(0, maxContentImages));
+  const downloadList = Array.from(new Set([draft.imageUrl, ...contentImages])).filter(Boolean);
 
-  // preview.computed.images contains [main, ...detail]
-  const computedImages = Array.isArray(computed.images) ? computed.images : [];
-  const detailFromPreview = computedImages.slice(1);
+  const storageStatePath =
+    process.env.DOMEGGOOK_STORAGE_STATE || path.join(process.cwd(), "storageState.json");
+  const downloaded = await downloadImagesWithPlaywright({
+    pageUrl: draft.sourceUrl,
+    imageUrls: downloadList,
+    outDir,
+    baseUrl: localImageBase,
+    storageStatePath,
+  });
 
-  let contentImages = (imagesOverride.length > 0 ? imagesOverride : detailFromPreview)
-    .slice(0, Math.max(0, maxContentImages))
-    .filter(Boolean);
-
-  // For approvals, external detail image URLs are the #1 rejection source.
-  // Default: build detail images from Wing uploader captures (vendor_inventory paths).
-  // Default: include detail images so 상세페이지가 비지 않게 한다.
-  // 필요 시 실행 단위로 includeDetailImages=0 으로 끌 수 있다.
-  const includeDetailImages = String(settings.includeDetailImages ?? '1').trim() === '1';
-  const useWingCaptureDetailImages = String(settings.useWingCaptureDetailImages ?? '0').trim() !== '0';
-  if (includeDetailImages && useWingCaptureDetailImages) {
-    const wingDetails = getWingUploadedImages({ imageType: 'DETAIL' })
-      .map((x) => x.vendorPath)
-      .filter(Boolean);
-    if (wingDetails.length > 0) {
-      contentImages = wingDetails;
-    }
-  }
-
-  // If detail-image appending is disabled, we still keep source HTML images (sourceHtmlImages)
-  // and mirror them for reliability.
-  if (!includeDetailImages) {
-    contentImages = [];
-  }
-
-  function uniq(list) {
-    return Array.from(new Set((Array.isArray(list) ? list : []).filter(Boolean)));
-  }
-
-  function sanitizeHtmlBasic(html) {
-    let s = String(html || '').trim();
-    if (!s) return '';
-    // remove obvious dangerous/unsupported tags
-    s = s
-      .replace(/<\s*(script|iframe|object|embed|link|meta)[\s\S]*?>[\s\S]*?<\s*\/\s*\1\s*>/gi, '')
-      .replace(/<\s*(script|iframe|object|embed|link|meta)[^>]*?>/gi, '');
-    // remove inline event handlers
-    s = s.replace(/\son\w+\s*=\s*(["']).*?\1/gi, '');
-
-    // Normalize tiny source HTML images to mobile-friendly width.
-    // Many domeggook pages ship narrow wrappers/inline styles (e.g. width:120px) causing mini images in Coupang.
-    s = s
-      .replace(/<img\b([^>]*?)>/gi, (_m, attrs) => {
-        let a = String(attrs || '');
-        a = a
-          .replace(/\swidth\s*=\s*(["']).*?\1/gi, '')
-          .replace(/\sheight\s*=\s*(["']).*?\1/gi, '')
-          .replace(/\sstyle\s*=\s*(["']).*?\1/gi, '');
-        return `<img${a} style="display:block;width:100%;max-width:860px;height:auto;margin:0 auto;" loading="lazy">`;
-      })
-      .replace(/<(div|p)\b([^>]*)>/gi, '<$1$2 style="max-width:860px;margin:0 auto;">');
-
-    return s;
-  }
-
-  // Default outputs
-  let imageUrl = draft.imageUrl;
-
-  // Default: source HTML(원본 상세 템플릿) 사용 안 함.
-  // 이유: 일부 공급처 템플릿은 폭이 매우 좁거나 잘려서 모바일에서 작게 보임.
-  // 필요하면 preserveSourceHtml=1로 켤 수 있다.
-  const preserveSourceHtml = String(settings.preserveSourceHtml ?? '0').trim() === '1';
-  const sourceContentRaw = sanitizeHtmlBasic(draft.contentText);
-  let contentHtml = preserveSourceHtml ? sourceContentRaw : '';
-
-  // Images embedded in source HTML (preserve 모드에서만 사용)
-  const sourceHtmlImages = preserveSourceHtml
-    ? uniq(extractImageUrls(sourceContentRaw)).slice(0, Math.max(0, maxContentImages))
-    : [];
-
-  // ✅ Best-effort: Upload images to Coupang/Wing first (prevents image_host_unreachable)
-  // If disabled, falls back to the previous "public hosting" approach.
-  // Default: no-login mode (external public image URLs).
-  const useCoupangImageUpload = String(settings.useCoupangImageUpload ?? "0").trim() !== "0";
-
-  // Try image upload first; if it fails, fall back to public hosting instead of hard-failing.
-  // NOTE: Wing internal uploader cannot be used headless reliably (Akamai). We can reuse
-  // a recently uploaded Wing image from capture log as a temporary, stable representation.
-  // Default: off (no-login mode). Only enable when explicitly doing Wing-based uploads.
-  const useWingCaptureUploadedRep = String(settings.useWingCaptureUploadedRep ?? '0').trim() !== '0';
-
-  if (!payloadOnly && useCoupangImageUpload) {
-    try {
-      // 1) Main image
-      // Prefer reusing the last Wing UI upload (most reliable) to avoid CDN/hotlink issues.
-      // If available, FORCE it (override any other upload attempts) to prevent external URL rejections.
-      let mainEndpoint = null;
-      if (useWingCaptureUploadedRep) {
-        const last = getLastWingUploadedImage({ imageType: 'REPRESENTATION' });
-        if (last?.vendorPath) {
-          imageUrl = last.vendorPath;
-          mainEndpoint = 'wing-capture';
-        }
-      }
-
-      // If we still don't have a Wing vendorPath, download and try upload APIs.
-      const needMainUpload = imageUrl === draft.imageUrl;
-
-      // Try official API first
-      let mainUp = { ok: false };
-      let mainDl = null;
-      if (needMainUpload) {
-        mainDl = await downloadImageBufferWithPlaywright({
-          pageUrl: draft.sourceUrl,
-          imageUrl: draft.imageUrl,
-        });
-        if (!mainDl?.ok) throw new Error("main_image_download_failed");
-
-        mainUp = await uploadMarketplaceImage({
-          vendorId,
-          buffer: mainDl.buffer,
-          fileName: `main${mainDl.ext || ".jpg"}`,
-          mimeType: mainDl.mimeType || "image/jpeg",
-          accessKey,
-          secretKey,
-        });
-      }
-
-      // If we already have a Wing vendorPath, skip upload.
-      if (imageUrl === draft.imageUrl) {
-        // Fallback: Wing internal uploader (more reliable for approvals)
-        if (!mainUp.ok || !(mainUp.vendorPath || mainUp.cdnPath)) {
-        // 1) If user just uploaded an image in Wing UI, reuse that vendorPath from capture log.
-        if (useWingCaptureUploadedRep) {
-          const last = getLastWingUploadedImage({ imageType: 'REPRESENTATION' });
-          if (last?.vendorPath) {
-            mainUp = { ok: true, vendorPath: last.vendorPath, cdnPath: null, endpoint: 'wing-capture' };
-          }
-        }
-
-        // 2) Try programmatic Wing upload (may fail due to Akamai/headless constraints)
-        if (!mainUp.ok || !(mainUp.vendorPath || mainUp.cdnPath)) {
-          // write temp file
-          const tmpMainPath = path.join(process.cwd(), "out", `wing_main_${Date.now()}.jpg`);
-          try { fs.writeFileSync(tmpMainPath, Buffer.from(mainDl.buffer)); } catch {}
-          const wingUp = await uploadWingImage({ filePath: tmpMainPath, imageType: "REPRESENTATION" });
-          if (!wingUp.ok || !wingUp.vendorPath) throw new Error("wing_image_upload_failed");
-          mainUp = { ok: true, vendorPath: wingUp.vendorPath, cdnPath: null, endpoint: "wing" };
-        }
-        }
-
-        imageUrl = mainUp.vendorPath || mainUp.cdnPath;
-      }
-
-      // 2) Content images (optional)
-      // NOTE: Until we can upload detail images through Wing programmatically,
-      // keep contentHtml empty when we used Wing-captured rep image (prevents approval rejects
-      // due to unreachable external detail images).
-      const uploadedContentUrls = [];
-      const allowContentUpload = !(mainEndpoint === 'wing-capture') && !(mainUp?.endpoint === 'wing-capture');
-      if (allowContentUpload) for (const u of contentImages) {
-        try {
-          const dl = await downloadImageBufferWithPlaywright({
-            pageUrl: draft.sourceUrl,
-            imageUrl: u,
-          });
-          if (!dl?.ok) continue;
-
-          // 1) official api
-          let up = await uploadMarketplaceImage({
-            vendorId,
-            buffer: dl.buffer,
-            fileName: `content${dl.ext || ".jpg"}`,
-            mimeType: dl.mimeType || "image/jpeg",
-            accessKey,
-            secretKey,
-          });
-
-          // 2) wing uploader fallback
-          if (!up.ok || !(up.vendorPath || up.cdnPath)) {
-            const tmpPath = path.join(process.cwd(), "out", `wing_content_${Date.now()}_${Math.random().toString(16).slice(2)}.jpg`);
-            try { fs.writeFileSync(tmpPath, Buffer.from(dl.buffer)); } catch {}
-            let wingUp = await uploadWingImage({ filePath: tmpPath, imageType: "DETAIL" });
-            if (!wingUp.ok) {
-              wingUp = await uploadWingImage({ filePath: tmpPath, imageType: "REPRESENTATION" });
-            }
-            if (wingUp.ok && wingUp.vendorPath) {
-              up = { ok: true, vendorPath: wingUp.vendorPath, cdnPath: null, endpoint: "wing" };
-            }
-          }
-
-          const src = up?.cdnPath || up?.vendorPath;
-          if (src) uploadedContentUrls.push(src);
-        } catch {
-          // ignore single image failure
-        }
-      }
-
-      // Build clean HTML with only Coupang-hosted images
-      if (uploadedContentUrls.length > 0) {
-        const imgHtml = buildImageOnlyHtmlFromUrls(uploadedContentUrls);
-        contentHtml = imgHtml;
-      } else if (mainUp?.endpoint === 'wing-capture') {
-        // keep text-only
-      }
-    } catch {
-      // Fall back to public hosting approach below
-    }
-  }
-
-  const needFallbackHosting =
-    (
-      !useCoupangImageUpload ||
-      imageUrl === draft.imageUrl ||
-      (contentImages.length > 0 && !contentHtml) ||
-      // If upstream HTML contains <img>, we must mirror/rewrite to stable hosted URLs.
-      (sourceHtmlImages.length > 0 && /<img\b/i.test(String(contentHtml || '')))
-    );
-
-  if (needFallbackHosting) {
-    // Fallback: download images and expose via local/public base URL
-    const localImageBase = resolveLocalImageBase(settings);
-    const outDir = path.join(process.cwd(), "out");
-
-    // If main image is already uploaded to Coupang, we only need content images.
-    const downloadList = Array.from(
-      new Set(
-        imageUrl === draft.imageUrl
-          ? [draft.imageUrl, ...contentImages, ...sourceHtmlImages]
-          : [...contentImages, ...sourceHtmlImages],
-      ),
-    ).filter(Boolean);
-
-    const { DOMEGGOOK_STORAGE_STATE_PATH } = await import("../config/paths.js");
-    const storageStatePath = DOMEGGOOK_STORAGE_STATE_PATH;
-    const downloaded = await downloadImagesWithPlaywright({
-      pageUrl: draft.sourceUrl,
-      imageUrls: downloadList,
-      outDir,
-      baseUrl: localImageBase,
-      storageStatePath,
+  if (String(settings.pagesAutoDeploy || "").trim() === "1") {
+    const deployRes = await deployPagesAssets({
+      directory: outDir,
+      subDirName: "couplus-out",
+      projectName: String(settings.pagesProjectName || "").trim(),
+      apiToken: String(settings.pagesApiToken || "").trim(),
+      accountId: String(settings.pagesAccountId || "").trim(),
     });
-
-    // Safety: normalize downloaded files in-place to satisfy Coupang image constraints.
-    // Some sources provide tiny thumbnails (e.g. 330x330) which get approval-rejected.
-    for (const f of downloaded.files || []) {
-      try {
-        if (!f?.filePath) continue;
-        const tmp = `${f.filePath}.norm_${Date.now()}.jpg`;
-        await normalizeImageForCoupang({ inputPath: f.filePath, outputPath: tmp });
-        try { fs.renameSync(tmp, f.filePath); } catch { try { fs.copyFileSync(tmp, f.filePath); } catch {} try { fs.unlinkSync(tmp); } catch {} }
-      } catch {}
+    if (!deployRes.ok) {
+      return {
+        ok: false,
+        skipped: false,
+        error: "pages_deploy_failed",
+        detail: deployRes.error,
+        deploy: {
+          code: deployRes.code ?? null,
+          stdout: deployRes.stdout || "",
+          stderr: deployRes.stderr || "",
+        },
+      };
     }
-
-    if (String(settings.pagesAutoDeploy || "").trim() === "1") {
-      const deployRes = await deployPagesAssets({
-        directory: outDir,
-        subDirName: "couplus-out",
-        projectName: String(settings.pagesProjectName || "").trim(),
-        apiToken: String(settings.pagesApiToken || "").trim(),
-        accountId: String(settings.pagesAccountId || "").trim(),
-      });
-      if (!deployRes.ok) {
-        return {
-          ok: false,
-          skipped: false,
-          error: "pages_deploy_failed",
-          detail: deployRes.error,
-          deploy: {
-            code: deployRes.code ?? null,
-            stdout: deployRes.stdout || "",
-            stderr: deployRes.stderr || "",
-          },
-        };
-      }
-      await new Promise((r) => setTimeout(r, 3000));
-    }
-
-    // Helper: ensure a local out/<file> meets Coupang image constraints.
-    // We always normalize to 1200x1200 JPEG to avoid approval rejects on small thumbs (e.g. 330x330).
-    async function forceNormalizeOutFile(fileName) {
-      try {
-        if (!fileName) return fileName;
-        const baseName = String(fileName);
-        const p = path.join(outDir, baseName);
-        if (!fs.existsSync(p)) return fileName;
-
-        // Write to a new stable filename to avoid any race/overwrite issues.
-        const ext = path.extname(baseName) || '.jpg';
-        const stem = ext ? baseName.slice(0, -ext.length) : baseName;
-        const normalizedName = `${stem}.cp_norm.jpg`;
-        const outPath = path.join(outDir, normalizedName);
-
-        await normalizeImageForCoupang({ inputPath: p, outputPath: outPath });
-        return normalizedName;
-      } catch {
-        return fileName;
-      }
-    }
-
-    // Helper: for a downloaded file, generate a public URL and verify it's reachable.
-    async function pickReachablePublicUrl(fileName, { attempts = 8, timeoutMs = IMAGE_CHECK_TIMEOUT_MS } = {}) {
-      if (!fileName) return "";
-      // Normalize first to ensure >=500x500
-      const normalizedName = await forceNormalizeOutFile(fileName);
-      for (let i = 0; i < attempts; i += 1) {
-        const u = buildLocalImageUrl(localImageBase, normalizedName, { cacheBust: false });
-        const ok = await isUrlReachable(u, timeoutMs);
-        if (ok) return u;
-        // backoff
-        await new Promise((r) => setTimeout(r, 700 + i * 500));
-      }
-      return "";
-    }
-
-    // Update main image only if we haven't already uploaded it to Coupang.
-    if (imageUrl === draft.imageUrl) {
-      const mainFile = (downloaded.files || []).find((f) => f.imageUrl === draft.imageUrl);
-      const mainFileName = mainFile?.fileName;
-      if (!mainFileName) {
-        return { ok: false, skipped: false, error: "main_image_download_failed" };
-      }
-
-      const mappedMain = await pickReachablePublicUrl(mainFileName);
-      if (!mappedMain) {
-        return {
-          ok: false,
-          skipped: false,
-          error: "image_host_unreachable",
-          imageUrl: buildLocalImageUrl(localImageBase, mainFileName, { cacheBust: false }),
-        };
-      }
-
-      imageUrl = mappedMain;
-    }
-
-    // Content images: only keep URLs that are publicly reachable.
-    const contentLocalUrls = [];
-    for (const src of contentImages) {
-      const f = (downloaded.files || []).find((x) => x.imageUrl === src);
-      if (!f?.fileName) continue;
-      const pub = await pickReachablePublicUrl(f.fileName, { attempts: 4 });
-      if (pub) contentLocalUrls.push(pub);
-    }
-
-    // Rewrite embedded <img src> in upstream HTML to our hosted URLs (sourceHtmlImages)
-    const rewriteMap = new Map();
-    for (const src of sourceHtmlImages) {
-      const f = (downloaded.files || []).find((x) => x.imageUrl === src);
-      if (!f?.fileName) continue;
-      const pub = await pickReachablePublicUrl(f.fileName, { attempts: 4 });
-      if (pub) rewriteMap.set(src, pub);
-    }
-
-    if (rewriteMap.size > 0 && contentHtml) {
-      for (const [from, to] of rewriteMap.entries()) {
-        contentHtml = String(contentHtml).split(from).join(to);
-      }
-    }
-
-    const imgHtml = contentLocalUrls.length > 0 ? buildImageOnlyHtmlFromUrls(contentLocalUrls) : "";
-    if (imgHtml) contentHtml = imgHtml;
+    await new Promise((r) => setTimeout(r, 3000));
   }
+
+  const imageUrl = downloaded.urlMap[draft.imageUrl];
+  if (!imageUrl) {
+    return { ok: false, skipped: false, error: "main image download failed" };
+  }
+
+  const imageReachable = await isUrlReachable(imageUrl, IMAGE_CHECK_TIMEOUT_MS);
+  if (!imageReachable) {
+    return {
+      ok: false,
+      skipped: false,
+      error: "image_host_unreachable",
+      imageUrl,
+    };
+  }
+
+  const contentLocalUrls = contentImages.map((u) => downloaded.urlMap[u]).filter(Boolean);
+  const contentHtml =
+    contentLocalUrls.length > 0 ? buildImageOnlyHtmlFromUrls(contentLocalUrls) : draft.contentText || "";
 
   const displayCategoryCode = resolveDisplayCategoryCode({
     title: draft.title,
@@ -543,56 +224,15 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
     fallback: DISPLAY_CATEGORY_CODE,
   });
 
-  let finalPrice = computePrice(draft.price, {
+  const finalPrice = computePrice(draft.price, {
     rate: settings.marginRate,
     add: settings.marginAdd,
     min: settings.priceMin,
     roundUnit: settings.roundUnit,
   });
 
-  // 배송비가 유료면 "실제 배송비"만큼 판매가에 가산
-  // shippingFee: 0=무료, >0=유료(금액), -1=유료(금액 표기 없음)
-  const shippingFee = Number(draft.shippingFee);
-
-  // 배송비 가격정책
-  // - none: 반영 안함
-  // - actual: 실제 배송비만큼 가산
-  // - fixed: 유료면 고정 금액 가산
-  // - error_unknown: 유료인데 금액 못 읽으면 에러
-  const shippingPolicy = String(settings.shippingPolicy || "actual").trim();
-  const shippingFixed = Number.isFinite(Number(settings.shippingFixedAmount))
-    ? Number(settings.shippingFixedAmount)
-    : 2500;
-
-  if (shippingFee === -1 && shippingPolicy === "error_unknown") {
-    return {
-      ok: false,
-      skipped: false,
-      error: "shipping_fee_unknown",
-      detail: {
-        message: "배송비가 유료(착불/배송비별도)로 표시되지만 금액을 확인할 수 없어 업로드를 중단했습니다.",
-        sourceUrl: draft.sourceUrl,
-      },
-      draft: { title: sellerProductName, price: draft.price, imageUrl: draft.imageUrl, shippingFee: draft.shippingFee },
-    };
-  }
-
-  let shippingSurcharge = 0;
-  if (shippingPolicy === "none") shippingSurcharge = 0;
-  else if (shippingPolicy === "fixed") shippingSurcharge = shippingFee > 0 || shippingFee === -1 ? shippingFixed : 0;
-  else if (shippingPolicy === "actual") shippingSurcharge = shippingFee > 0 ? shippingFee : 0;
-  else if (shippingPolicy === "error_unknown") shippingSurcharge = shippingFee > 0 ? shippingFee : 0;
-
-  const shouldAddShipping = shippingSurcharge > 0;
-  if (shouldAddShipping) {
-    finalPrice += shippingSurcharge;
-    const roundUnit = Number.isFinite(Number(settings.roundUnit)) ? Number(settings.roundUnit) : 10;
-    if (roundUnit > 1) finalPrice = Math.floor(finalPrice / roundUnit) * roundUnit;
-    const min = Number.isFinite(Number(settings.priceMin)) ? Number(settings.priceMin) : 1000;
-    if (Number.isFinite(min)) finalPrice = Math.max(min, finalPrice);
-  }
-
-  const useAutoCategory = String(settings.autoCategoryMatch || process.env.AUTO_CATEGORY_MATCH || "").trim() === "1";
+  const useAutoCategory =
+    String(settings.autoCategoryMatch || process.env.AUTO_CATEGORY_MATCH || "").trim() === "1";
   let allowAutoCategory = false;
   if (useAutoCategory) {
     try {
@@ -603,313 +243,64 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
     }
   }
 
-  // Allow manual override
-  const overrideCategoryCode = Number(
-    settings.categoryOverrideCode ??
-    settings.displayCategoryCode ??
-    settings.categoryOverride ??
-    settings.coupangDisplayCategoryCode
-  );
-  let finalCategoryCode = Number.isFinite(overrideCategoryCode) && overrideCategoryCode > 0
-    ? overrideCategoryCode
-    : displayCategoryCode;
+  let finalCategoryCode = displayCategoryCode;
   let notices = undefined;
 
-  // If vendor category text is missing, try Coupang category prediction API for better accuracy.
-  // This prevents bad defaults (e.g. adult-only categories).
-  const canPredictCategory = accessKey && secretKey;
-  const usePredict = String(settings.autoCategoryPredict ?? "1").trim() !== "0";
-  if (
-    canPredictCategory &&
-    usePredict &&
-    (!draft.categoryText || String(draft.categoryText).trim() === "") &&
-    (finalCategoryCode === DISPLAY_CATEGORY_CODE)
-  ) {
-    try {
-      const pred = await recommendCategory({
-        productName: draft.title,
-        productDescription: String(draft.contentText || "").replace(/<[^>]+>/g, " ").slice(0, 500),
-        productImageUrl: imageUrl,
-        accessKey,
-        secretKey,
-      });
-      if (pred.status === 200) {
-        const bodyObj = typeof pred.body === "string" ? JSON.parse(pred.body) : pred.body;
-        const predicted = Number(bodyObj?.data?.predictedCategoryId);
-        const predictedName = String(bodyObj?.data?.predictedCategoryName || "");
-        const looksAdult = /성인|19\s*세|청소년\s*이용\s*불가|미성년\s*불가/i.test(predictedName);
-        if (looksAdult) {
-          return {
-            ok: false,
-            skipped: false,
-            error: "adult_category_blocked",
-            detail: { predictedCategoryId: predicted, predictedCategoryName: predictedName },
-            draft: { title: sellerProductName, price: draft.price, imageUrl: draft.imageUrl },
-          };
-        }
-        if (Number.isFinite(predicted) && predicted > 0) {
-          // validate predicted category
-          try {
-            const meta = await getCategoryMetas({
-              displayCategoryCode: predicted,
-              accessKey,
-              secretKey,
-            });
-            if (meta.status === 200) {
-              finalCategoryCode = predicted;
-            }
-          } catch {}
-        }
-      }
-    } catch {}
-  }
-
-  // Auto category (Coupang-side matching) should not override explicit manual category overrides.
-  // Also allow turning it off via settings.autoCategoryMatch=0.
-  const hasManualOverride = Number.isFinite(overrideCategoryCode) && overrideCategoryCode > 0;
-  const useAutoMatch = String(settings.autoCategoryMatch ?? "1").trim() !== "0";
-
-  if (allowAutoCategory && useAutoMatch && !hasManualOverride) {
+  if (allowAutoCategory) {
     finalCategoryCode = null;
     notices = null;
   } else {
-    const usePredict = String(settings.autoCategoryPredict ?? "1").trim() !== "0";
     const useRecommend =
-      String(settings.autoCategoryRecommend || process.env.AUTO_CATEGORY_RECOMMEND || "").trim() === "1" ||
-      usePredict;
+      String(settings.autoCategoryRecommend || process.env.AUTO_CATEGORY_RECOMMEND || "").trim() ===
+      "1";
     if (useRecommend) {
       try {
-        const productName = cleanTitle(String(draft.title || "").split("|")[0]).slice(0, 80);
         const rec = await recommendCategory({
-          productName,
-          // Avoid noisy page text that can mislead categorization.
-          productDescription: "",
+          productName: draft.title,
+          productDescription: draft.contentText?.slice(0, 2000) || "",
           productImageUrl: imageUrl,
           accessKey,
           secretKey,
         });
         const bodyObj = typeof rec.body === "string" ? JSON.parse(rec.body) : rec.body;
         const recCode = bodyObj?.data?.predictedCategoryId;
-        const recName = bodyObj?.data?.predictedCategoryName;
         if (recCode) finalCategoryCode = Number(recCode);
-        // attach for result/UI (non-persistent)
-        settings.__predictedCategory = { id: recCode ?? null, name: recName ?? null };
       } catch {}
     }
 
-    // Validate category code only when we actually have keys.
-    // (payloadOnly/dry-run should work without credentials and should respect manual overrides.)
-    if (accessKey && secretKey) {
-      try {
-        const meta = await getCategoryMetas({ displayCategoryCode: finalCategoryCode, accessKey, secretKey });
-        if (meta.status !== 200) {
-          finalCategoryCode = DISPLAY_CATEGORY_CODE;
-        }
-      } catch {
+    try {
+      const meta = await getCategoryMetas({ displayCategoryCode: finalCategoryCode, accessKey, secretKey });
+      if (meta.status !== 200) {
         finalCategoryCode = DISPLAY_CATEGORY_CODE;
       }
+    } catch {
+      finalCategoryCode = DISPLAY_CATEGORY_CODE;
     }
   }
 
-  // When true, Coupang will treat the product as "requested" on create (approval requested).
-  // Default: ON for /api/upload/execute so users get a real upload, not a temp draft.
-  const autoRequest = String(settings.autoRequest ?? settings.autoRequestApproval ?? "1").trim() === "1";
+  const autoRequest = String(settings.autoRequest || "").trim() === "1";
 
-  let optionsUsed =
-    Array.isArray(draft.options) && draft.options.length > 0
-      ? makeUniqueOptions(draft.options)
-      : [];
+  const optionsUsed =
+    Array.isArray(draft.options) && draft.options.length > 0 ? makeUniqueOptions(draft.options) : [];
 
-  // Stability-first: 옵션(구매옵션) 업로드는 쿠팡 단위수량/옵션유효성 이슈로 실패 확률이 높아서 기본 OFF.
-  const disableOptions = String(settings.disableOptions ?? "1").trim() === "1";
-  if (disableOptions) optionsUsed = [];
-
-  const overrideTitle = String(settings.titleOverride || "").trim();
-
-  // If user didn't pick a title in the UI, auto-apply the best 15-char suggestion.
-  // This makes "Upload" behave like it benefited from the preview step.
-  let autoSuggestedTitle = "";
-  const autoTitleSuggest = String(settings.autoTitleSuggest ?? "1").trim() !== "0";
-  if (!overrideTitle && autoTitleSuggest) {
-    try {
-      const sug = await suggestTitlesHybrid({ title: draft.title, maxLen: 30, useNaver: true });
-      const first = String(sug?.suggestions?.[0]?.title || '').trim();
-      // 너무 짧거나 성의 없는 제목은 버리고 원본 제목을 우선한다.
-      if (first.length >= 10) autoSuggestedTitle = first;
-    } catch {}
-  }
-
-  function humanizeTitle(raw) {
-    let t = String(raw || '').replace(/\s+/g, ' ').trim();
-    if (!t) return '';
-    // 브랜드/광고성 꼬리표 정리
-    t = t
-      .replace(/\[[^\]]{1,24}\]/g, ' ')
-      .replace(/\((당일출고|국내발송|해외직구|무료배송|정품)\)/gi, ' ')
-      .replace(/\b(당일출고|초특가|핫딜|대박할인)\b/gi, ' ')
-      .replace(/\s+/g, ' ')
-      .trim();
-    if (t.length > 80) t = t.slice(0, 80).trim();
-    return t;
-  }
-
-  const baseTitle = humanizeTitle(draft.title || '');
-  const sellerProductName = humanizeTitle(overrideTitle || autoSuggestedTitle || baseTitle || draft.title || '단품');
-
-  function extractQtyPerUnit(title) {
-    const t = String(title || "");
-    const m = t.match(/(\d{1,5})\s*(매|개|개입|입|장|pcs?|p)/i);
-    if (!m) return 1;
-    const n = Number(m[1]);
-    if (!Number.isFinite(n) || n <= 0) return 1;
-    return Math.min(99999, Math.max(1, Math.floor(n)));
-  }
-
-  function extractSize(title) {
-    const t = String(title || "");
-    const m = t.match(/(\d{1,4}\s*[xX×]\s*\d{1,4}(?:\s*[xX×]\s*\d{1,4})?)\s*(cm|mm|m)?/);
-    if (!m) return "FREE";
-    const raw = String(m[1] || "").replace(/\s*/g, "");
-    const unit = String(m[2] || "cm").trim();
-    return `${raw}${unit}`;
-  }
-
-  // Category 65906 (배변패드) mandatory attributes (from Wing capture): 사이즈, 개당 수량, 수량
-  let itemAttributes = null;
-  let itemUnit = null;
-  if (Number(finalCategoryCode) === 65906) {
-    const qtyPerUnit = extractQtyPerUnit(prev?.draft?.title || draft.title);
-    const size = extractSize(prev?.draft?.title || draft.title);
-    // For QUANTITY-related mandatory fields, Wing hint suggests including unit text.
-    // (e.g. "50매", "5개입", "1개")
-    itemAttributes = [
-      { attributeTypeName: "사이즈", attributeValueName: String(size || 'FREE') },
-      { attributeTypeName: "개당 수량", attributeValueName: `${qtyPerUnit}개입` },
-      { attributeTypeName: "수량", attributeValueName: `1개` },
-    ];
-
-    // unitCount/unitType seems to be the actual "단위수량" field.
-    // From Wing meta: QUANTITY baseUnit=PIECE.
-    itemUnit = { unitCount: qtyPerUnit, unitType: 'PIECE' };
-  }
-
-  // 차량 내비게이션 액세서리(78838) 필수 속성 보정
-  // 해당 카테고리는 '모델명/품번', 'RAM / 메모리 용량' 누락 시 임시저장으로 남는다.
-  if (Number(finalCategoryCode) === 78838) {
-    const t0 = String(prev?.draft?.title || draft.title || '');
-    const model = (() => {
-      const m = t0.match(/([A-Z]{2,}[\-\d]{0,8}|\d{3,6}[A-Z]?)/i);
-      return String(m?.[1] || '범용').slice(0, 30);
-    })();
-    const mem = (() => {
-      const m = t0.match(/(\d{1,3})\s*(GB|MB)/i);
-      if (m) return `${m[1]}${String(m[2]).toUpperCase()}`;
-      return '1GB';
-    })();
-
-    itemAttributes = [
-      { attributeTypeName: '모델명/품번', attributeValueName: model || '범용' },
-      { attributeTypeName: 'RAM / 메모리 용량', attributeValueName: mem || '1GB' },
-    ];
-    itemUnit = { unitCount: 1, unitType: 'PIECE' };
-  }
-
-  // Wet wipes / sanitizing wipes
-  // IMPORTANT: Wing category selection for wipes has been observed as displayCategoryCode=76872.
-  // We also have older meta-driven handling for 63908/111860.
-  // Seller API is strict about unitCount/unitType ("단위수량") for some wipe categories.
-  // Learnings (via getSellerProduct on an existing successful listing in 76872): unitCount=1.
-  // The GET response does not expose unitType; empirically unitType=PIECE with unitCount=1 works.
-  if (Number(finalCategoryCode) === 76872) {
-    // 76872 has no exposed mandatory attributes in category metas.
-    // Keep it minimal: provide unitCount/unitType only.
-    itemAttributes = null;
-    const overrideUnitType = String(settings.wetWipesUnitType || '').trim();
-    const unitType = overrideUnitType || 'PIECE';
-    itemUnit = { unitCount: 1, unitType };
-  } else if ([63908, 111860].includes(Number(finalCategoryCode))) {
-    const title0 = prev?.draft?.title || draft.title;
-
-    const qtyPerUnit = extractQtyPerUnit(title0);
-
-    // Try to parse gsm/평량 from title (e.g. 55gsm, 55 gsm)
-    const mGsm = String(title0 || '').match(/(\d{2,3})\s*(gsm|g\s*\/\s*m2|g\/m2)/i);
-    const gsm = (() => {
-      const n = mGsm ? Number(mGsm[1]) : NaN;
-      if (!Number.isFinite(n) || n <= 0) return 55; // safe default
-      return Math.min(999, Math.max(1, Math.floor(n)));
-    })();
-
-    // Pack quantity (수량) — default 1.
-    const mPack = String(title0 || '').match(/(?:x|\*|×)\s*(\d{1,4})\s*(?:팩|pack|개|ea|입)?/i);
-    const packQty = (() => {
-      const n = mPack ? Number(mPack[1]) : NaN;
-      if (!Number.isFinite(n) || n <= 0) return 1;
-      return Math.min(9999, Math.max(1, Math.floor(n)));
-    })();
-
-    // Build mandatory item attributes (Wing accepts unit-suffixed strings for QUANTITY group).
-    itemAttributes = [
-      { attributeTypeName: '평량', attributeValueName: String(gsm) },
-      { attributeTypeName: '개당 수량', attributeValueName: `${qtyPerUnit}매` },
-      { attributeTypeName: '수량', attributeValueName: `${packQty}개` },
-    ];
-
-    // unitCount/unitType is the seller_api "단위수량"; unfortunately some accounts/categories
-    // are strict about unitType. Default to SHEET for wipes, but allow override via settings.
-    const overrideUnitType = String(settings.wetWipesUnitType || '').trim();
-    const unitType = overrideUnitType || 'SHEET';
-    itemUnit = { unitCount: qtyPerUnit, unitType };
-  }
-
-  // Apply per-category template overrides (schema/template-driven marketplace approach)
-  try {
-    const tmpl = await getCategoryTemplate({ marketplace: 'coupang', displayCategoryCode: finalCategoryCode });
-    if (tmpl && typeof tmpl === 'object') {
-      if (Array.isArray(tmpl.itemAttributes)) itemAttributes = tmpl.itemAttributes;
-      if (tmpl.itemUnit && typeof tmpl.itemUnit === 'object') itemUnit = tmpl.itemUnit;
-    }
-  } catch {}
-
-  // Some payloads/options require unitCount/unitType.
-  // Only default it when we actually have option items.
-  if (!itemUnit && optionsUsed.length > 0) {
-    itemUnit = { unitCount: 1, unitType: 'PIECE' };
-  }
-
-  // Final safety: force Wing-captured representation image when available (prevents external URL approval rejects).
-  // Only do this in "upload-to-coupang/wing" mode. In external-URL mode (useCoupangImageUpload=0),
-  // we must not override with Wing vendor_inventory paths.
-  if (useCoupangImageUpload && useWingCaptureUploadedRep) {
-    const last = getLastWingUploadedImage({ imageType: 'REPRESENTATION' });
-    if (last?.vendorPath) {
-      imageUrl = last.vendorPath;
-    }
-  }
-
-  let body = buildSellerProductBody({
+  const baseBody = buildSellerProductBody({
     vendorId,
     vendorUserId,
     outboundShippingPlaceCode: OUTBOUND_SHIPPING_PLACE_CODE,
-    deliveryCompanyCode: settings.coupangDeliveryCompanyCode,
     displayCategoryCode: finalCategoryCode,
     allowAutoCategory,
-    sellerProductName,
+    sellerProductName: draft.title,
     imageUrl,
     price: finalPrice,
     stock: 10,
     contentText: contentHtml,
     notices,
     requested: autoRequest,
-    itemAttributes,
-    itemUnit,
     items:
       optionsUsed.length > 0
         ? optionsUsed.map((opt) => {
             const rawPrice = finalPrice + (opt.priceDelta || 0);
-            const minPrice = Number.isFinite(Number(settings.priceMin))
-              ? Number(settings.priceMin)
-              : 1000;
+            const minPrice = Number.isFinite(Number(settings.priceMin)) ? Number(settings.priceMin) : 1000;
             const itemPrice = Math.max(minPrice, rawPrice);
 
             return buildSingleItem({
@@ -921,8 +312,6 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
               contentText: contentHtml,
               notices,
               attributes: buildItemAttributesFromOptionValues(opt.values) || undefined,
-              unitCount: itemUnit?.unitCount,
-              unitType: itemUnit?.unitType,
             });
           })
         : undefined,
@@ -932,248 +321,38 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
     optionsUsed,
     finalPrice,
     priceMin: settings.priceMin,
-    items: body?.items || [],
+    items: baseBody?.items || [],
   });
 
   if (payloadOnly) {
     return {
       ok: true,
       payloadOnly: true,
-      payload: body,
+      payload: baseBody,
       payloadCheck,
-      draft: { title: sellerProductName, price: draft.price, imageUrl: draft.imageUrl },
+      qc: { ok: qcGate.ok, metrics: qcGate.metrics },
+      preview: previewResult.preview,
+      draft: { title: draft.title, price: draft.price, imageUrl: draft.imageUrl },
       finalPrice,
-      category: { requested: displayCategoryCode, used: finalCategoryCode, auto: allowAutoCategory, predicted: settings.__predictedCategory || null },
+      category: { requested: displayCategoryCode, used: finalCategoryCode, auto: allowAutoCategory },
       optionsUsed: optionsUsed.map((opt) => opt.label),
     };
   }
 
-  // Create (with one safe retry for unitCount/unitType errors)
-  let res = await createSellerProduct({
+  const createAttempt = await createWithErrorItemRetry({
     vendorId,
-    body,
+    body: baseBody,
     accessKey,
     secretKey,
+    finalCategoryCode,
   });
-
-  // Some categories are strict about unitCount/unitType and/or expect an explicit attributes array.
-  // Retry once with a conservative default (unitCount=1, unitType=PIECE) and attributes=[].
-  try {
-    const bodyObj0 = typeof res.body === "string" ? JSON.parse(res.body) : res.body;
-    const msg0 = String(bodyObj0?.message || "");
-    const code0 = String(bodyObj0?.code || "").toUpperCase();
-
-    const needsUnit = msg0.includes("단위수량") || msg0.includes("구매 옵션") || msg0.includes("단위가 존재");
-    const needsAttrs = msg0.includes("속성값") || msg0.includes("속성") || msg0.includes("attribute");
-
-    const hasUnit = Array.isArray(body?.items) && body.items.some((it) => it?.unitCount != null || it?.unitType);
-
-    if (code0 && code0 !== "SUCCESS" && (needsUnit || needsAttrs)) {
-      const patchedItems = Array.isArray(body?.items)
-        ? body.items.map((it) => ({
-            ...it,
-            // Force an explicit attributes array. In some categories, non-empty/placeholder attributes
-            // (e.g. {수량:1}) can be rejected; empty array is safer.
-            attributes: [],
-            unitCount: it?.unitCount ?? 1,
-            unitType: it?.unitType || "PIECE",
-          }))
-        : body?.items;
-
-      // If the failure was unit-related and unit fields are missing, force them.
-      const finalItems = needsUnit && !hasUnit
-        ? (Array.isArray(patchedItems) ? patchedItems.map((it) => ({ ...it, unitCount: 1, unitType: "PIECE" })) : patchedItems)
-        : patchedItems;
-
-      const patchedOptionItems = Array.isArray(body?.optionItems)
-        ? body.optionItems.map((it) => ({
-            ...it,
-            attributes: [],
-            unitCount: it?.unitCount ?? 1,
-            unitType: it?.unitType || "PIECE",
-          }))
-        : body?.optionItems;
-
-      body = {
-        ...body,
-        items: finalItems,
-        optionItems: patchedOptionItems,
-      };
-
-      res = await createSellerProduct({ vendorId, body, accessKey, secretKey });
-    }
-  } catch {}
+  const res = createAttempt.response;
 
   let createdId = null;
   let createBody = res.body;
-  let createBodyObj = null;
   try {
-    createBodyObj = typeof res.body === "string" ? JSON.parse(res.body) : res.body;
-
-    const code = String(createBodyObj?.code || "").toUpperCase();
-    if (code && code !== "SUCCESS") {
-      const payloadSummary = {
-        displayCategoryCode: finalCategoryCode,
-        itemCount: Array.isArray(body?.items) ? body.items.length : 0,
-        firstItem: (() => {
-          const it = Array.isArray(body?.items) ? body.items[0] : null;
-          if (!it) return null;
-          return {
-            itemName: it.itemName,
-            unitCount: it.unitCount,
-            unitType: it.unitType,
-            attributes: it.attributes,
-          };
-        })(),
-      };
-      try {
-        await logListingAttempt({
-          userId: settings.userId || null,
-          sourceUrl: url,
-          marketplace: 'coupang',
-          displayCategoryCode: finalCategoryCode,
-          payloadSummary,
-          resultStatus: 'failed',
-          errorCode: 'coupang_create_failed',
-          errorMessage: String(createBodyObj?.message || ''),
-        });
-      } catch {}
-      // Persist failure for alerting (best-effort)
-      try {
-        await logListingAttempt({
-          userId: settings.userId || null,
-          sourceUrl: url,
-          marketplace: 'coupang',
-          displayCategoryCode: finalCategoryCode,
-          payloadSummary,
-          resultStatus: 'failed',
-          errorCode: 'coupang_create_failed',
-          errorMessage: String(createBodyObj?.message || ''),
-        });
-      } catch {}
-
-      return {
-        ok: false,
-        error: "coupang_create_failed",
-        detail: createBodyObj,
-        draft: { title: sellerProductName, price: draft.price, imageUrl: draft.imageUrl },
-        finalPrice,
-        category: { requested: displayCategoryCode, used: finalCategoryCode, auto: allowAutoCategory, predicted: settings.__predictedCategory || null },
-        optionsUsed: optionsUsed.map((opt) => opt.label),
-        payloadCheck,
-        payloadSummary,
-        create: { status: res.status, body: createBody, sellerProductId: null },
-      };
-    }
-
-    // Even with code=SUCCESS, Coupang may return errorItems for required attributes.
-    const errorItems = Array.isArray(createBodyObj?.errorItems) ? createBodyObj.errorItems : [];
-    if (errorItems.length > 0) {
-      // One safe retry: inject missing attributes with conservative defaults, then recreate.
-      // This is particularly useful for some kitchen-supplies categories where seller_api rejects
-      // placeholder attributes but still requires a few mandatory fields.
-      try {
-        const miss = (errorItems[0]?.itemAttributes || [])
-          .map((a) => String(a?.attributeTypeName || '').trim())
-          .filter(Boolean);
-
-        if (miss.length > 0 && Array.isArray(body?.items) && body.items.length > 0) {
-          const pickDefault = (name) => {
-            const n = String(name || '');
-            // QUANTITY-like fields often expect unit-suffixed strings.
-            if (n.includes('개당 수량')) return '1개입';
-            if (n.includes('총 수량')) return '1개';
-            if (n === '수량' || n.endsWith(' 수량') || n.includes('수량')) return '1개';
-            if (n.includes('대중소') && n.includes('사이즈')) return '중';
-            if (n.includes('사이즈')) return 'FREE';
-            if (n.includes('길이')) return '1cm';
-            if (n.includes('색상')) return '기타';
-            if (n.includes('평량')) return '55';
-            if (n.includes('RAM') || n.includes('메모리')) return '1GB';
-            if (n.includes('무게') || n.includes('중량')) return '1g';
-            if (n.includes('용량')) return '1ml';
-            return '기타';
-          };
-
-          const patchAttrs = (attrs) => {
-            const list = Array.isArray(attrs) ? [...attrs] : [];
-            const seen = new Set(list.map((x) => String(x?.attributeTypeName || '').trim()));
-            for (const name of miss) {
-              if (seen.has(name)) continue;
-              list.push({ attributeTypeName: name, attributeValueName: pickDefault(name) });
-              seen.add(name);
-            }
-            return list;
-          };
-
-          body = {
-            ...body,
-            items: body.items.map((it) => ({
-              ...it,
-              attributes: patchAttrs(it?.attributes),
-              unitCount: it?.unitCount ?? 1,
-              unitType: it?.unitType || 'PIECE',
-            })),
-          };
-
-          const res2 = await createSellerProduct({ vendorId, body, accessKey, secretKey });
-          const obj2 = typeof res2.body === 'string' ? JSON.parse(res2.body) : res2.body;
-          const code2 = String(obj2?.code || '').toUpperCase();
-          const err2 = Array.isArray(obj2?.errorItems) ? obj2.errorItems : [];
-          if (code2 === 'SUCCESS' && err2.length === 0) {
-            // Success on retry: replace original response.
-            res = res2;
-            createBody = res2.body;
-            createBodyObj = obj2;
-
-            // Learn a category template from this successful fix (best-effort).
-            try {
-              await upsertCategoryTemplate({
-                marketplace: 'coupang',
-                displayCategoryCode: finalCategoryCode,
-                name: `auto-learned from required-attrs retry (${finalCategoryCode})`,
-                template: {
-                  itemUnit: { unitCount: 1, unitType: 'PIECE' },
-                  itemAttributes: miss.map((name) => ({ attributeTypeName: name, attributeValueName: pickDefault(name) })),
-                },
-              });
-            } catch {}
-          }
-        }
-      } catch {}
-
-      // Re-check after retry attempt
-      const errorItems2 = Array.isArray(createBodyObj?.errorItems) ? createBodyObj.errorItems : [];
-      if (errorItems2.length > 0) {
-        createdId = createBodyObj?.data ?? null;
-        try {
-          await logListingAttempt({
-            userId: settings.userId || null,
-            sourceUrl: url,
-            marketplace: 'coupang',
-            displayCategoryCode: finalCategoryCode,
-            payloadSummary: { displayCategoryCode: finalCategoryCode, errorItems: errorItems2 },
-            resultStatus: 'failed',
-            errorCode: 'coupang_required_attributes_missing',
-            errorMessage: 'required_attributes_missing',
-          });
-        } catch {}
-        return {
-          ok: false,
-          error: "coupang_required_attributes_missing",
-          detail: createBodyObj,
-          draft: { title: sellerProductName, price: draft.price, imageUrl: draft.imageUrl },
-          finalPrice,
-          category: { requested: displayCategoryCode, used: finalCategoryCode, auto: allowAutoCategory, predicted: settings.__predictedCategory || null },
-          optionsUsed: optionsUsed.map((opt) => opt.label),
-          payloadCheck,
-          create: { status: res.status, body: createBody, sellerProductId: createdId },
-          followUp: createdId ? await pollApprovalStatus({ sellerProductId: createdId, accessKey, secretKey, attempts: 1, delayMs: 500 }) : null,
-        };
-      }
-    }
-
-    createdId = createBodyObj?.data ?? null;
+    const bodyObj = typeof res.body === "string" ? JSON.parse(res.body) : res.body;
+    createdId = bodyObj?.data ?? null;
   } catch {}
 
   let approval = null;
@@ -1193,36 +372,160 @@ export async function runUploadFromUrl(inputUrl, settings = {}) {
     });
   }
 
-  try {
-    await logListingAttempt({
-      userId: settings.userId || null,
-      sourceUrl: url,
-      marketplace: 'coupang',
-      displayCategoryCode: finalCategoryCode,
-      payloadSummary: {
-        displayCategoryCode: finalCategoryCode,
-        itemCount: Array.isArray(body?.items) ? body.items.length : 0,
-      },
-      resultStatus: 'success',
-    });
-  } catch {}
-
   return {
     ok: true,
     draft: { title: draft.title, price: draft.price, imageUrl: draft.imageUrl },
     finalPrice,
-    category: { requested: displayCategoryCode, used: finalCategoryCode, auto: allowAutoCategory, predicted: settings.__predictedCategory || null },
+    category: { requested: displayCategoryCode, used: finalCategoryCode, auto: allowAutoCategory },
     optionsUsed: optionsUsed.map((opt) => opt.label),
     payloadCheck,
-    debug: {
-      usedMainImageVendorPath: imageUrl,
-      usedContentHtmlLen: String(contentHtml || '').length,
-      useWingCaptureUploadedRep,
-    },
+    qc: { ok: qcGate.ok, metrics: qcGate.metrics },
+    preview: previewResult.preview,
+    createRetry: createAttempt.retry,
     create: { status: res.status, body: createBody, sellerProductId: createdId },
     approval,
     followUp,
   };
+}
+
+async function createWithErrorItemRetry({
+  vendorId,
+  body,
+  accessKey,
+  secretKey,
+  finalCategoryCode,
+}) {
+  let currentBody = cloneJson(body);
+  let response = await createSellerProduct({ vendorId, body: currentBody, accessKey, secretKey });
+  let retry = { attempts: 0, appliedFixes: [], errorItems: [] };
+
+  for (let attempt = 1; attempt <= CREATE_RETRY_MAX; attempt += 1) {
+    const parsed = safeJson(response.body);
+    const errorItems = extractErrorItems(parsed);
+    if (isCreateSuccess(parsed)) break;
+    if (errorItems.length === 0) break;
+
+    const fix = applyErrorItemFixes({ body: currentBody, errorItems, finalCategoryCode });
+    if (!fix.changed) {
+      retry = {
+        attempts: attempt - 1,
+        appliedFixes: retry.appliedFixes,
+        errorItems,
+      };
+      break;
+    }
+
+    retry = {
+      attempts: attempt,
+      appliedFixes: [...retry.appliedFixes, ...fix.appliedFixes],
+      errorItems,
+    };
+
+    currentBody = fix.body;
+    response = await createSellerProduct({ vendorId, body: currentBody, accessKey, secretKey });
+  }
+
+  return { response, retry };
+}
+
+function isCreateSuccess(parsedBody) {
+  if (!parsedBody || typeof parsedBody !== "object") return false;
+  if (parsedBody.code === "SUCCESS") return true;
+  return false;
+}
+
+function extractErrorItems(parsedBody) {
+  if (!parsedBody || typeof parsedBody !== "object") return [];
+  const items = parsedBody?.data?.errorItems || parsedBody?.errorItems || [];
+  return Array.isArray(items) ? items : [];
+}
+
+function applyErrorItemFixes({ body, errorItems, finalCategoryCode }) {
+  const cloned = cloneJson(body);
+  const items = Array.isArray(cloned?.items) ? cloned.items : [];
+  if (items.length === 0) {
+    return { changed: false, body: cloned, appliedFixes: [] };
+  }
+
+  const textBlob = errorItems
+    .map((item) => [item?.message, item?.errorMessage, item?.field].filter(Boolean).join(" "))
+    .join(" ")
+    .toLowerCase();
+
+  const needsAttributes =
+    textBlob.includes("attribute") ||
+    textBlob.includes("속성") ||
+    textBlob.includes("필수") ||
+    textBlob.includes("required");
+
+  const appliedFixes = [];
+  let changed = false;
+
+  if (needsAttributes) {
+    const requiredAttrs = getRequiredAttributes(finalCategoryCode);
+    for (const item of items) {
+      const before = Array.isArray(item.attributes) ? item.attributes.length : 0;
+      item.attributes = mergeAttributes(item.attributes, requiredAttrs);
+      const after = Array.isArray(item.attributes) ? item.attributes.length : 0;
+      if (after > before) changed = true;
+    }
+    if (changed) {
+      appliedFixes.push(`required_attributes_autofill:${String(finalCategoryCode || "auto")}`);
+    }
+  }
+
+  return {
+    changed,
+    body: cloned,
+    appliedFixes,
+  };
+}
+
+function getRequiredAttributes(categoryCode) {
+  const code = Number(categoryCode);
+  const byCategory = CATEGORY_REQUIRED_ATTRIBUTES[code];
+  if (Array.isArray(byCategory) && byCategory.length > 0) return byCategory;
+  return [
+    { attributeTypeName: "사이즈", attributeValueName: "FREE" },
+    { attributeTypeName: "수량", attributeValueName: "1개" },
+  ];
+}
+
+function mergeAttributes(current, required) {
+  const out = Array.isArray(current) ? [...current] : [];
+  const map = new Map(
+    out
+      .map((attr) => {
+        const type = String(attr?.attributeTypeName || "").trim().toLowerCase();
+        return type ? [type, true] : null;
+      })
+      .filter(Boolean),
+  );
+
+  for (const req of required) {
+    const type = String(req?.attributeTypeName || "").trim();
+    const value = String(req?.attributeValueName || "").trim();
+    if (!type || !value) continue;
+    const key = type.toLowerCase();
+    if (map.has(key)) continue;
+    out.push({ attributeTypeName: type, attributeValueName: value });
+    map.set(key, true);
+  }
+  return out;
+}
+
+function safeJson(raw) {
+  if (!raw) return null;
+  if (typeof raw === "object") return raw;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+function cloneJson(value) {
+  return JSON.parse(JSON.stringify(value || {}));
 }
 
 async function getPublicIp() {
@@ -1239,53 +542,30 @@ async function getPublicIp() {
 
 async function isUrlReachable(url, timeoutMs = 8000) {
   if (!url) return false;
-
-  // DNS on some hosts may lag behind for newly created hostnames (e.g. app2.* right after record creation).
-  // If a direct fetch fails due to DNS, try resolving via the public IPs that Cloudflare already returns
-  // for app2.splui.com (bypass local resolver).
-  const host = (() => {
-    try { return new URL(url).hostname; } catch { return ""; }
-  })();
-
   const shouldRetry = url.includes(".pages.dev") || url.includes("/couplus-out/");
   const maxAttempts = shouldRetry ? 3 : 1;
-
-  async function tryFetch(u) {
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
-      const head = await fetch(u, { method: "HEAD", redirect: "follow", signal: controller.signal });
-      if (head.ok) return true;
+      const res = await fetch(url, { method: "HEAD", signal: controller.signal });
+      if (res.ok) {
+        clearTimeout(timer);
+        return true;
+      }
     } catch {}
     try {
-      const get = await fetch(u, { method: "GET", redirect: "follow", signal: controller.signal });
-      if (get.ok) return true;
+      const res = await fetch(url, { method: "GET", signal: controller.signal });
+      if (res.ok) {
+        clearTimeout(timer);
+        return true;
+      }
     } catch {}
     clearTimeout(timer);
-    return false;
-  }
-
-  // Normal path
-  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-    const ok = await tryFetch(url);
-    if (ok) return true;
-
-    // DNS bypass for app2
-    if (host === "app2.splui.com") {
-      const fallbackIps = ["104.21.89.114", "172.67.141.123"];
-      for (const ip of fallbackIps) {
-        try {
-          const u = new URL(url);
-          u.hostname = ip;
-          const ok2 = await tryFetch(u.toString());
-          if (ok2) return true;
-        } catch {}
-      }
+    if (attempt < maxAttempts - 1) {
+      await new Promise((r) => setTimeout(r, 2000));
     }
-
-    if (attempt < maxAttempts - 1) await new Promise((r) => setTimeout(r, 2000));
   }
-
   return false;
 }
 
@@ -1371,8 +651,7 @@ function buildPayloadCheck({ optionsUsed = [], finalPrice, priceMin, items = [] 
     const item = itemMap.get(opt.label);
     const rawExpected = Number(finalPrice) + Number(opt.priceDelta || 0);
     const expectedPrice = Math.max(minPrice, rawExpected);
-    const expectedStock =
-      Number.isFinite(opt.stock) && Number(opt.stock) > 0 ? Number(opt.stock) : 10;
+    const expectedStock = Number.isFinite(opt.stock) && Number(opt.stock) > 0 ? Number(opt.stock) : 10;
     const actualPrice = Number(item?.salePrice ?? item?.originalPrice ?? item?.price);
     const actualStock = Number(item?.maximumBuyCount ?? item?.stock);
     const priceOk = Number.isFinite(actualPrice) && actualPrice === expectedPrice;
