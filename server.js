@@ -8,6 +8,8 @@ import { runUploadFromUrl } from "./src/pipeline/runUploadFromUrl.js";
 import { previewUploadFromUrl } from "./src/pipeline/previewUploadFromUrl.js";
 import { evaluateQcGate } from "./src/pipeline/qcGate.js";
 import { classifyUrl } from "./src/utils/urlFilter.js";
+import { computePrice } from "./src/utils/price.js";
+import { suggestTitlesHybrid } from "./src/utils/titleSuggest.js";
 import {
   initDb,
   createUser,
@@ -64,6 +66,92 @@ function isHttpUrl(u) {
 
 function log(...args) {
   console.log("[server]", new Date().toISOString(), ...args);
+}
+
+function uniqueStrings(values = []) {
+  return Array.from(
+    new Set(
+      values
+        .map((v) => String(v || "").trim())
+        .filter(Boolean),
+    ),
+  );
+}
+
+async function enrichPreviewForClient(previewRaw, settings = {}) {
+  if (!previewRaw || typeof previewRaw !== "object") return previewRaw;
+  const preview = JSON.parse(JSON.stringify(previewRaw));
+  const draft = preview?.draft && typeof preview.draft === "object" ? preview.draft : {};
+  const inspect = preview?.preview && typeof preview.preview === "object" ? preview.preview : {};
+
+  const detailImages = Array.isArray(inspect.contentImagesFiltered)
+    ? inspect.contentImagesFiltered.filter((u) => isHttpUrl(u))
+    : [];
+  const images = uniqueStrings([draft.imageUrl, ...detailImages]);
+  const options = Array.isArray(draft.options) ? draft.options : [];
+  const sourcePrice = Number(draft.price);
+  const finalPrice = computePrice(draft.price, {
+    rate: settings.marginRate,
+    add: settings.marginAdd,
+    min: settings.priceMin,
+    roundUnit: settings.roundUnit,
+  });
+
+  preview.computed = {
+    ...(preview?.computed && typeof preview.computed === "object" ? preview.computed : {}),
+    sourcePrice: Number.isFinite(sourcePrice) ? sourcePrice : draft.price ?? null,
+    finalPrice: Number.isFinite(Number(finalPrice)) ? Number(finalPrice) : finalPrice ?? null,
+    images,
+    optionsCount: options.length,
+  };
+
+  if (!Array.isArray(preview.options) || preview.options.length === 0) {
+    preview.options = options;
+  }
+
+  if (!preview.url) {
+    preview.url = String(preview.sourceUrl || draft.sourceUrl || inspect.sourceUrl || "").trim();
+  }
+
+  const hasSuggestions =
+    preview?.titleSuggestions &&
+    Array.isArray(preview.titleSuggestions.suggestions) &&
+    preview.titleSuggestions.suggestions.length > 0;
+
+  if (!hasSuggestions) {
+    const baseTitle = String(draft.title || "").trim();
+    if (baseTitle) {
+      try {
+        const suggested = await suggestTitlesHybrid({
+          title: baseTitle,
+          maxLen: 15,
+          useNaver: false,
+        });
+        if (
+          suggested?.ok &&
+          Array.isArray(suggested.suggestions) &&
+          suggested.suggestions.length > 0
+        ) {
+          preview.titleSuggestions = suggested;
+        }
+      } catch {
+        // ignore suggestion failures and fallback below
+      }
+      if (
+        !preview?.titleSuggestions ||
+        !Array.isArray(preview.titleSuggestions.suggestions) ||
+        preview.titleSuggestions.suggestions.length === 0
+      ) {
+        preview.titleSuggestions = {
+          ok: true,
+          source: "fallback",
+          suggestions: [{ title: baseTitle.slice(0, 15), keywords: [], score: 0 }],
+        };
+      }
+    }
+  }
+
+  return preview;
 }
 
 function loadUploadHistory() {
@@ -342,7 +430,8 @@ app.post('/api/jobs/start', authRequired, async (req, res) => {
     if (!url) return res.status(400).json({ ok: false, error: 'url_required' });
 
     if (kind === 'preview') {
-      const preview = await previewUploadFromUrl(url, req.user.settings || {});
+      const previewRaw = await previewUploadFromUrl(url, req.user.settings || {});
+      const preview = await enrichPreviewForClient(previewRaw, req.user.settings || {});
       const job = { id, kind, status: 'done', preview, result: preview };
       legacyJobs.set(id, job);
       return res.json({ ok: true, job });
@@ -573,7 +662,8 @@ app.post("/api/upload/preview", authRequired, async (req, res) => {
     const c = classifyUrl(url);
     if (!c.ok) return res.status(400).json({ ok: false, error: c.reason, url: c.url });
 
-    const preview = await previewUploadFromUrl(c.url, req.user.settings || {});
+    const previewRaw = await previewUploadFromUrl(c.url, req.user.settings || {});
+    const preview = await enrichPreviewForClient(previewRaw, req.user.settings || {});
     if (!preview?.ok) {
       return res.status(400).json({ ok: false, error: preview?.reason || preview?.error || "preview_failed" });
     }
