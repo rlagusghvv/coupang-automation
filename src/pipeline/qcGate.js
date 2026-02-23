@@ -8,17 +8,17 @@ function formatPercent(v) {
 }
 
 export function evaluateQcGate(preview = {}, settings = {}) {
-  const minFilteredImages = num(settings.qcMinFilteredImages, 3);
-  const minTokenMatchRate = num(settings.qcMinTokenMatchRate, 0.35);
-  const maxRejectedRate = num(settings.qcMaxRejectedRate, 0.75);
+  const minFilteredImages = num(settings.qcMinFilteredImages, 2);
+  const minTokenMatchRate = num(settings.qcMinTokenMatchRate, 0.3);
+  const maxRejectedRate = num(settings.qcMaxRejectedRate, 0.82);
   const maxHostDiversity = num(settings.qcMaxHostDiversity, 4);
   const minMainTokenCount = num(settings.qcMinMainTokenCount, 2);
 
   // path/asset quality guards
-  const minPathAllowRate = num(settings.qcMinPathAllowRate, 0.15);
-  const maxPathBlockedRate = num(settings.qcMaxPathBlockedRate, 0.7);
-  const maxSuspiciousPathRate = num(settings.qcMaxSuspiciousPathRate, 0.65);
-  const minExactHostRate = num(settings.qcMinExactHostRate, 0.2);
+  const minPathAllowRate = num(settings.qcMinPathAllowRate, 0.08);
+  const maxPathBlockedRate = num(settings.qcMaxPathBlockedRate, 0.82);
+  const maxSuspiciousPathRate = num(settings.qcMaxSuspiciousPathRate, 0.72);
+  const minExactHostRate = num(settings.qcMinExactHostRate, 0.05);
 
   const metrics = {
     imageCountRaw: num(preview.imageCountRaw, 0),
