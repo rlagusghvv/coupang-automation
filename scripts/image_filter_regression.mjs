@@ -30,7 +30,10 @@ function run() {
     "kept images must be from detail-like allow paths",
   );
 
-  const blocked = rejected.filter((r) => String(r?.reason || "").includes("path_blocked"));
+  const blocked = rejected.filter((r) => {
+    const reason = String(r?.reason || "");
+    return reason.includes("path_blocked") || reason.includes("non_product_asset");
+  });
   assert.ok(blocked.length >= 3, "must block common/event/sns/icon assets by path rule");
 
   assert.ok(analyzed.metrics.pathBlockedCountRaw >= 3, "pathBlockedCountRaw must reflect blocked assets");

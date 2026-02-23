@@ -273,7 +273,11 @@ export function analyzeSameProductImages({
       const looksProductUploadPath =
         pathname.includes("/upload/item/") ||
         pathname.includes("/upload/editor/") ||
-        pathname.includes("/upload/contents/");
+        pathname.includes("/upload/contents/") ||
+        pathname.includes("/editor/") ||
+        pathname.includes("/contents/") ||
+        pathname.includes("/attach/") ||
+        pathname.includes("/attachment/");
       const looksUiAsset =
         pathname.includes("/image/common/") ||
         pathname.includes("/image/item/") ||
