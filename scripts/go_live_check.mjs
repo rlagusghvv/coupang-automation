@@ -108,6 +108,13 @@ async function main() {
     note: regression.ok ? "qc_gate_failed blocks create call" : `exit=${regression.status}`,
   });
 
+  const imageFilterRegression = runNodeScript("scripts/image_filter_regression.mjs");
+  rows.push({
+    check: "image_filter_regression",
+    status: imageFilterRegression.ok ? "PASS" : "FAIL",
+    note: imageFilterRegression.ok ? "deny/allow path filter works in strict mode" : `exit=${imageFilterRegression.status}`,
+  });
+
   const smokeMock = runNodeScript("scripts/qc_gate_smoke.mjs", ["--mock"]);
   const mockJson = extractTrailingJson(smokeMock.stdout);
   const mockShape = validateSmokeShape(mockJson);
