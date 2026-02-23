@@ -287,7 +287,10 @@ export async function findDuplicateUpload({ userId, sourceUrl, title, imageFinge
       const byUrl = await dbGet(
         db,
         `SELECT * FROM ${UPLOADED_PRODUCTS_TABLE}
-         WHERE user_id = ? AND normalized_url = ?
+         WHERE user_id = ?
+           AND normalized_url = ?
+           AND seller_product_id IS NOT NULL
+           AND TRIM(seller_product_id) <> ''
          ORDER BY id DESC LIMIT 1`,
         [uid, normalizedUrl],
       );
@@ -298,7 +301,10 @@ export async function findDuplicateUpload({ userId, sourceUrl, title, imageFinge
       const byTitle = await dbGet(
         db,
         `SELECT * FROM ${UPLOADED_PRODUCTS_TABLE}
-         WHERE user_id = ? AND normalized_title = ?
+         WHERE user_id = ?
+           AND normalized_title = ?
+           AND seller_product_id IS NOT NULL
+           AND TRIM(seller_product_id) <> ''
          ORDER BY id DESC LIMIT 1`,
         [uid, normalizedTitle],
       );
@@ -309,7 +315,10 @@ export async function findDuplicateUpload({ userId, sourceUrl, title, imageFinge
       const byFingerprint = await dbGet(
         db,
         `SELECT * FROM ${UPLOADED_PRODUCTS_TABLE}
-         WHERE user_id = ? AND image_fingerprint = ?
+         WHERE user_id = ?
+           AND image_fingerprint = ?
+           AND seller_product_id IS NOT NULL
+           AND TRIM(seller_product_id) <> ''
          ORDER BY id DESC LIMIT 1`,
         [uid, fp],
       );
