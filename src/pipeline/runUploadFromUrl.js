@@ -312,6 +312,22 @@ export async function runUploadFromUrl(inputUrl, settings = {}, runtime = {}) {
   const contentHtml =
     contentLocalUrls.length > 0 ? buildImageOnlyHtmlFromUrls(contentLocalUrls) : draft.contentText || "";
 
+  // Hard guard: 상세 이미지가 하나도 없으면 업로드 진행 금지
+  // (검수 화면과 실제 업로드 결과가 달라지는 문제 방지)
+  if (!contentLocalUrls.length) {
+    return buildResult({
+      ok: false,
+      skipped: false,
+      error: "detail_empty",
+      detail: { reasons: ["상세 이미지 다운로드 결과가 0개입니다."] },
+      qc: qcInfo,
+      preview: previewResult.preview,
+      draft: { title: draft.title, price: draft.price, imageUrl: draft.imageUrl },
+      create: emptyCreate(),
+      followUp: emptyFollowUp(),
+    });
+  }
+
   const displayCategoryCode = resolveDisplayCategoryCode({
     title: draft.title,
     categoryText: draft.categoryText,
