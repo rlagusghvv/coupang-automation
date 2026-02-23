@@ -380,6 +380,11 @@ export async function runUploadFromUrl(inputUrl, settings = {}, runtime = {}) {
       ? makeUniqueOptions(draft.options)
       : [];
 
+  const defaultItemUnit = {
+    unitCount: Number.isFinite(Number(settings.defaultUnitCount)) ? Number(settings.defaultUnitCount) : 1,
+    unitType: String(settings.defaultUnitType || 'PIECE').trim() || 'PIECE',
+  };
+
   const baseBody = buildSellerProductBody({
     vendorId,
     vendorUserId,
@@ -393,6 +398,7 @@ export async function runUploadFromUrl(inputUrl, settings = {}, runtime = {}) {
     contentText: contentHtml,
     notices,
     requested: autoRequest,
+    itemUnit: defaultItemUnit,
     items:
       optionsUsed.length > 0
         ? optionsUsed.map((opt) => {
