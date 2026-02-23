@@ -16,6 +16,7 @@ import { checkAutoCategoryAgreed } from "../coupang/api/checkAutoCategoryAgreed.
 import { recommendCategory } from "../coupang/api/recommendCategory.js";
 import { buildSingleItem } from "../coupang/builders/buildSingleItem.js";
 import path from "node:path";
+import fs from "node:fs";
 import { buildImageOnlyHtmlFromUrls } from "../utils/contentImages.js";
 import { resolveDisplayCategoryCode } from "../utils/categoryMap.js";
 import { computePrice } from "../utils/price.js";
@@ -295,13 +296,26 @@ export async function runUploadFromUrl(inputUrl, settings = {}, runtime = {}) {
     });
   }
 
-  const imageReachable = await isUrlReachable(imageUrl, IMAGE_CHECK_TIMEOUT_MS);
+  const downloadedMainFilePath = findDownloadedFilePath(downloaded, imageUrl);
+  const localOutFallbackOk =
+    isCouplusOutUrl(imageUrl) &&
+    downloadedMainFilePath &&
+    fs.existsSync(downloadedMainFilePath);
+
+  const imageReachable = localOutFallbackOk
+    ? true
+    : await isUrlReachable(imageUrl, IMAGE_CHECK_TIMEOUT_MS);
+
   if (!imageReachable) {
     return buildResult({
       ok: false,
       skipped: false,
       error: "image_host_unreachable",
       imageUrl,
+      detail: {
+        localOutFallbackOk,
+        localFileExists: Boolean(downloadedMainFilePath && fs.existsSync(downloadedMainFilePath)),
+      },
       qc: qcInfo,
       preview: previewResult.preview,
       draft: { title: draft.title, price: draft.price, imageUrl: draft.imageUrl },
@@ -674,6 +688,21 @@ async function getPublicIp() {
     } catch {}
   }
   return "";
+}
+
+function isCouplusOutUrl(url) {
+  try {
+    const u = new URL(String(url || ""));
+    return u.pathname.includes("/couplus-out/");
+  } catch {
+    return String(url || "").includes("/couplus-out/");
+  }
+}
+
+function findDownloadedFilePath(downloaded, targetUrl) {
+  if (!downloaded || !Array.isArray(downloaded.files) || !targetUrl) return "";
+  const hit = downloaded.files.find((f) => String(f?.localUrl || "") === String(targetUrl));
+  return String(hit?.filePath || "").trim();
 }
 
 async function isUrlReachable(url, timeoutMs = 8000) {
