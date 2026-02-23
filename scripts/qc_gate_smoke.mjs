@@ -1,32 +1,99 @@
 #!/usr/bin/env node
 import { previewUploadFromUrl } from "../src/pipeline/previewUploadFromUrl.js";
 import { evaluateQcGate } from "../src/pipeline/qcGate.js";
+import { runUploadFromUrl } from "../src/pipeline/runUploadFromUrl.js";
 
 function parseArgs(argv) {
   const args = [...argv];
-  const mock = args.includes("--mock");
-  const urls = args.filter((a) => !a.startsWith("--"));
-  return { mock, urls };
+  const out = {
+    mock: false,
+    urls: [],
+    previewOnly: false,
+  };
+
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i];
+    if (arg === "--mock") {
+      out.mock = true;
+      continue;
+    }
+    if (arg === "--preview-only") {
+      out.previewOnly = true;
+      continue;
+    }
+    if (arg === "--urls") {
+      const next = args[i + 1] || "";
+      i += 1;
+      out.urls.push(...splitUrls(next));
+      continue;
+    }
+    if (arg.startsWith("--urls=")) {
+      out.urls.push(...splitUrls(arg.slice("--urls=".length)));
+      continue;
+    }
+    if (arg.startsWith("--")) continue;
+    out.urls.push(...splitUrls(arg));
+  }
+
+  out.urls = dedupe(out.urls);
+  return out;
+}
+
+function splitUrls(raw) {
+  return String(raw || "")
+    .split(/\n|,|\s+/)
+    .map((v) => v.trim())
+    .filter(Boolean);
+}
+
+function dedupe(list) {
+  return Array.from(new Set((list || []).filter(Boolean)));
+}
+
+function pickCaseName(index) {
+  return ["normal", "contaminated", "low_quality"][index] || `case_${index + 1}`;
 }
 
 function toRows(results) {
   return results.map((r) => ({
     case: r.case,
-    ok: Boolean(r.qc?.ok),
-    raw: r.metrics?.imageCountRaw ?? null,
-    kept: r.metrics?.imageCountFiltered ?? null,
-    tokenMatchRate: r.metrics?.tokenMatchRate ?? null,
-    rejectedRate: r.metrics?.rejectedRate ?? null,
-    reasonCount: Array.isArray(r.qc?.reasons) ? r.qc.reasons.length : 0,
-    error: r.error || null,
+    previewOk: Boolean(r.preview?.ok),
+    qcOk: Boolean(r.qc?.ok),
+    uploadOk: Boolean(r.result?.ok),
+    skipped: Boolean(r.result?.skipped),
+    error: r.result?.error || null,
+    createId: r.result?.create?.sellerProductId ?? null,
+    followUpStatus: r.result?.followUp?.statusName ?? null,
   }));
 }
 
+function makeMockCase({ caseName, previewMetrics }) {
+  const qc = evaluateQcGate(previewMetrics, {});
+  return {
+    case: caseName,
+    url: null,
+    preview: {
+      ok: true,
+      metrics: previewMetrics,
+    },
+    qc,
+    result: {
+      ok: qc.ok,
+      skipped: !qc.ok,
+      error: qc.ok ? null : "qc_gate_failed",
+      detail: qc.ok ? null : { reasons: qc.reasons, metrics: qc.metrics },
+      qc: { ok: qc.ok, metrics: qc.metrics },
+      create: { sellerProductId: null },
+      followUp: { statusName: null },
+    },
+  };
+}
+
 function mockResults() {
-  const fixtureCases = [
-    {
-      case: "normal",
-      preview: {
+  return [
+    makeMockCase({
+      caseName: "normal",
+      previewMetrics: {
         mainImageUrl: "https://img.example.com/products/123/main.jpg",
         imageCountRaw: 10,
         imageCountFiltered: 8,
@@ -38,11 +105,10 @@ function mockResults() {
         mainImageTokenCount: 4,
         strictMode: true,
       },
-      gate: {},
-    },
-    {
-      case: "contaminated",
-      preview: {
+    }),
+    makeMockCase({
+      caseName: "contaminated",
+      previewMetrics: {
         mainImageUrl: "https://img.example.com/products/123/main.jpg",
         imageCountRaw: 9,
         imageCountFiltered: 2,
@@ -54,11 +120,10 @@ function mockResults() {
         mainImageTokenCount: 3,
         strictMode: true,
       },
-      gate: {},
-    },
-    {
-      case: "low_quality",
-      preview: {
+    }),
+    makeMockCase({
+      caseName: "low_quality",
+      previewMetrics: {
         mainImageUrl: "https://img.example.com/products/987/main.jpg",
         imageCountRaw: 2,
         imageCountFiltered: 1,
@@ -70,107 +135,150 @@ function mockResults() {
         mainImageTokenCount: 2,
         strictMode: true,
       },
-      gate: {},
-    },
+    }),
   ];
-
-  return fixtureCases.map((item) => {
-    const qc = evaluateQcGate(item.preview, item.gate);
-    return {
-      case: item.case,
-      url: null,
-      previewOk: true,
-      qc,
-      metrics: qc.metrics,
-      reasons: qc.reasons,
-    };
-  });
 }
 
-function getCaseInputs(urls) {
-  const fromEnv = String(process.env.QC_SMOKE_URLS || "")
-    .split(",")
-    .map((v) => v.trim())
-    .filter(Boolean);
-
+function getLiveCaseInputs(urls) {
+  const fromEnv = splitUrls(process.env.QC_SMOKE_URLS || "");
   const merged = urls.length > 0 ? urls : fromEnv;
-  const picked = [merged[0], merged[1], merged[2]];
-
-  return [
-    { case: "normal", url: picked[0] || null, gate: {} },
-    { case: "contaminated", url: picked[1] || null, gate: { qcMinTokenMatchRate: 0.45 } },
-    { case: "low_quality", url: picked[2] || null, gate: { qcMinFilteredImages: 5 } },
-  ];
+  return merged.slice(0, 3).map((url, idx) => ({ case: pickCaseName(idx), url }));
 }
 
-async function run() {
-  const { mock, urls } = parseArgs(process.argv.slice(2));
-
-  if (mock) {
-    const results = mockResults();
-    const rows = toRows(results);
-    console.table(rows);
-    console.log(JSON.stringify({ ok: true, mode: "mock", results }, null, 2));
-    return;
+function normalizePreview(preview) {
+  if (!preview?.ok) {
+    return {
+      ok: false,
+      error: preview?.error || preview?.reason || "preview_failed",
+      title: null,
+      imageFingerprint: null,
+      metrics: {},
+    };
   }
 
-  const inputs = getCaseInputs(urls);
+  return {
+    ok: true,
+    error: null,
+    title: preview?.draft?.title || null,
+    imageFingerprint: preview?.preview?.imageFingerprint || null,
+    metrics: {
+      imageCountRaw: preview?.preview?.imageCountRaw ?? 0,
+      imageCountFiltered: preview?.preview?.imageCountFiltered ?? 0,
+      imageCountRejected: preview?.preview?.imageCountRejected ?? 0,
+      tokenMatchRate: preview?.preview?.tokenMatchRate ?? 0,
+      rejectedRate: preview?.preview?.rejectedRate ?? 0,
+      hostDiversityRaw: preview?.preview?.hostDiversityRaw ?? 0,
+      hostDiversityFiltered: preview?.preview?.hostDiversityFiltered ?? 0,
+      mainImageTokenCount: preview?.preview?.mainImageTokenCount ?? 0,
+    },
+  };
+}
+
+async function runLiveCases({ urls, previewOnly }) {
+  const inputs = getLiveCaseInputs(urls);
+  if (inputs.length < 3) {
+    throw new Error("live mode requires 3 urls. pass with --urls 'url1,url2,url3'");
+  }
+
   const results = [];
 
   for (const item of inputs) {
-    if (!item.url) {
-      results.push({
-        case: item.case,
-        url: null,
-        previewOk: false,
-        qc: { ok: false, reasons: ["url_missing"], metrics: {} },
-        metrics: {},
-        error: "url_missing",
-      });
-      continue;
-    }
+    const settings = {
+      strictImageMatch: "1",
+      payloadOnly: previewOnly ? "1" : "0",
+    };
 
     try {
-      const preview = await previewUploadFromUrl(item.url, { strictImageMatch: "1" });
+      const preview = await previewUploadFromUrl(item.url, settings);
+      const previewSummary = normalizePreview(preview);
+
       if (!preview?.ok) {
         results.push({
           case: item.case,
           url: item.url,
-          previewOk: false,
-          qc: { ok: false, reasons: [preview?.reason || preview?.error || "preview_failed"], metrics: {} },
-          metrics: {},
-          error: preview?.reason || preview?.error || "preview_failed",
+          preview: previewSummary,
+          qc: { ok: false, reasons: [previewSummary.error], metrics: {} },
+          result: {
+            ok: false,
+            skipped: true,
+            error: previewSummary.error,
+            detail: null,
+            qc: { ok: false, metrics: {} },
+            create: { sellerProductId: null },
+            followUp: { statusName: null },
+          },
         });
         continue;
       }
 
-      const qc = evaluateQcGate(preview.preview || {}, item.gate || {});
+      const qc = evaluateQcGate(preview.preview || {}, settings);
+      const runResult = await runUploadFromUrl(item.url, settings, { preview });
+
       results.push({
         case: item.case,
         url: item.url,
-        previewOk: true,
+        preview: previewSummary,
         qc,
-        metrics: qc.metrics,
-        reasons: qc.reasons,
+        result: {
+          ok: Boolean(runResult?.ok),
+          skipped: Boolean(runResult?.skipped),
+          error: runResult?.error || null,
+          detail: runResult?.detail || null,
+          qc: {
+            ok: Boolean(runResult?.qc?.ok),
+            metrics: runResult?.qc?.metrics || {},
+          },
+          create: {
+            sellerProductId: runResult?.create?.sellerProductId ?? null,
+            status: runResult?.create?.status ?? null,
+          },
+          followUp: {
+            statusName: runResult?.followUp?.statusName ?? null,
+          },
+        },
       });
     } catch (e) {
       results.push({
         case: item.case,
         url: item.url,
-        previewOk: false,
+        preview: { ok: false, error: String(e?.message || e), title: null, imageFingerprint: null, metrics: {} },
         qc: { ok: false, reasons: [String(e?.message || e)], metrics: {} },
-        metrics: {},
-        error: String(e?.message || e),
+        result: {
+          ok: false,
+          skipped: false,
+          error: String(e?.message || e),
+          detail: null,
+          qc: { ok: false, metrics: {} },
+          create: { sellerProductId: null, status: null },
+          followUp: { statusName: null },
+        },
       });
     }
   }
 
+  return results;
+}
+
+async function run() {
+  const args = parseArgs(process.argv.slice(2));
+
+  let results;
+  let mode;
+
+  if (args.mock) {
+    mode = "mock";
+    results = mockResults();
+  } else {
+    mode = args.previewOnly ? "live_preview_only" : "live_create";
+    results = await runLiveCases({ urls: args.urls, previewOnly: args.previewOnly });
+  }
+
   const rows = toRows(results);
   console.table(rows);
-  console.log(JSON.stringify({ ok: true, mode: "live", results }, null, 2));
+  console.log(JSON.stringify({ ok: true, mode, results }, null, 2));
 }
 
 run().catch((e) => {
-  console.error(JSON.stringify({ ok: false, error: String(e?.message || e) }));
+  console.error(JSON.stringify({ ok: false, error: String(e?.message || e) }, null, 2));
   process.exit(1);
 });

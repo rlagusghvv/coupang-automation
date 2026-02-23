@@ -39,6 +39,86 @@ const CATEGORY_REQUIRED_ATTRIBUTES = {
   ],
 };
 
+function emptyCreate() {
+  return {
+    status: null,
+    body: null,
+    sellerProductId: null,
+  };
+}
+
+function emptyFollowUp() {
+  return {
+    statusName: null,
+  };
+}
+
+function normalizeFollowUp(followUp) {
+  if (!followUp || typeof followUp !== "object") return emptyFollowUp();
+  return {
+    ...followUp,
+    statusName: String(followUp.statusName || "").trim() || null,
+  };
+}
+
+function normalizeQc(qc) {
+  if (!qc || typeof qc !== "object") {
+    return { ok: false, metrics: {} };
+  }
+  return {
+    ok: Boolean(qc.ok),
+    metrics: qc.metrics && typeof qc.metrics === "object" ? qc.metrics : {},
+  };
+}
+
+function buildResult(overrides = {}) {
+  const {
+    qc: qcOverride,
+    create: createOverride,
+    followUp: followUpOverride,
+    ...rest
+  } = overrides || {};
+
+  return {
+    ...rest,
+    ok: Boolean(rest.ok),
+    skipped: Boolean(rest.skipped),
+    error: rest.error ?? null,
+    reason: rest.reason ?? null,
+    detail: rest.detail ?? null,
+    qc: normalizeQc(qcOverride),
+    create: {
+      ...emptyCreate(),
+      ...(createOverride || {}),
+      sellerProductId:
+        createOverride?.sellerProductId == null
+          ? null
+          : String(createOverride.sellerProductId),
+    },
+    followUp: normalizeFollowUp(followUpOverride),
+  };
+}
+
+function buildQcBlockedResult({ qcGate, previewResult, draft }) {
+  return buildResult({
+    ok: false,
+    skipped: true,
+    error: "qc_gate_failed",
+    detail: {
+      reasons: Array.isArray(qcGate?.reasons) ? qcGate.reasons : [],
+      metrics: qcGate?.metrics && typeof qcGate.metrics === "object" ? qcGate.metrics : {},
+    },
+    qc: {
+      ok: false,
+      metrics: qcGate?.metrics && typeof qcGate.metrics === "object" ? qcGate.metrics : {},
+    },
+    preview: previewResult?.preview || null,
+    draft: draft
+      ? { title: draft.title, price: draft.price, imageUrl: draft.imageUrl }
+      : undefined,
+  });
+}
+
 function makeUniqueOptions(list) {
   const seen = new Map();
   const out = [];
@@ -96,7 +176,14 @@ function buildItemAttributesFromOptionValues(values) {
 export async function runUploadFromUrl(inputUrl, settings = {}, runtime = {}) {
   const c = classifyUrl(inputUrl);
   if (!c.ok) {
-    return { ok: false, skipped: true, reason: c.reason, url: c.url };
+    return buildResult({
+      ok: false,
+      skipped: true,
+      reason: c.reason,
+      error: c.reason,
+      url: c.url,
+      qc: { ok: false, metrics: {} },
+    });
   }
 
   const payloadOnly = String(settings.payloadOnly || "").trim() === "1";
@@ -107,13 +194,15 @@ export async function runUploadFromUrl(inputUrl, settings = {}, runtime = {}) {
   if (!payloadOnly && allowedIpsRaw.length > 0) {
     const currentIp = await getPublicIp().catch(() => "");
     if (!currentIp || !allowedIpsRaw.includes(currentIp)) {
-      return {
+      return buildResult({
         ok: false,
         skipped: true,
         reason: "ip_not_allowed",
+        error: "ip_not_allowed",
         ip: currentIp || "",
         allowedIps: allowedIpsRaw,
-      };
+        qc: { ok: false, metrics: {} },
+      });
     }
   }
 
@@ -129,31 +218,23 @@ export async function runUploadFromUrl(inputUrl, settings = {}, runtime = {}) {
     : await previewUploadFromUrl(c.url, settings);
 
   if (!previewResult?.ok || !previewResult?.draft) {
-    return {
+    return buildResult({
       ok: false,
       skipped: true,
       error: previewResult?.error || "preview_failed",
       reason: previewResult?.reason || "preview_failed",
       preview: previewResult?.preview || null,
-    };
+      qc: { ok: false, metrics: {} },
+    });
   }
 
   const draft = previewResult.draft;
   const qcGate = evaluateQcGate(previewResult.preview || {}, settings);
   if (!qcGate.ok) {
-    return {
-      ok: false,
-      skipped: true,
-      error: "qc_gate_failed",
-      detail: {
-        reasons: qcGate.reasons,
-        metrics: qcGate.metrics,
-      },
-      preview: previewResult.preview,
-      draft: { title: draft.title, price: draft.price, imageUrl: draft.imageUrl },
-    };
+    return buildQcBlockedResult({ qcGate, previewResult, draft });
   }
 
+  const qcInfo = { ok: true, metrics: qcGate.metrics || {} };
   const localImageBase = resolveLocalImageBase(settings);
 
   const outDir = path.join(process.cwd(), "out");
@@ -184,7 +265,7 @@ export async function runUploadFromUrl(inputUrl, settings = {}, runtime = {}) {
       accountId: String(settings.pagesAccountId || "").trim(),
     });
     if (!deployRes.ok) {
-      return {
+      return buildResult({
         ok: false,
         skipped: false,
         error: "pages_deploy_failed",
@@ -194,24 +275,37 @@ export async function runUploadFromUrl(inputUrl, settings = {}, runtime = {}) {
           stdout: deployRes.stdout || "",
           stderr: deployRes.stderr || "",
         },
-      };
+        qc: qcInfo,
+        preview: previewResult.preview,
+        draft: { title: draft.title, price: draft.price, imageUrl: draft.imageUrl },
+      });
     }
     await new Promise((r) => setTimeout(r, 3000));
   }
 
   const imageUrl = downloaded.urlMap[draft.imageUrl];
   if (!imageUrl) {
-    return { ok: false, skipped: false, error: "main image download failed" };
+    return buildResult({
+      ok: false,
+      skipped: false,
+      error: "main image download failed",
+      qc: qcInfo,
+      preview: previewResult.preview,
+      draft: { title: draft.title, price: draft.price, imageUrl: draft.imageUrl },
+    });
   }
 
   const imageReachable = await isUrlReachable(imageUrl, IMAGE_CHECK_TIMEOUT_MS);
   if (!imageReachable) {
-    return {
+    return buildResult({
       ok: false,
       skipped: false,
       error: "image_host_unreachable",
       imageUrl,
-    };
+      qc: qcInfo,
+      preview: previewResult.preview,
+      draft: { title: draft.title, price: draft.price, imageUrl: draft.imageUrl },
+    });
   }
 
   const contentLocalUrls = contentImages.map((u) => downloaded.urlMap[u]).filter(Boolean);
@@ -325,18 +419,25 @@ export async function runUploadFromUrl(inputUrl, settings = {}, runtime = {}) {
   });
 
   if (payloadOnly) {
-    return {
+    return buildResult({
       ok: true,
       payloadOnly: true,
       payload: baseBody,
       payloadCheck,
-      qc: { ok: qcGate.ok, metrics: qcGate.metrics },
+      qc: qcInfo,
       preview: previewResult.preview,
       draft: { title: draft.title, price: draft.price, imageUrl: draft.imageUrl },
       finalPrice,
       category: { requested: displayCategoryCode, used: finalCategoryCode, auto: allowAutoCategory },
       optionsUsed: optionsUsed.map((opt) => opt.label),
-    };
+      create: emptyCreate(),
+      followUp: emptyFollowUp(),
+    });
+  }
+
+  // Safety guard: QC false인 경우 어떤 경로에서도 create 호출 금지.
+  if (qcGate.ok !== true) {
+    return buildQcBlockedResult({ qcGate, previewResult, draft });
   }
 
   const createAttempt = await createWithErrorItemRetry({
@@ -345,6 +446,7 @@ export async function runUploadFromUrl(inputUrl, settings = {}, runtime = {}) {
     accessKey,
     secretKey,
     finalCategoryCode,
+    createFn: runtime?.createSellerProductFn || createSellerProduct,
   });
   const res = createAttempt.response;
 
@@ -372,20 +474,20 @@ export async function runUploadFromUrl(inputUrl, settings = {}, runtime = {}) {
     });
   }
 
-  return {
+  return buildResult({
     ok: true,
     draft: { title: draft.title, price: draft.price, imageUrl: draft.imageUrl },
     finalPrice,
     category: { requested: displayCategoryCode, used: finalCategoryCode, auto: allowAutoCategory },
     optionsUsed: optionsUsed.map((opt) => opt.label),
     payloadCheck,
-    qc: { ok: qcGate.ok, metrics: qcGate.metrics },
+    qc: qcInfo,
     preview: previewResult.preview,
     createRetry: createAttempt.retry,
     create: { status: res.status, body: createBody, sellerProductId: createdId },
     approval,
-    followUp,
-  };
+    followUp: normalizeFollowUp(followUp),
+  });
 }
 
 async function createWithErrorItemRetry({
@@ -394,9 +496,14 @@ async function createWithErrorItemRetry({
   accessKey,
   secretKey,
   finalCategoryCode,
+  createFn = createSellerProduct,
 }) {
+  if (typeof createFn !== "function") {
+    throw new Error("createFn must be a function");
+  }
+
   let currentBody = cloneJson(body);
-  let response = await createSellerProduct({ vendorId, body: currentBody, accessKey, secretKey });
+  let response = await createFn({ vendorId, body: currentBody, accessKey, secretKey });
   let retry = { attempts: 0, appliedFixes: [], errorItems: [] };
 
   for (let attempt = 1; attempt <= CREATE_RETRY_MAX; attempt += 1) {
@@ -422,7 +529,7 @@ async function createWithErrorItemRetry({
     };
 
     currentBody = fix.body;
-    response = await createSellerProduct({ vendorId, body: currentBody, accessKey, secretKey });
+    response = await createFn({ vendorId, body: currentBody, accessKey, secretKey });
   }
 
   return { response, retry };
