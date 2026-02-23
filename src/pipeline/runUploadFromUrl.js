@@ -374,8 +374,11 @@ export async function runUploadFromUrl(inputUrl, settings = {}, runtime = {}) {
 
   const autoRequest = String(settings.autoRequest || "").trim() === "1";
 
+  const disableOptions = String(settings.disableOptions ?? '0').trim() === '1';
   const optionsUsed =
-    Array.isArray(draft.options) && draft.options.length > 0 ? makeUniqueOptions(draft.options) : [];
+    !disableOptions && Array.isArray(draft.options) && draft.options.length > 0
+      ? makeUniqueOptions(draft.options)
+      : [];
 
   const baseBody = buildSellerProductBody({
     vendorId,
