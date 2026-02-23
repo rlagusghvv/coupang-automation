@@ -313,14 +313,43 @@ function appendUploadHistoryFromOutcome(url, outcome) {
   });
 }
 
-async function executeUploadForUrl({ url, user, force = false }) {
+function applyPreviewOverrides(preview, overrides = {}) {
+  const out = preview ? JSON.parse(JSON.stringify(preview)) : preview;
+  if (!out || !out.draft) return out;
+
+  const titleOverride = String(overrides.titleOverride || '').trim();
+  if (titleOverride) {
+    out.draft.title = titleOverride;
+  }
+
+  if (Array.isArray(overrides.imagesOverride) && overrides.imagesOverride.length > 0) {
+    if (!out.preview) out.preview = {};
+    out.preview.contentImagesFiltered = overrides.imagesOverride.map((x) => String(x || '').trim()).filter(Boolean);
+    out.preview.imageCountFiltered = out.preview.contentImagesFiltered.length;
+  }
+
+  return out;
+}
+
+async function executeUploadForUrl({ url, user, force = false, overrides = {} }) {
   const c = classifyUrl(url);
   if (!c.ok) {
     return { ok: false, skipped: true, skipReason: c.reason, reason: c.reason, url: c.url };
   }
 
-  const settings = user?.settings || {};
-  const preview = await previewUploadFromUrl(c.url, settings);
+  const baseSettings = user?.settings || {};
+  const settings = {
+    ...baseSettings,
+    ...(String(overrides?.titleOverride || '').trim()
+      ? { titleOverride: String(overrides.titleOverride).trim() }
+      : {}),
+    ...(Number.isFinite(Number(overrides?.categoryOverrideCode))
+      ? { categoryOverrideCode: Number(overrides.categoryOverrideCode) }
+      : {}),
+  };
+
+  const previewRaw = await previewUploadFromUrl(c.url, settings);
+  const preview = applyPreviewOverrides(previewRaw, overrides);
   if (!preview?.ok) {
     const reason = String(preview?.reason || preview?.error || "preview_failed");
     return {
@@ -460,8 +489,13 @@ async function handleSingleUpload(req, res) {
       const url = String(req.body?.url || "").trim();
       if (!url) return res.status(400).json({ ok: false, error: "missing url" });
       const force = parseForceFlag(req.body?.force ?? req.query?.force);
+      const overrides = {
+        titleOverride: req.body?.titleOverride,
+        imagesOverride: Array.isArray(req.body?.imagesOverride) ? req.body.imagesOverride : undefined,
+        categoryOverrideCode: req.body?.categoryOverrideCode,
+      };
 
-      const outcome = await executeUploadForUrl({ url, user: req.user, force });
+      const outcome = await executeUploadForUrl({ url, user: req.user, force, overrides });
       appendUploadHistoryFromOutcome(url, outcome);
 
       if (!outcome.ok && !outcome.skipped) {

@@ -328,11 +328,14 @@ export async function runUploadFromUrl(inputUrl, settings = {}, runtime = {}) {
     });
   }
 
-  const displayCategoryCode = resolveDisplayCategoryCode({
-    title: draft.title,
-    categoryText: draft.categoryText,
-    fallback: DISPLAY_CATEGORY_CODE,
-  });
+  const categoryOverrideCode = Number(settings.categoryOverrideCode);
+  const displayCategoryCode = Number.isFinite(categoryOverrideCode) && categoryOverrideCode > 0
+    ? categoryOverrideCode
+    : resolveDisplayCategoryCode({
+        title: draft.title,
+        categoryText: draft.categoryText,
+        fallback: DISPLAY_CATEGORY_CODE,
+      });
 
   const finalPrice = computePrice(draft.price, {
     rate: settings.marginRate,

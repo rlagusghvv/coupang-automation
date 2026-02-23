@@ -316,7 +316,40 @@ class _WorkScreenState extends State<WorkScreen> {
   }
 
   Future<void> _previewFromUrl() async {
-    return _startJob('preview');
+    final u = _url.text.trim();
+    if (u.isEmpty) {
+      setState(() => _error = 'URL을 입력하세요.');
+      return;
+    }
+
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+
+    try {
+      final json = await widget.api.postJson('/api/upload/preview', {
+        'url': u,
+        if ((_selectedPresetId ?? '').trim().isNotEmpty)
+          'presetId': (_selectedPresetId ?? '').trim(),
+      });
+      final preview = (json['preview'] as Map?)?.cast<String, dynamic>();
+      setState(() {
+        _preview = preview;
+        _loginRequired = false;
+      });
+    } catch (e) {
+      if (e is ApiException && e.isUnauthorized) {
+        setState(() {
+          _loginRequired = true;
+          _error = null;
+        });
+      } else {
+        setState(() => _error = e.toString());
+      }
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
   }
 
   String _humanizeUploadError(Map<String, dynamic>? r) {
@@ -341,11 +374,70 @@ class _WorkScreenState extends State<WorkScreen> {
     }
   }
 
-  Future<void> _executeUpload({bool force = false}) async {
+  Future<void> _executeUpload({
+    bool force = false,
+    String? titleOverride,
+    List<String>? imagesOverride,
+    int? categoryOverrideCode,
+  }) async {
+    final u = _url.text.trim();
+    if (u.isEmpty) {
+      setState(() => _error = 'URL을 입력하세요.');
+      return;
+    }
+
     if (force) {
       setState(() => _forceUpload = true);
     }
-    return _startJob('upload');
+
+    setState(() {
+      _loading = true;
+      _error = null;
+      _uploadResult = null;
+    });
+
+    try {
+      final json = await widget.api.postJson('/api/upload/execute', {
+        'url': u,
+        'force': (force || _forceUpload) ? '1' : '0',
+        if ((_selectedPresetId ?? '').trim().isNotEmpty)
+          'presetId': (_selectedPresetId ?? '').trim(),
+        if ((titleOverride ?? '').trim().isNotEmpty)
+          'titleOverride': (titleOverride ?? '').trim(),
+        if ((imagesOverride ?? const []).isNotEmpty)
+          'imagesOverride': (imagesOverride ?? const []),
+        if (categoryOverrideCode != null)
+          'categoryOverrideCode': categoryOverrideCode,
+      });
+
+      final ok = json['ok'] == true;
+      if (!ok) {
+        final err = (json['error'] ?? '업로드 실패').toString();
+        setState(() => _error = err);
+        return;
+      }
+
+      final result = (json['result'] as Map?)?.cast<String, dynamic>();
+      final outcome = (json['outcome'] as Map?)?.cast<String, dynamic>();
+      setState(() {
+        _uploadResult = result ?? outcome ?? {'ok': true};
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('업로드 요청 완료')),
+      );
+      unawaited(_refresh());
+    } catch (e) {
+      if (e is ApiException && e.isUnauthorized) {
+        setState(() {
+          _loginRequired = true;
+          _error = null;
+        });
+      } else {
+        setState(() => _error = e.toString());
+      }
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
   }
 
   Future<void> _confirmThenUpload() async {
@@ -622,40 +714,17 @@ class _WorkScreenState extends State<WorkScreen> {
       );
 
       if (proceed == true) {
-        // 1) Save to catalog (confirmed snapshot)
-        Map<String, dynamic>? product;
-        try {
-          final cjson = await widget.api.postJson('/api/catalog/confirm', {
-            'sourceUrl': u,
-            if ((_selectedPresetId ?? '').trim().isNotEmpty)
-              'presetId': (_selectedPresetId ?? '').trim(),
-            if ((_titleOverride ?? '').trim().isNotEmpty)
-              'confirmedTitle': (_titleOverride ?? '').trim(),
-            'mainImageUrl': (draft['imageUrl'] ?? '').toString(),
-            if ((_imagesOverride ?? const []).isNotEmpty)
-              'detailImages': (_imagesOverride ?? const []),
-            // If preview category used code exists, keep as override by default.
-            if (int.tryParse(usedCode) != null)
-              'categoryOverride': int.parse(usedCode),
-          });
-          product = (cjson['product'] as Map?)?.cast<String, dynamic>();
-        } catch (_) {
-          product = null;
-        }
-
-        // 2) Deploy via catalog (creates an upload job linked to catalogId)
-        final pid = (product?['id'] ?? '').toString();
-        if (pid.isNotEmpty) {
-          final deploy = await widget.api.postJson('/api/catalog/$pid/deploy', {});
-          final job = (deploy['job'] as Map?)?.cast<String, dynamic>();
-          setState(() {
-            _activeJob = job;
-          });
-          unawaited(_pollJob());
-        } else {
-          // Fallback: legacy upload job
-          await _executeUpload();
-        }
+        await _executeUpload(
+          force: _forceUpload,
+          titleOverride: (_titleOverride ?? '').trim().isNotEmpty
+              ? (_titleOverride ?? '').trim()
+              : null,
+          imagesOverride: (_imagesOverride ?? const []).isNotEmpty
+              ? List<String>.from(_imagesOverride ?? const [])
+              : null,
+          categoryOverrideCode:
+              usedCode.trim().isEmpty ? null : int.tryParse(usedCode.trim()),
+        );
       }
     } catch (e) {
       if (e is ApiException && e.isUnauthorized) {
@@ -1397,7 +1466,10 @@ class _WorkScreenState extends State<WorkScreen> {
             child: Text(
               '주문 관련 기능은 이제 “주문” 탭에서 할 수 있어요.\n\n아래로 내려서 상품 미리보기/업로드만 진행해 주세요.',
               style: TextStyle(
-                color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.8),
+                color: Theme.of(context)
+                    .colorScheme
+                    .onSurface
+                    .withValues(alpha: 0.8),
                 fontWeight: FontWeight.w700,
               ),
             ),
@@ -1651,7 +1723,7 @@ class _Thumb extends StatelessWidget {
 
     // Some sources provide host/path without scheme.
     if (s.startsWith('cdn') || s.contains('.')) {
-      return 'https://$s'.replaceFirst('https:///','https://');
+      return 'https://$s'.replaceFirst('https:///', 'https://');
     }
     return s;
   }
