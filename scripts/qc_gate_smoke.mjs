@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 import { previewUploadFromUrl } from "../src/pipeline/previewUploadFromUrl.js";
 import { evaluateQcGate } from "../src/pipeline/qcGate.js";
-import { runUploadFromUrl } from "../src/pipeline/runUploadFromUrl.js";
 
 function parseArgs(argv) {
   const args = [...argv];
@@ -54,6 +53,47 @@ function pickCaseName(index) {
   return ["normal", "contaminated", "low_quality"][index] || `case_${index + 1}`;
 }
 
+function normalizeResult(result) {
+  return {
+    ok: Boolean(result?.ok),
+    skipped: Boolean(result?.skipped),
+    error: result?.error || null,
+    detail: result?.detail || null,
+    qc: {
+      ok: Boolean(result?.qc?.ok),
+      metrics: result?.qc?.metrics || {},
+    },
+    create: {
+      sellerProductId: result?.create?.sellerProductId ?? null,
+      status: result?.create?.status ?? null,
+    },
+    followUp: {
+      statusName: result?.followUp?.statusName ?? null,
+    },
+  };
+}
+
+function makePreviewOnlyResult(qc) {
+  const ok = Boolean(qc?.ok);
+  return normalizeResult({
+    ok,
+    skipped: !ok,
+    error: ok ? null : "qc_gate_failed",
+    detail: ok ? null : { reasons: qc?.reasons || [], metrics: qc?.metrics || {} },
+    qc: {
+      ok,
+      metrics: qc?.metrics || {},
+    },
+    create: {
+      sellerProductId: null,
+      status: null,
+    },
+    followUp: {
+      statusName: null,
+    },
+  });
+}
+
 function toRows(results) {
   return results.map((r) => ({
     case: r.case,
@@ -77,15 +117,7 @@ function makeMockCase({ caseName, previewMetrics }) {
       metrics: previewMetrics,
     },
     qc,
-    result: {
-      ok: qc.ok,
-      skipped: !qc.ok,
-      error: qc.ok ? null : "qc_gate_failed",
-      detail: qc.ok ? null : { reasons: qc.reasons, metrics: qc.metrics },
-      qc: { ok: qc.ok, metrics: qc.metrics },
-      create: { sellerProductId: null },
-      followUp: { statusName: null },
-    },
+    result: makePreviewOnlyResult(qc),
   };
 }
 
@@ -180,6 +212,11 @@ async function runLiveCases({ urls, previewOnly }) {
     throw new Error("live mode requires 3 urls. pass with --urls 'url1,url2,url3'");
   }
 
+  // Important: preview-only 경로에서는 runUploadFromUrl를 절대 import/call하지 않음.
+  const runUploadFromUrl = previewOnly
+    ? null
+    : (await import("../src/pipeline/runUploadFromUrl.js")).runUploadFromUrl;
+
   const results = [];
 
   for (const item of inputs) {
@@ -198,44 +235,39 @@ async function runLiveCases({ urls, previewOnly }) {
           url: item.url,
           preview: previewSummary,
           qc: { ok: false, reasons: [previewSummary.error], metrics: {} },
-          result: {
+          result: normalizeResult({
             ok: false,
             skipped: true,
             error: previewSummary.error,
             detail: null,
             qc: { ok: false, metrics: {} },
-            create: { sellerProductId: null },
+            create: { sellerProductId: null, status: null },
             followUp: { statusName: null },
-          },
+          }),
         });
         continue;
       }
 
       const qc = evaluateQcGate(preview.preview || {}, settings);
-      const runResult = await runUploadFromUrl(item.url, settings, { preview });
 
+      if (previewOnly) {
+        results.push({
+          case: item.case,
+          url: item.url,
+          preview: previewSummary,
+          qc,
+          result: makePreviewOnlyResult(qc),
+        });
+        continue;
+      }
+
+      const runResult = await runUploadFromUrl(item.url, settings, { preview });
       results.push({
         case: item.case,
         url: item.url,
         preview: previewSummary,
         qc,
-        result: {
-          ok: Boolean(runResult?.ok),
-          skipped: Boolean(runResult?.skipped),
-          error: runResult?.error || null,
-          detail: runResult?.detail || null,
-          qc: {
-            ok: Boolean(runResult?.qc?.ok),
-            metrics: runResult?.qc?.metrics || {},
-          },
-          create: {
-            sellerProductId: runResult?.create?.sellerProductId ?? null,
-            status: runResult?.create?.status ?? null,
-          },
-          followUp: {
-            statusName: runResult?.followUp?.statusName ?? null,
-          },
-        },
+        result: normalizeResult(runResult),
       });
     } catch (e) {
       results.push({
@@ -243,7 +275,7 @@ async function runLiveCases({ urls, previewOnly }) {
         url: item.url,
         preview: { ok: false, error: String(e?.message || e), title: null, imageFingerprint: null, metrics: {} },
         qc: { ok: false, reasons: [String(e?.message || e)], metrics: {} },
-        result: {
+        result: normalizeResult({
           ok: false,
           skipped: false,
           error: String(e?.message || e),
@@ -251,7 +283,7 @@ async function runLiveCases({ urls, previewOnly }) {
           qc: { ok: false, metrics: {} },
           create: { sellerProductId: null, status: null },
           followUp: { statusName: null },
-        },
+        }),
       });
     }
   }
