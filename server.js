@@ -53,6 +53,15 @@ const IP_CHECK_URLS = ["https://ifconfig.me/ip", "https://api.ipify.org"];
 const UPLOAD_HISTORY_PATH = path.join(process.cwd(), "data", "upload_history.json");
 const UPLOAD_HISTORY_LIMIT = 200;
 
+function isHttpUrl(u) {
+  try {
+    const x = new URL(String(u || ''));
+    return x.protocol === 'http:' || x.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
 function log(...args) {
   console.log("[server]", new Date().toISOString(), ...args);
 }
@@ -267,6 +276,38 @@ app.post("/api/settings", authRequired, async (req, res) => {
     return res.json({ ok: true, settings: saved });
   } catch (e) {
     return res.status(400).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+// image proxy for Flutter web (avoid hotlink/CORS issues)
+app.get('/api/image-proxy', async (req, res) => {
+  try {
+    const raw = String(req.query?.url || '').trim();
+    if (!isHttpUrl(raw)) {
+      return res.status(400).json({ ok: false, error: 'invalid_url' });
+    }
+
+    const u = new URL(raw);
+    const referer = `${u.protocol}//${u.host}`;
+    const upstream = await fetch(raw, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+        Referer: referer,
+      },
+    });
+
+    if (!upstream.ok) {
+      return res.status(502).json({ ok: false, error: 'upstream_failed', status: upstream.status });
+    }
+
+    const ct = upstream.headers.get('content-type') || 'application/octet-stream';
+    res.setHeader('Content-Type', ct);
+    res.setHeader('Cache-Control', 'public, max-age=300');
+
+    const ab = await upstream.arrayBuffer();
+    return res.status(200).send(Buffer.from(ab));
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
   }
 });
 
