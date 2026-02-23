@@ -855,9 +855,21 @@ function openUploadConfirmModal({ url, preview, qc, force }) {
   const title = preview?.draft?.title || "-";
   const categoryCode = preview?.category?.usedCode ?? preview?.category?.resolvedCode ?? "-";
   const categoryName = preview?.draft?.categoryText || preview?.category?.predicted?.name || "-";
-  const detailCount = preview?.preview?.contentImagesFiltered?.length || 0;
+  const detailImages = Array.isArray(preview?.preview?.contentImagesFiltered)
+    ? preview.preview.contentImagesFiltered
+    : [];
+  const detailCount = detailImages.length;
   const qcOk = qc?.ok === true;
-  const reasons = Array.isArray(qc?.reasons) ? qc.reasons.slice(0, 3) : [];
+  const reasons = Array.isArray(qc?.reasons) ? qc.reasons.slice(0, 5) : [];
+
+  const thumbHtml = detailImages.length
+    ? `<div style="margin-top:10px;">
+        <div class="hint" style="margin-bottom:6px;">상세 이미지 미리보기 (최대 8장)</div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(90px,1fr));gap:8px;max-height:280px;overflow:auto;padding:4px;border:1px solid var(--line,#eee);border-radius:10px;">
+          ${detailImages.slice(0, 8).map((u, i) => `<img src="${escapeHtml(u)}" alt="detail-${i + 1}" loading="lazy" style="width:100%;height:90px;object-fit:cover;border-radius:8px;border:1px solid #eee;"/>`).join("")}
+        </div>
+      </div>`
+    : `<div class="hint" style="margin-top:10px;">상세 이미지가 없습니다.</div>`;
 
   uploadConfirmBody.innerHTML = `
     <div class="kv-row"><span class="k">원본 URL</span><span class="v"><code>${escapeHtml(url)}</code></span></div>
@@ -867,6 +879,7 @@ function openUploadConfirmModal({ url, preview, qc, force }) {
     <div class="kv-row"><span class="k">QC 판정</span><span class="v ${qcOk ? 'ok-text' : 'bad-text'}">${qcOk ? '통과' : '실패'}</span></div>
     ${reasons.length ? `<div class="hint" style="margin-top:8px;">사유: ${escapeHtml(reasons.join(' / '))}</div>` : ''}
     ${force ? `<div class="hint" style="margin-top:8px;">강제 재업로드 모드</div>` : ''}
+    ${thumbHtml}
   `;
 
   uploadConfirmProceedBtn.disabled = !qcOk;
