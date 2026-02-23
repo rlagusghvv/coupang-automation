@@ -398,6 +398,7 @@ export async function runUploadFromUrl(inputUrl, settings = {}, runtime = {}) {
     contentText: contentHtml,
     notices,
     requested: autoRequest,
+    deliveryCompanyCode: settings.coupangDeliveryCompanyCode,
     itemUnit: defaultItemUnit,
     items:
       optionsUsed.length > 0
