@@ -184,7 +184,24 @@ export function analyzeSameProductImages({
 
     const host = normalizeHost(u.hostname);
     const domain = getDomain(host);
+    const pathname = String(u.pathname || '').toLowerCase();
     rawHosts.add(host);
+
+    // Domeggook page chrome/icons/sns 자산 제거: 실제 상품 업로드 이미지 경로만 허용
+    if (mainDomain === 'domeggook.com') {
+      const looksProductUploadPath =
+        pathname.includes('/upload/item/') ||
+        pathname.includes('/upload/editor/') ||
+        pathname.includes('/upload/contents/');
+      const looksUiAsset =
+        pathname.includes('/image/common/') ||
+        pathname.includes('/image/item/') ||
+        pathname.includes('/image/event/');
+      if (!looksProductUploadPath || looksUiAsset) {
+        rejected.push({ url, reason: 'non_product_asset', host });
+        continue;
+      }
+    }
 
     const tokens = tokenizeUrl(url);
     const overlap = countOverlap(tokens, referenceTokens);
