@@ -282,8 +282,15 @@ export function analyzeSameProductImages({
         pathname.includes("/image/common/") ||
         pathname.includes("/image/item/") ||
         pathname.includes("/image/event/");
-      if (!looksProductUploadPath || looksUiAsset) {
-        rejected.push({ url, reason: "non_product_asset", host, path: pathname });
+      const fileName = pathname.split('/').pop() || '';
+      const isThumbLike = /_stt_\d+\.(png|jpe?g|webp)$/i.test(fileName) || fileName.includes('_stt_');
+      if (!looksProductUploadPath || looksUiAsset || isThumbLike) {
+        rejected.push({
+          url,
+          reason: isThumbLike ? "thumbnail_asset" : "non_product_asset",
+          host,
+          path: pathname,
+        });
         continue;
       }
     }
