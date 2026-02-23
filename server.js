@@ -52,8 +52,11 @@ const SERVER_STARTED_AT = new Date().toISOString();
 const PACKAGE_JSON_PATH = path.join(process.cwd(), "package.json");
 const GIT_DIR = path.join(process.cwd(), ".git");
 const IP_CHECK_URLS = ["https://ifconfig.me/ip", "https://api.ipify.org"];
+const DATA_DIR = path.join(process.cwd(), "data");
 const UPLOAD_HISTORY_PATH = path.join(process.cwd(), "data", "upload_history.json");
 const UPLOAD_HISTORY_LIMIT = 200;
+const ECON_AUTH_PATH = path.join(DATA_DIR, 'econ_auth.json');
+const ECON_PROGRESS_PATH = path.join(DATA_DIR, 'econ_progress.json');
 
 function isHttpUrl(u) {
   try {
@@ -179,6 +182,34 @@ function appendUploadHistory(entry) {
   if (list.length > UPLOAD_HISTORY_LIMIT) list.length = UPLOAD_HISTORY_LIMIT;
   saveUploadHistory(list);
 }
+
+function readJsonFileSafe(filePath, fallback) {
+  try {
+    if (!fs.existsSync(filePath)) return fallback;
+    return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+  } catch {
+    return fallback;
+  }
+}
+
+function writeJsonFileSafe(filePath, value) {
+  try {
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.writeFileSync(filePath, JSON.stringify(value, null, 2), 'utf8');
+  } catch {}
+}
+
+function hashPassword(password, saltHex) {
+  const salt = saltHex ? Buffer.from(saltHex, 'hex') : crypto.randomBytes(16);
+  const hash = crypto.pbkdf2Sync(String(password || ''), salt, 120000, 32, 'sha256');
+  return { salt: salt.toString('hex'), hash: hash.toString('hex') };
+}
+
+function createEconToken() {
+  return crypto.randomBytes(24).toString('hex');
+}
+
+const econSessions = new Map();
 
 function readPackageVersion() {
   try {
@@ -365,6 +396,93 @@ app.post("/api/settings", authRequired, async (req, res) => {
   } catch (e) {
     return res.status(400).json({ ok: false, error: String(e?.message || e) });
   }
+});
+
+// --- Econ auth/progress APIs for /econ web app ---
+function getEconBearerToken(req) {
+  const h = String(req.headers?.authorization || '').trim();
+  if (!h.toLowerCase().startsWith('bearer ')) return '';
+  return h.slice(7).trim();
+}
+
+function getEconSession(req) {
+  const token = getEconBearerToken(req);
+  if (!token) return null;
+  return econSessions.get(token) || null;
+}
+
+app.post('/auth/signup', async (req, res) => {
+  try {
+    const email = String(req.body?.email || '').trim().toLowerCase();
+    const password = String(req.body?.password || '').trim();
+    if (!email || !password) return res.status(400).json({ ok: false, error: 'missing_fields' });
+    if (!email.includes('@')) return res.status(400).json({ ok: false, error: 'invalid_email' });
+    if (password.length < 8) return res.status(400).json({ ok: false, error: 'password_too_short' });
+
+    const users = readJsonFileSafe(ECON_AUTH_PATH, { users: [] });
+    const list = Array.isArray(users.users) ? users.users : [];
+    if (list.some((u) => String(u.email || '').toLowerCase() === email)) {
+      return res.status(409).json({ ok: false, error: 'email_exists' });
+    }
+
+    const id = crypto.randomUUID();
+    const hp = hashPassword(password);
+    list.push({ id, email, salt: hp.salt, hash: hp.hash, createdAt: new Date().toISOString() });
+    writeJsonFileSafe(ECON_AUTH_PATH, { users: list });
+
+    const token = createEconToken();
+    econSessions.set(token, { userId: id, email });
+    return res.json({ ok: true, token, user: { id, email } });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+app.post('/auth/login', async (req, res) => {
+  try {
+    const email = String(req.body?.email || '').trim().toLowerCase();
+    const password = String(req.body?.password || '').trim();
+    if (!email || !password) return res.status(400).json({ ok: false, error: 'missing_fields' });
+
+    const users = readJsonFileSafe(ECON_AUTH_PATH, { users: [] });
+    const list = Array.isArray(users.users) ? users.users : [];
+    const user = list.find((u) => String(u.email || '').toLowerCase() === email);
+    if (!user) return res.status(401).json({ ok: false, error: 'invalid_credentials' });
+
+    const hp = hashPassword(password, user.salt);
+    if (hp.hash !== user.hash) return res.status(401).json({ ok: false, error: 'invalid_credentials' });
+
+    const token = createEconToken();
+    econSessions.set(token, { userId: user.id, email: user.email });
+    return res.json({ ok: true, token, user: { id: user.id, email: user.email } });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+app.get('/progress', async (req, res) => {
+  const session = getEconSession(req);
+  if (!session) return res.status(401).json({ ok: false, error: 'unauthorized' });
+
+  const db = readJsonFileSafe(ECON_PROGRESS_PATH, { progressByUser: {} });
+  const progressByUser = db.progressByUser && typeof db.progressByUser === 'object' ? db.progressByUser : {};
+  return res.json({ ok: true, progress: progressByUser[session.userId] || null });
+});
+
+app.put('/progress', async (req, res) => {
+  const session = getEconSession(req);
+  if (!session) return res.status(401).json({ ok: false, error: 'unauthorized' });
+
+  const payload = req.body?.progress;
+  if (!payload || typeof payload !== 'object') {
+    return res.status(400).json({ ok: false, error: 'invalid_progress' });
+  }
+
+  const db = readJsonFileSafe(ECON_PROGRESS_PATH, { progressByUser: {} });
+  const progressByUser = db.progressByUser && typeof db.progressByUser === 'object' ? db.progressByUser : {};
+  progressByUser[session.userId] = payload;
+  writeJsonFileSafe(ECON_PROGRESS_PATH, { progressByUser });
+  return res.json({ ok: true });
 });
 
 // image proxy for Flutter web (avoid hotlink/CORS issues)
