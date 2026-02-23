@@ -449,6 +449,8 @@ export async function runUploadFromUrl(inputUrl, settings = {}, runtime = {}) {
               contentText: contentHtml,
               notices,
               attributes: buildItemAttributesFromOptionValues(opt.values) || undefined,
+              unitCount: defaultItemUnit.unitCount,
+              unitType: defaultItemUnit.unitType,
             });
           })
         : undefined,
@@ -651,19 +653,50 @@ function applyErrorItemFixes({ body, errorItems, finalCategoryCode }) {
     textBlob.includes("필수") ||
     textBlob.includes("required");
 
+  const needsItemUnit =
+    textBlob.includes("unit count") ||
+    textBlob.includes("unitcount") ||
+    textBlob.includes("unit type") ||
+    textBlob.includes("단위수량") ||
+    textBlob.includes("단위 수량");
+
   const appliedFixes = [];
   let changed = false;
 
   if (needsAttributes) {
     const requiredAttrs = getRequiredAttributes(finalCategoryCode);
+    let attrsChanged = false;
     for (const item of items) {
       const before = Array.isArray(item.attributes) ? item.attributes.length : 0;
       item.attributes = mergeAttributes(item.attributes, requiredAttrs);
       const after = Array.isArray(item.attributes) ? item.attributes.length : 0;
-      if (after > before) changed = true;
+      if (after > before) {
+        attrsChanged = true;
+        changed = true;
+      }
     }
-    if (changed) {
-      appliedFixes.push(`required_attributes_autofill:${String(finalCategoryCode || "auto")}`);
+    if (attrsChanged) {
+      appliedFixes.push("required_attributes_autofill:" + String(finalCategoryCode || "auto"));
+    }
+  }
+
+  if (needsItemUnit) {
+    let unitChanged = false;
+    for (const item of items) {
+      const count = Number(item?.unitCount);
+      if (!Number.isFinite(count) || count <= 0) {
+        item.unitCount = 1;
+        unitChanged = true;
+      }
+      const type = String(item?.unitType || "").trim();
+      if (!type) {
+        item.unitType = "PIECE";
+        unitChanged = true;
+      }
+    }
+    if (unitChanged) {
+      changed = true;
+      appliedFixes.push("item_unit_autofill:1-PIECE");
     }
   }
 
