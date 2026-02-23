@@ -493,12 +493,33 @@ export async function runUploadFromUrl(inputUrl, settings = {}, runtime = {}) {
   });
   const res = createAttempt.response;
 
-  let createdId = null;
-  let createBody = res.body;
-  try {
-    const bodyObj = typeof res.body === "string" ? JSON.parse(res.body) : res.body;
-    createdId = bodyObj?.data ?? null;
-  } catch {}
+  const parsedCreateBody = safeJson(res.body);
+  const createdId = extractSellerProductId(parsedCreateBody);
+  const createBody = res.body;
+  const createOk = isCreateSuccess(parsedCreateBody) && Boolean(createdId);
+
+  if (!createOk) {
+    return buildResult({
+      ok: false,
+      skipped: false,
+      error: "create_failed",
+      detail: {
+        responseCode: parsedCreateBody?.code || null,
+        message: parsedCreateBody?.message || null,
+        errorItems: extractErrorItems(parsedCreateBody),
+      },
+      draft: { title: draft.title, price: draft.price, imageUrl: draft.imageUrl },
+      finalPrice,
+      category: { requested: displayCategoryCode, used: finalCategoryCode, auto: allowAutoCategory },
+      optionsUsed: optionsUsed.map((opt) => opt.label),
+      payloadCheck,
+      qc: qcInfo,
+      preview: previewResult.preview,
+      createRetry: createAttempt.retry,
+      create: { status: res.status, body: createBody, sellerProductId: null },
+      followUp: emptyFollowUp(),
+    });
+  }
 
   let approval = null;
   if (createdId && !autoRequest) {
@@ -588,6 +609,28 @@ function extractErrorItems(parsedBody) {
   if (!parsedBody || typeof parsedBody !== "object") return [];
   const items = parsedBody?.data?.errorItems || parsedBody?.errorItems || [];
   return Array.isArray(items) ? items : [];
+}
+
+function extractSellerProductId(parsedBody) {
+  if (!parsedBody || typeof parsedBody !== "object") return null;
+
+  const candidates = [
+    parsedBody?.data,
+    parsedBody?.data?.sellerProductId,
+    parsedBody?.data?.id,
+    parsedBody?.sellerProductId,
+    parsedBody?.id,
+  ];
+
+  for (const v of candidates) {
+    if (v == null) continue;
+    if (typeof v === "object") continue;
+    const s = String(v).trim();
+    if (!s) continue;
+    return s;
+  }
+
+  return null;
 }
 
 function applyErrorItemFixes({ body, errorItems, finalCategoryCode }) {
