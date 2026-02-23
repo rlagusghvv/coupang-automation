@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
 import { previewUploadFromUrl } from "../src/pipeline/previewUploadFromUrl.js";
+import { evaluateQcGate } from "../src/pipeline/qcGate.js";
 
 const URL = "https://domeggook.com/58965806";
 
@@ -21,6 +22,9 @@ async function main() {
   const totalUploadImages = 1 + filtered.length; // main + detail
   assert.equal(totalUploadImages, 5, "main + detail must be exactly 5 images");
 
+  const qc = evaluateQcGate(preview, {});
+  assert.equal(Boolean(qc?.ok), true, "qc gate must pass for product 58965806");
+
   console.log(
     JSON.stringify(
       {
@@ -30,12 +34,15 @@ async function main() {
         title: res?.draft?.title || "",
         mainImage: res?.draft?.imageUrl || "",
         detailImages: filtered,
+        qc,
         metrics: {
           imageCountRaw: preview.imageCountRaw,
           imageCountFiltered: preview.imageCountFiltered,
           tokenMatchRate: preview.tokenMatchRate,
           pathAllowRateRaw: preview.pathAllowRateRaw,
           pathBlockedRateRaw: preview.pathBlockedRateRaw,
+          exactHostMatchRate: preview.exactHostMatchRate,
+          suspiciousPathRateRaw: preview.suspiciousPathRateRaw,
         },
       },
       null,

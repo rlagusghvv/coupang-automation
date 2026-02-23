@@ -20,6 +20,13 @@ export function evaluateQcGate(preview = {}, settings = {}) {
   const maxSuspiciousPathRate = num(settings.qcMaxSuspiciousPathRate, 0.72);
   const minExactHostRate = num(settings.qcMinExactHostRate, 0.05);
 
+  // Trusted detail path mode:
+  // some suppliers serve valid detail images on a dedicated CDN domain.
+  // If path quality is clean enough, host/token mismatch should not hard-fail.
+  const trustedPathAllowRate = num(settings.qcTrustedPathAllowRate, 0.9);
+  const trustedPathBlockedRate = num(settings.qcTrustedPathBlockedRate, 0.15);
+  const trustedSuspiciousRate = num(settings.qcTrustedSuspiciousRate, 0.1);
+
   const metrics = {
     imageCountRaw: num(preview.imageCountRaw, 0),
     imageCountFiltered: num(preview.imageCountFiltered, 0),
@@ -43,6 +50,12 @@ export function evaluateQcGate(preview = {}, settings = {}) {
   };
 
   const reasons = [];
+  const trustedDetailAssetMode =
+    metrics.imageCountRaw >= minFilteredImages &&
+    metrics.imageCountFiltered >= minFilteredImages &&
+    metrics.pathAllowRateRaw >= trustedPathAllowRate &&
+    metrics.pathBlockedRateRaw <= trustedPathBlockedRate &&
+    metrics.suspiciousPathRateRaw <= trustedSuspiciousRate;
 
   if (!preview.mainImageUrl) {
     reasons.push("대표 이미지가 비어 있습니다.");
@@ -60,7 +73,11 @@ export function evaluateQcGate(preview = {}, settings = {}) {
     );
   }
 
-  if (metrics.imageCountRaw > 0 && metrics.tokenMatchRate < minTokenMatchRate) {
+  if (
+    !trustedDetailAssetMode &&
+    metrics.imageCountRaw > 0 &&
+    metrics.tokenMatchRate < minTokenMatchRate
+  ) {
     reasons.push(
       `대표-상세 이미지 토큰 일치율이 낮아 혼입 위험이 큽니다 (${formatPercent(metrics.tokenMatchRate)} < ${formatPercent(minTokenMatchRate)}).`,
     );
@@ -109,6 +126,7 @@ export function evaluateQcGate(preview = {}, settings = {}) {
   }
 
   if (
+    !trustedDetailAssetMode &&
     metrics.imageCountRaw >= 4 &&
     metrics.exactHostMatchRate < minExactHostRate &&
     metrics.tokenMatchRate < Math.min(0.9, minTokenMatchRate + 0.2)
