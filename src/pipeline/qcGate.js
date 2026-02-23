@@ -14,6 +14,12 @@ export function evaluateQcGate(preview = {}, settings = {}) {
   const maxHostDiversity = num(settings.qcMaxHostDiversity, 4);
   const minMainTokenCount = num(settings.qcMinMainTokenCount, 2);
 
+  // path/asset quality guards
+  const minPathAllowRate = num(settings.qcMinPathAllowRate, 0.15);
+  const maxPathBlockedRate = num(settings.qcMaxPathBlockedRate, 0.7);
+  const maxSuspiciousPathRate = num(settings.qcMaxSuspiciousPathRate, 0.65);
+  const minExactHostRate = num(settings.qcMinExactHostRate, 0.2);
+
   const metrics = {
     imageCountRaw: num(preview.imageCountRaw, 0),
     imageCountFiltered: num(preview.imageCountFiltered, 0),
@@ -24,6 +30,16 @@ export function evaluateQcGate(preview = {}, settings = {}) {
     hostDiversityFiltered: num(preview.hostDiversityFiltered, 0),
     mainImageTokenCount: num(preview.mainImageTokenCount, 0),
     strictMode: Boolean(preview.strictMode),
+    exactHostMatchRate: num(preview.exactHostMatchRate, 0),
+    sameDomainRate: num(preview.sameDomainRate, 0),
+    pathAllowRateRaw: num(preview.pathAllowRateRaw, 0),
+    pathBlockedRateRaw: num(preview.pathBlockedRateRaw, 0),
+    suspiciousPathRateRaw: num(preview.suspiciousPathRateRaw, 0),
+    pathAllowCountRaw: num(preview.pathAllowCountRaw, 0),
+    pathAllowCountFiltered: num(preview.pathAllowCountFiltered, 0),
+    pathBlockedCountRaw: num(preview.pathBlockedCountRaw, 0),
+    suspiciousPathCountRaw: num(preview.suspiciousPathCountRaw, 0),
+    suspiciousPathCountFiltered: num(preview.suspiciousPathCountFiltered, 0),
   };
 
   const reasons = [];
@@ -63,6 +79,42 @@ export function evaluateQcGate(preview = {}, settings = {}) {
   ) {
     reasons.push(
       `상세 이미지 호스트 분산도가 높습니다 (hosts=${metrics.hostDiversityRaw}, match=${formatPercent(metrics.tokenMatchRate)}).`,
+    );
+  }
+
+  if (
+    metrics.imageCountRaw >= 5 &&
+    metrics.pathAllowRateRaw < minPathAllowRate &&
+    metrics.tokenMatchRate < Math.min(0.9, minTokenMatchRate + 0.2)
+  ) {
+    reasons.push(
+      `상품 상세 자산 경로 비율이 낮습니다 (allow=${formatPercent(metrics.pathAllowRateRaw)} < ${formatPercent(minPathAllowRate)}).`,
+    );
+  }
+
+  if (metrics.imageCountRaw >= 5 && metrics.pathBlockedRateRaw > maxPathBlockedRate) {
+    reasons.push(
+      `공통/배너/SNS 경로 이미지 비율이 높습니다 (blocked=${formatPercent(metrics.pathBlockedRateRaw)} > ${formatPercent(maxPathBlockedRate)}).`,
+    );
+  }
+
+  if (
+    metrics.imageCountRaw >= 5 &&
+    metrics.suspiciousPathRateRaw > maxSuspiciousPathRate &&
+    metrics.tokenMatchRate < 0.75
+  ) {
+    reasons.push(
+      `아이콘/배너성 이미지 비율이 높습니다 (suspicious=${formatPercent(metrics.suspiciousPathRateRaw)}).`,
+    );
+  }
+
+  if (
+    metrics.imageCountRaw >= 4 &&
+    metrics.exactHostMatchRate < minExactHostRate &&
+    metrics.tokenMatchRate < Math.min(0.9, minTokenMatchRate + 0.2)
+  ) {
+    reasons.push(
+      `대표 이미지와 동일 호스트 비율이 낮습니다 (exactHost=${formatPercent(metrics.exactHostMatchRate)} < ${formatPercent(minExactHostRate)}).`,
     );
   }
 

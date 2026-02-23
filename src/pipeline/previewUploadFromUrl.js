@@ -46,6 +46,36 @@ const GENERIC_TOKENS = new Set([
   "kr",
 ]);
 
+const DETAIL_PATH_ALLOW_PATTERNS = [
+  /\/upload\/item\//i,
+  /\/upload\/editor\//i,
+  /\/editor\//i,
+  /\/contents?\//i,
+  /\/attach(?:ment)?\//i,
+];
+
+const DETAIL_PATH_BLOCK_PATTERNS = [
+  /\/image\/common\//i,
+  /\/image\/item\//i,
+  /\/image\/event\//i,
+  /\/(?:sns|social)\//i,
+  /\/icons?\//i,
+  /\/banners?\//i,
+  /\/logos?\//i,
+  /\/(?:button|btn)\//i,
+  /\/share\//i,
+];
+
+const SUSPICIOUS_ASSET_PATTERNS = [
+  /(^|[_\-/])logo([_\-./]|$)/i,
+  /(^|[_\-/])icon([_\-./]|$)/i,
+  /(^|[_\-/])banner([_\-./]|$)/i,
+  /(^|[_\-/])sns([_\-./]|$)/i,
+  /facebook|twitter|kakao|naver|share/i,
+  /(^|[_\-/])btn([_\-./]|$)/i,
+  /sprite/i,
+];
+
 function toUrl(raw) {
   try {
     if (!raw) return null;
@@ -116,6 +146,35 @@ function countOverlap(tokens, referenceSet) {
   return n;
 }
 
+function normalizePath(urlObj) {
+  if (!urlObj) return "";
+  try {
+    return decodeURIComponent(String(urlObj.pathname || "")).toLowerCase();
+  } catch {
+    return String(urlObj.pathname || "").toLowerCase();
+  }
+}
+
+function inspectImagePath(urlObj) {
+  const path = normalizePath(urlObj);
+  const query = String(urlObj?.search || "").toLowerCase();
+  const target = `${path}${query}`;
+
+  const allowedByPath = DETAIL_PATH_ALLOW_PATTERNS.some((re) => re.test(path));
+  const blockedByPath = DETAIL_PATH_BLOCK_PATTERNS.some((re) => re.test(path));
+  const suspiciousByName = SUSPICIOUS_ASSET_PATTERNS.some((re) => re.test(target));
+
+  const blocked = blockedByPath || (suspiciousByName && !allowedByPath);
+  const suspicious = suspiciousByName || blockedByPath;
+
+  return {
+    allowed: allowedByPath,
+    blocked,
+    suspicious,
+    path,
+  };
+}
+
 export function buildImageFingerprint({
   sourceUrl,
   title,
@@ -154,6 +213,16 @@ export function analyzeSameProductImages({
         hostDiversityFiltered: 0,
         tokenMatchRate: 0,
         rejectedRate: rawImages.length > 0 ? 1 : 0,
+        exactHostMatchRate: 0,
+        sameDomainRate: 0,
+        pathAllowRateRaw: 0,
+        pathBlockedRateRaw: 0,
+        suspiciousPathRateRaw: 0,
+        pathAllowCountRaw: 0,
+        pathAllowCountFiltered: 0,
+        pathBlockedCountRaw: 0,
+        suspiciousPathCountRaw: 0,
+        suspiciousPathCountFiltered: 0,
         strictMode: Boolean(strict),
         mainImageHost: "",
         mainImageTokenCount: 0,
@@ -172,6 +241,13 @@ export function analyzeSameProductImages({
   const rejected = [];
 
   let tokenMatchedCount = 0;
+  let exactHostMatchedCount = 0;
+  let sameDomainCount = 0;
+  let pathAllowCountRaw = 0;
+  let pathBlockedCountRaw = 0;
+  let suspiciousPathCountRaw = 0;
+  let pathAllowCountFiltered = 0;
+  let suspiciousPathCountFiltered = 0;
   const rawHosts = new Set();
   const filteredHosts = new Set();
 
@@ -187,20 +263,35 @@ export function analyzeSameProductImages({
     const pathname = String(u.pathname || '').toLowerCase();
     rawHosts.add(host);
 
+    const pathSignals = inspectImagePath(u);
+    if (pathSignals.allowed) pathAllowCountRaw += 1;
+    if (pathSignals.blocked) pathBlockedCountRaw += 1;
+    if (pathSignals.suspicious) suspiciousPathCountRaw += 1;
+
     // Domeggook page chrome/icons/sns 자산 제거: 실제 상품 업로드 이미지 경로만 허용
-    if (mainDomain === 'domeggook.com') {
+    if (mainDomain === "domeggook.com") {
       const looksProductUploadPath =
-        pathname.includes('/upload/item/') ||
-        pathname.includes('/upload/editor/') ||
-        pathname.includes('/upload/contents/');
+        pathname.includes("/upload/item/") ||
+        pathname.includes("/upload/editor/") ||
+        pathname.includes("/upload/contents/");
       const looksUiAsset =
-        pathname.includes('/image/common/') ||
-        pathname.includes('/image/item/') ||
-        pathname.includes('/image/event/');
+        pathname.includes("/image/common/") ||
+        pathname.includes("/image/item/") ||
+        pathname.includes("/image/event/");
       if (!looksProductUploadPath || looksUiAsset) {
-        rejected.push({ url, reason: 'non_product_asset', host });
+        rejected.push({ url, reason: "non_product_asset", host, path: pathname });
         continue;
       }
+    }
+
+    if (pathSignals.blocked) {
+      rejected.push({
+        url,
+        reason: "path_blocked",
+        host,
+        path: pathSignals.path,
+      });
+      continue;
     }
 
     const tokens = tokenizeUrl(url);
@@ -209,24 +300,45 @@ export function analyzeSameProductImages({
 
     if (overlap > 0) tokenMatchedCount += 1;
 
+    const exactHost = host && host === mainHost;
+    if (exactHost) exactHostMatchedCount += 1;
+
     const sameDomain = domain && mainDomain && domain === mainDomain;
-    const keepStrict = (sameDomain && overlap >= 1) || mainOverlap >= 2;
-    const keepLoose = sameDomain || overlap >= 2 || mainOverlap >= 1;
+    if (sameDomain) sameDomainCount += 1;
+
+    const score =
+      (exactHost ? 2 : 0) +
+      (sameDomain ? 1 : 0) +
+      (pathSignals.allowed ? 2 : 0) +
+      (overlap >= 2 ? 2 : overlap >= 1 ? 1 : 0) +
+      (mainOverlap >= 2 ? 2 : mainOverlap >= 1 ? 1 : 0) +
+      (tokens.length === 0 ? -1 : 0) +
+      (pathSignals.suspicious && !pathSignals.allowed ? -2 : 0);
+
+    const keepStrict = pathSignals.allowed
+      ? score >= 3 && (sameDomain || overlap >= 1 || mainOverlap >= 1)
+      : score >= 5 && (exactHost || overlap >= 2 || mainOverlap >= 2);
+    const keepLoose = pathSignals.allowed ? score >= 2 : score >= 3;
     const keep = strict ? keepStrict : keepLoose;
 
     if (keep) {
       kept.push(url);
       filteredHosts.add(host);
+      if (pathSignals.allowed) pathAllowCountFiltered += 1;
+      if (pathSignals.suspicious) suspiciousPathCountFiltered += 1;
     } else {
       const reasonBits = [];
       if (!sameDomain) reasonBits.push("domain_mismatch");
       if (overlap < 1) reasonBits.push("token_overlap_low");
+      if (!pathSignals.allowed) reasonBits.push("path_allow_missing");
       rejected.push({
         url,
         reason: reasonBits.length > 0 ? reasonBits.join("+") : "unmatched",
         host,
         overlap,
         mainOverlap,
+        score,
+        path: pathSignals.path,
       });
     }
   }
@@ -236,6 +348,11 @@ export function analyzeSameProductImages({
   const imageCountRejected = rejected.length;
   const tokenMatchRate = imageCountRaw > 0 ? tokenMatchedCount / imageCountRaw : 0;
   const rejectedRate = imageCountRaw > 0 ? imageCountRejected / imageCountRaw : 0;
+  const exactHostMatchRate = imageCountRaw > 0 ? exactHostMatchedCount / imageCountRaw : 0;
+  const sameDomainRate = imageCountRaw > 0 ? sameDomainCount / imageCountRaw : 0;
+  const pathAllowRateRaw = imageCountRaw > 0 ? pathAllowCountRaw / imageCountRaw : 0;
+  const pathBlockedRateRaw = imageCountRaw > 0 ? pathBlockedCountRaw / imageCountRaw : 0;
+  const suspiciousPathRateRaw = imageCountRaw > 0 ? suspiciousPathCountRaw / imageCountRaw : 0;
 
   return {
     filteredImageUrls: kept,
@@ -248,6 +365,16 @@ export function analyzeSameProductImages({
       hostDiversityFiltered: filteredHosts.size,
       tokenMatchRate: Number(tokenMatchRate.toFixed(4)),
       rejectedRate: Number(rejectedRate.toFixed(4)),
+      exactHostMatchRate: Number(exactHostMatchRate.toFixed(4)),
+      sameDomainRate: Number(sameDomainRate.toFixed(4)),
+      pathAllowRateRaw: Number(pathAllowRateRaw.toFixed(4)),
+      pathBlockedRateRaw: Number(pathBlockedRateRaw.toFixed(4)),
+      suspiciousPathRateRaw: Number(suspiciousPathRateRaw.toFixed(4)),
+      pathAllowCountRaw,
+      pathAllowCountFiltered,
+      pathBlockedCountRaw,
+      suspiciousPathCountRaw,
+      suspiciousPathCountFiltered,
       strictMode: Boolean(strict),
       mainImageHost: mainHost,
       mainImageTokenCount: mainTokens.length,
