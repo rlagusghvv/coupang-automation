@@ -158,20 +158,28 @@ function normalizePath(urlObj) {
 function inspectImagePath(urlObj) {
   const path = normalizePath(urlObj);
   const query = String(urlObj?.search || "").toLowerCase();
-  const target = `${path}${query}`;
+  const target = path + query;
+  const host = normalizeHost(urlObj?.hostname || "");
+  const domain = getDomain(host);
 
+  const isThumb =
+    /(?:^|[\/_-])stt_\d+\./i.test(target) ||
+    /(?:^|[\/_-])thumb(?:nail)?([\/_\-.]|$)/i.test(target);
   const allowedByPath = DETAIL_PATH_ALLOW_PATTERNS.some((re) => re.test(path));
+  const allowByEsmplus = domain === "esmplus.com" && !isThumb;
   const blockedByPath = DETAIL_PATH_BLOCK_PATTERNS.some((re) => re.test(path));
   const suspiciousByName = SUSPICIOUS_ASSET_PATTERNS.some((re) => re.test(target));
 
-  const blocked = blockedByPath || (suspiciousByName && !allowedByPath);
-  const suspicious = suspiciousByName || blockedByPath;
+  const blocked = isThumb || blockedByPath || (suspiciousByName && !allowedByPath && !allowByEsmplus);
+  const suspicious = suspiciousByName || blockedByPath || isThumb;
 
   return {
-    allowed: allowedByPath,
+    allowed: allowedByPath || allowByEsmplus,
     blocked,
     suspicious,
     path,
+    isThumb,
+    domain,
   };
 }
 
@@ -268,8 +276,9 @@ export function analyzeSameProductImages({
     if (pathSignals.blocked) pathBlockedCountRaw += 1;
     if (pathSignals.suspicious) suspiciousPathCountRaw += 1;
 
-    // Domeggook page chrome/icons/sns 자산 제거: 실제 상품 업로드 이미지 경로만 허용
+    // Domeggook 페이지는 추천/썸네일 자산 혼입이 많아 경로를 강하게 제한한다.
     if (mainDomain === "domeggook.com") {
+      const isEsmplusDetail = pathSignals.domain === "esmplus.com";
       const looksProductUploadPath =
         pathname.includes("/upload/item/") ||
         pathname.includes("/upload/editor/") ||
@@ -277,13 +286,18 @@ export function analyzeSameProductImages({
         pathname.includes("/editor/") ||
         pathname.includes("/contents/") ||
         pathname.includes("/attach/") ||
-        pathname.includes("/attachment/");
+        pathname.includes("/attachment/") ||
+        isEsmplusDetail;
       const looksUiAsset =
         pathname.includes("/image/common/") ||
         pathname.includes("/image/item/") ||
-        pathname.includes("/image/event/");
-      const fileName = pathname.split('/').pop() || '';
-      const isThumbLike = /_stt_\d+\.(png|jpe?g|webp)$/i.test(fileName) || fileName.includes('_stt_');
+        pathname.includes("/image/event/") ||
+        pathSignals.isThumb;
+      const fileName = pathname.split("/").pop() || "";
+      const isThumbLike =
+        pathSignals.isThumb ||
+        /_stt_\d+\.(png|jpe?g|webp)$/i.test(fileName) ||
+        fileName.includes("_stt_");
       if (!looksProductUploadPath || looksUiAsset || isThumbLike) {
         rejected.push({
           url,
@@ -317,17 +331,19 @@ export function analyzeSameProductImages({
     const sameDomain = domain && mainDomain && domain === mainDomain;
     if (sameDomain) sameDomainCount += 1;
 
+    const isEsmplusDetail = pathSignals.domain === "esmplus.com";
     const score =
       (exactHost ? 2 : 0) +
       (sameDomain ? 1 : 0) +
       (pathSignals.allowed ? 2 : 0) +
+      (isEsmplusDetail ? 2 : 0) +
       (overlap >= 2 ? 2 : overlap >= 1 ? 1 : 0) +
       (mainOverlap >= 2 ? 2 : mainOverlap >= 1 ? 1 : 0) +
       (tokens.length === 0 ? -1 : 0) +
       (pathSignals.suspicious && !pathSignals.allowed ? -2 : 0);
 
     const keepStrict = pathSignals.allowed
-      ? score >= 3 && (sameDomain || overlap >= 1 || mainOverlap >= 1)
+      ? score >= 3 && (sameDomain || overlap >= 1 || mainOverlap >= 1 || isEsmplusDetail)
       : score >= 5 && (exactHost || overlap >= 2 || mainOverlap >= 2);
     const keepLoose = pathSignals.allowed ? score >= 2 : score >= 3;
     const keep = strict ? keepStrict : keepLoose;

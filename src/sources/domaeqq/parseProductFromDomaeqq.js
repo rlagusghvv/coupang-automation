@@ -321,7 +321,10 @@ function parseTitlePairsFromText(titleText) {
   for (const line of use) {
     const idx = line.indexOf(":");
     if (idx === -1) continue;
-    const name = line.slice(0, idx).trim();
+    const rawName = line.slice(0, idx).trim();
+    const name = rawName
+      .replace(/색깔/g, "색상")
+      .replace(/크기|사이즈/g, "사이즈");
     const value = line.slice(idx + 1).trim();
     if (!name || !value) continue;
     if (pairs.find((p) => p.optionName === name)) continue;
@@ -420,6 +423,93 @@ function extractImageUrlsFromHtml(html, baseUrl) {
   }
   return out;
 }
+
+const DETAIL_GARBAGE_PATTERNS = [
+  /\/image\/common\//i,
+  /\/image\/item\//i,
+  /\/image\/event\//i,
+  /\/(?:sns|social)\//i,
+  /(^|[_\-/])icon([_\-./]|$)/i,
+  /(^|[_\-/])logo([_\-./]|$)/i,
+  /(^|[_\-/])banner([_\-./]|$)/i,
+  /(^|[_\-/])btn([_\-./]|$)/i,
+  /sprite/i,
+  /facebook|twitter|kakao|share/i,
+];
+
+function classifyDetailImageUrl(rawUrl) {
+  let url = String(rawUrl || "").trim();
+  if (!url) {
+    return { usable: false, garbage: true, thumb: false, esmplus: false };
+  }
+
+  let host = "";
+  let path = url.toLowerCase();
+  try {
+    const u = new URL(url);
+    host = String(u.hostname || "").toLowerCase();
+    path = (String(u.pathname || "") + String(u.search || "")).toLowerCase();
+  } catch {}
+
+  const thumb =
+    /(?:^|[\/_-])stt_\d+\./i.test(path) ||
+    /(?:^|[\/_-])thumb(?:nail)?([\/_\-.]|$)/i.test(path);
+  const garbage = thumb || DETAIL_GARBAGE_PATTERNS.some((re) => re.test(path));
+  const esmplus = /(^|\.)esmplus\.com$/i.test(host);
+  const likelyDetail =
+    esmplus ||
+    /\/upload\/item\//i.test(path) ||
+    /\/upload\/editor\//i.test(path) ||
+    /\/upload\/contents\//i.test(path) ||
+    /\/editor\//i.test(path) ||
+    /\/contents\//i.test(path) ||
+    /\/attach(?:ment)?\//i.test(path);
+
+  return {
+    usable: Boolean(!garbage && likelyDetail),
+    garbage,
+    thumb,
+    esmplus,
+  };
+}
+
+function scoreDetailHtmlCandidate(html, baseUrl) {
+  const urls = extractImageUrlsFromHtml(html, baseUrl);
+  let usableCount = 0;
+  let garbageCount = 0;
+  let thumbCount = 0;
+  let esmplusCount = 0;
+
+  for (const u of urls) {
+    const c = classifyDetailImageUrl(u);
+    if (c.usable) usableCount += 1;
+    if (c.garbage) garbageCount += 1;
+    if (c.thumb) thumbCount += 1;
+    if (c.esmplus) esmplusCount += 1;
+  }
+
+  const score = usableCount * 8 + esmplusCount * 2 - garbageCount * 6 - thumbCount * 4;
+  return {
+    score,
+    totalCount: urls.length,
+    usableCount,
+    garbageCount,
+    thumbCount,
+    esmplusCount,
+  };
+}
+
+function shouldReplaceDetailHtml(currentScore, candidateScore) {
+  if (!currentScore) return true;
+  if (!candidateScore) return false;
+
+  if (candidateScore.usableCount > currentScore.usableCount) return true;
+  if (candidateScore.usableCount === currentScore.usableCount && candidateScore.garbageCount < currentScore.garbageCount) {
+    return true;
+  }
+  return candidateScore.score > currentScore.score + 2;
+}
+
 
 function buildImageHtml(urls) {
   if (!urls || urls.length === 0) return "";
@@ -864,6 +954,11 @@ export async function parseProductFromDomaeqq(url) {
             const m2 = String(t || "").match(/(\d[\d,]*)\s*개/);
             return m2 ? Number(m2[1].replace(/,/g, "")) : null;
           };
+          const normalizeName = (n) =>
+            String(n || "")
+              .replace(/색깔/g, "색상")
+              .replace(/크기|사이즈/g, "사이즈")
+              .trim();
           const parseTitle = (title) => {
             if (!title) return [];
             const lines = String(title)
@@ -878,7 +973,7 @@ export async function parseProductFromDomaeqq(url) {
             for (const line of use) {
               const idx = line.indexOf(":");
               if (idx === -1) continue;
-              const name = line.slice(0, idx).trim();
+              const name = normalizeName(line.slice(0, idx));
               const value = line.slice(idx + 1).trim();
               if (!name || !value) continue;
               if (pairs.find((p) => p.optionName === name)) continue;
@@ -1118,7 +1213,21 @@ export async function parseProductFromDomaeqq(url) {
       return "";
     });
 
-    let finalContentHtml = contentHtml;
+    let finalContentHtml = sanitizeHtml(contentHtml, url) || contentHtml || "";
+    let finalContentBaseUrl = url;
+    let finalContentScore = scoreDetailHtmlCandidate(finalContentHtml, finalContentBaseUrl);
+
+    const adoptDetailCandidate = (candidateHtml, candidateBaseUrl) => {
+      const sanitized = sanitizeHtml(candidateHtml, candidateBaseUrl) || "";
+      if (!sanitized) return;
+      const score = scoreDetailHtmlCandidate(sanitized, candidateBaseUrl || url);
+      if (shouldReplaceDetailHtml(finalContentScore, score)) {
+        finalContentHtml = sanitized;
+        finalContentBaseUrl = candidateBaseUrl || url;
+        finalContentScore = score;
+      }
+    };
+
     if (detailHtmlUrl) {
       try {
         const res = await fetch(detailHtmlUrl, {
@@ -1133,43 +1242,35 @@ export async function parseProductFromDomaeqq(url) {
           const mainOnly = extractMainBlock(bodyOnly);
           const imgList = extractImageUrlsFromHtml(bodyOnly, detailHtmlUrl);
           const imgHtml = buildImageHtml(imgList);
-          // 이미지가 충분하면 이미지 기반으로 구성, 아니면 본문 블럭 사용
           if (imgList.length >= 2) {
-            finalContentHtml = sanitizeHtml(imgHtml, detailHtmlUrl) || contentHtml;
+            adoptDetailCandidate(imgHtml, detailHtmlUrl);
           } else {
-            finalContentHtml = sanitizeHtml(mainOnly, detailHtmlUrl) || contentHtml;
+            adoptDetailCandidate(mainOnly, detailHtmlUrl);
           }
         }
       } catch {
-        // fallback to contentHtml
+        // fallback to existing candidate
       }
     }
 
-    // ✅ Fallback: some pages embed detail HTML inside a hidden textarea in the raw HTML.
-    // Playwright DOM may not contain it (server-side variant), so fetch raw HTML directly.
+    // ✅ Raw HTML의 contentsBuffer도 항상 평가한다.
+    // 페이지 블럭이 추천상품/썸네일을 많이 포함하는 경우, contentsBuffer가 더 정확한 상세인 경우가 많다.
     try {
-      const imgCount = extractImageUrlsFromHtml(finalContentHtml, url).length;
-      const looksTooSmall = imgCount < 8;
-      const alreadyHasProductCdn = /coupangcdn\.com/i.test(String(finalContentHtml || ""));
-      if (looksTooSmall && !alreadyHasProductCdn) {
-        const res = await fetch(url, {
-          headers: {
-            Referer: "https://domeggook.com/",
-            "User-Agent": "Mozilla/5.0",
-          },
-        });
-        if (res.ok) {
-          const raw = await res.text();
-          const m = String(raw).match(/<textarea[^>]*id=["']contentsBuffer["'][^>]*>([\s\S]*?)<\/textarea>/i);
-          const bufHtml = m && m[1] ? String(m[1]).trim() : "";
-          const bufImgs = extractImageUrlsFromHtml(bufHtml, url);
-          if (bufHtml.length > 200 && bufImgs.length >= 2) {
-            finalContentHtml = sanitizeHtml(bufHtml, url) || finalContentHtml;
-          }
+      const res = await fetch(url, {
+        headers: {
+          Referer: "https://domeggook.com/",
+          "User-Agent": "Mozilla/5.0",
+        },
+      });
+      if (res.ok) {
+        const raw = await res.text();
+        const m = String(raw).match(/<textarea[^>]*id=["']contentsBuffer["'][^>]*>([\s\S]*?)<\/textarea>/i);
+        const bufHtml = m && m[1] ? String(m[1]).trim() : "";
+        if (bufHtml.length > 200) {
+          adoptDetailCandidate(bufHtml, url);
         }
       }
     } catch {}
-
     const categoryText = await page.evaluate(() => {
       const pick = (sel) =>
         Array.from(document.querySelectorAll(sel))
