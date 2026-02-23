@@ -451,6 +451,17 @@
       </section>
     </main>
 
+    <div id="uploadConfirmModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="uploadConfirmTitle">
+      <div class="modal-card">
+        <h3 id="uploadConfirmTitle">업로드 전 확인</h3>
+        <div id="uploadConfirmBody" class="mini-kv"></div>
+        <div class="btn-row" style="margin-top:12px; justify-content:flex-end;">
+          <button id="uploadConfirmCancel" type="button" class="ghost">취소</button>
+          <button id="uploadConfirmProceed" type="button">업로드 진행</button>
+        </div>
+      </div>
+    </div>
+
     <script src="/app.js"></script>
   </body>
 </html>

@@ -83,6 +83,12 @@ const homeUploadGateEl = $("homeUploadGate");
 const uploadPreviewCard = $("uploadPreviewCard");
 const uploadPreviewKv = $("uploadPreviewKv");
 
+// Upload confirm modal
+const uploadConfirmModal = $("uploadConfirmModal");
+const uploadConfirmBody = $("uploadConfirmBody");
+const uploadConfirmCancelBtn = $("uploadConfirmCancel");
+const uploadConfirmProceedBtn = $("uploadConfirmProceed");
+
 // Recommendations (auto digger)
 const recoKeywordsEl = $("recoKeywords");
 const recoFillBtn = $("recoFill");
@@ -813,6 +819,66 @@ async function logout() {
   });
 }
 
+async function fetchUploadPreviewData(url) {
+  const res = await fetch("/api/upload/preview", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ url }),
+  });
+  const json = await res.json().catch(() => ({}));
+  return { res, json };
+}
+
+function renderUploadPreviewCard(json) {
+  const p = json?.preview || {};
+  const title = p?.draft?.title || "-";
+  const price = p?.draft?.price ?? "-";
+  const opts = Array.isArray(p?.draft?.options) ? p.draft.options.length : "-";
+  const images = [p?.draft?.imageUrl, ...(p?.preview?.contentImagesFiltered || [])].filter(Boolean);
+
+  if (uploadPreviewKv) {
+    const firstImg = images[0] || "";
+    uploadPreviewKv.innerHTML = `
+      <div class="kv-row"><span class="k">상품명</span><span class="v">${escapeHtml(title)}</span></div>
+      <div class="kv-row"><span class="k">원가</span><span class="v">${escapeHtml(String(price))}</span></div>
+      <div class="kv-row"><span class="k">옵션</span><span class="v">${escapeHtml(String(opts))}개</span></div>
+      <div class="kv-row"><span class="k">상세이미지(필터후)</span><span class="v">${escapeHtml(String(p?.preview?.contentImagesFiltered?.length || 0))}개</span></div>
+      ${firstImg ? `<div class="thumb-row"><img class="thumb" src="${firstImg}" alt="preview" loading="lazy" /></div>` : ""}
+    `;
+  }
+  uploadPreviewCard?.classList.remove("hidden");
+}
+
+function openUploadConfirmModal({ url, preview, qc, force }) {
+  if (!uploadConfirmModal || !uploadConfirmBody || !uploadConfirmProceedBtn) return;
+
+  const title = preview?.draft?.title || "-";
+  const categoryCode = preview?.category?.usedCode ?? preview?.category?.resolvedCode ?? "-";
+  const categoryName = preview?.draft?.categoryText || preview?.category?.predicted?.name || "-";
+  const detailCount = preview?.preview?.contentImagesFiltered?.length || 0;
+  const qcOk = qc?.ok === true;
+  const reasons = Array.isArray(qc?.reasons) ? qc.reasons.slice(0, 3) : [];
+
+  uploadConfirmBody.innerHTML = `
+    <div class="kv-row"><span class="k">원본 URL</span><span class="v"><code>${escapeHtml(url)}</code></span></div>
+    <div class="kv-row"><span class="k">업로드 제목</span><span class="v">${escapeHtml(title)}</span></div>
+    <div class="kv-row"><span class="k">카테고리</span><span class="v">${escapeHtml(String(categoryCode))} / ${escapeHtml(String(categoryName))}</span></div>
+    <div class="kv-row"><span class="k">상세 이미지</span><span class="v">${escapeHtml(String(detailCount))}개</span></div>
+    <div class="kv-row"><span class="k">QC 판정</span><span class="v ${qcOk ? 'ok-text' : 'bad-text'}">${qcOk ? '통과' : '실패'}</span></div>
+    ${reasons.length ? `<div class="hint" style="margin-top:8px;">사유: ${escapeHtml(reasons.join(' / '))}</div>` : ''}
+    ${force ? `<div class="hint" style="margin-top:8px;">강제 재업로드 모드</div>` : ''}
+  `;
+
+  uploadConfirmProceedBtn.disabled = !qcOk;
+  uploadConfirmProceedBtn.dataset.url = url;
+  uploadConfirmProceedBtn.dataset.force = force ? "1" : "0";
+  uploadConfirmModal.classList.remove("hidden");
+}
+
+function closeUploadConfirmModal() {
+  uploadConfirmModal?.classList.add("hidden");
+}
+
 async function previewUpload() {
   const url = urlInput?.value?.trim?.() || "";
   if (!url) {
@@ -824,12 +890,7 @@ async function previewUpload() {
   log("");
 
   try {
-    const res = await fetch("/api/upload/preview", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url }),
-    });
-    const json = await res.json().catch(() => ({}));
+    const { res, json } = await fetchUploadPreviewData(url);
     if (!res.ok || !json.ok) {
       setStatus("미리보기 실패", "bad");
       log(json);
@@ -837,25 +898,9 @@ async function previewUpload() {
       return;
     }
 
-    const p = json.preview || {};
-    const title = p.draft?.title || "-";
-    const price = p.finalPrice ?? "-";
-    const opts = Array.isArray(p.options) ? p.options.length : "-";
-    const images = Array.isArray(p.computed?.images) ? p.computed.images : [];
-
-    if (uploadPreviewKv) {
-      const firstImg = images[0] || "";
-      uploadPreviewKv.innerHTML = `
-        <div class="kv-row"><span class="k">상품명</span><span class="v">${escapeHtml(title)}</span></div>
-        <div class="kv-row"><span class="k">가격</span><span class="v">${escapeHtml(String(price))}</span></div>
-        <div class="kv-row"><span class="k">옵션</span><span class="v">${escapeHtml(String(opts))}개</span></div>
-        ${firstImg ? `<div class="thumb-row"><img class="thumb" src="${firstImg}" alt="preview" loading="lazy" /></div>` : ""}
-      `;
-    }
-    uploadPreviewCard?.classList.remove("hidden");
-
+    renderUploadPreviewCard(json);
     setStatus("미리보기 완료", "ok");
-    log(p);
+    log(json);
   } catch (e) {
     setStatus("미리보기 에러", "bad");
     log(String(e?.message || e));
@@ -1026,13 +1071,7 @@ function renderDuplicate(existing) {
   }
 }
 
-async function run(forceOverride = null) {
-  const url = urlInput.value.trim();
-  if (!url) {
-    setStatus("URL을 입력하세요", "bad");
-    return;
-  }
-
+async function executeUpload(url, force = false) {
   submitBtn.disabled = true;
   setStatus("업로드 중...", "");
   log("");
@@ -1040,7 +1079,6 @@ async function run(forceOverride = null) {
   renderSummary(null);
 
   try {
-    const force = forceOverride == null ? Boolean(forceUploadEl?.checked) : Boolean(forceOverride);
     const res = await fetch("/api/upload/execute", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -1048,14 +1086,12 @@ async function run(forceOverride = null) {
     });
     const json = await res.json().catch(() => ({}));
 
-    // Convenience: show buttons when duplicate
     if (!res.ok && json?.error === "duplicate_product" && json?.existing) {
       renderDuplicate(json.existing);
       return;
     }
 
     if (!res.ok || !json.ok) {
-      // Missing keys UX
       if (json?.error === 'missing_coupang_keys' && Array.isArray(json?.missing)) {
         setStatus("설정에 쿠팡 키가 필요합니다", "bad");
         log(json);
@@ -1093,6 +1129,37 @@ async function run(forceOverride = null) {
     renderSummary(null);
   } finally {
     submitBtn.disabled = false;
+  }
+}
+
+async function run(forceOverride = null) {
+  const url = urlInput.value.trim();
+  if (!url) {
+    setStatus("URL을 입력하세요", "bad");
+    return;
+  }
+
+  const force = forceOverride == null ? Boolean(forceUploadEl?.checked) : Boolean(forceOverride);
+
+  setStatus("업로드 전 검수 중...", "");
+  try {
+    const { res, json } = await fetchUploadPreviewData(url);
+    if (!res.ok || !json.ok) {
+      setStatus("미리검수 실패", "bad");
+      log(json);
+      return;
+    }
+
+    renderUploadPreviewCard(json);
+    openUploadConfirmModal({
+      url,
+      preview: json.preview,
+      qc: json.qc,
+      force,
+    });
+  } catch (e) {
+    setStatus("검수 에러", "bad");
+    log(String(e?.message || e));
   }
 }
 
@@ -1557,6 +1624,17 @@ async function seedDummyOrders() {
 
 submitBtn?.addEventListener("click", run);
 previewBtn?.addEventListener("click", previewUpload);
+uploadConfirmCancelBtn?.addEventListener("click", closeUploadConfirmModal);
+uploadConfirmModal?.addEventListener("click", (e) => {
+  if (e.target === uploadConfirmModal) closeUploadConfirmModal();
+});
+uploadConfirmProceedBtn?.addEventListener("click", async () => {
+  const url = uploadConfirmProceedBtn.dataset.url || "";
+  const force = uploadConfirmProceedBtn.dataset.force === "1";
+  closeUploadConfirmModal();
+  if (!url) return;
+  await executeUpload(url, force);
+});
 urlInput?.addEventListener("keydown", (e) => {
   if (e.key === "Enter") run();
 });

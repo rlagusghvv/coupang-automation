@@ -987,3 +987,32 @@ textarea {
   background: rgba(15, 23, 42, 0.6);
 }
 
+.modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.42);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+  padding: 16px;
+}
+
+.modal-card {
+  width: min(680px, 96vw);
+  background: #fff;
+  border-radius: 14px;
+  padding: 14px;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.25);
+}
+
+.ok-text {
+  color: #0c8a43;
+  font-weight: 700;
+}
+
+.bad-text {
+  color: #c52a2a;
+  font-weight: 700;
+}
+
