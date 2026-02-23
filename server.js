@@ -3,6 +3,7 @@ import "dotenv/config";
 import express from "express";
 import fs from "node:fs";
 import path from "node:path";
+import crypto from "node:crypto";
 import { runUploadFromUrl } from "./src/pipeline/runUploadFromUrl.js";
 import { previewUploadFromUrl } from "./src/pipeline/previewUploadFromUrl.js";
 import { evaluateQcGate } from "./src/pipeline/qcGate.js";
@@ -267,6 +268,79 @@ app.post("/api/settings", authRequired, async (req, res) => {
   } catch (e) {
     return res.status(400).json({ ok: false, error: String(e?.message || e) });
   }
+});
+
+// --- Backward-compatible endpoints for Flutter /app runtime ---
+const legacyJobs = new Map();
+
+app.get('/api/dashboard', authRequired, async (_req, res) => {
+  const uploadHistory = loadUploadHistory().slice(0, 20);
+  return res.json({
+    ok: true,
+    auth: { authenticated: true },
+    sessions: { domeggook: { ready: false }, domeme: { ready: false } },
+    recentUploads: uploadHistory,
+  });
+});
+
+app.get('/api/presets', authRequired, async (_req, res) => {
+  return res.json({ ok: true, presets: [] });
+});
+
+app.post('/api/presets', authRequired, async (_req, res) => {
+  return res.json({ ok: false, error: 'preset_not_supported_in_this_runtime' });
+});
+
+app.post('/api/jobs/start', authRequired, async (req, res) => {
+  try {
+    const kind = String(req.body?.kind || '').trim();
+    const url = String(req.body?.url || '').trim();
+    const force = parseForceFlag(req.body?.force);
+    const id = crypto.randomUUID();
+
+    if (!url) return res.status(400).json({ ok: false, error: 'url_required' });
+
+    if (kind === 'preview') {
+      const preview = await previewUploadFromUrl(url, req.user.settings || {});
+      const job = { id, kind, status: 'done', preview, result: preview };
+      legacyJobs.set(id, job);
+      return res.json({ ok: true, job });
+    }
+
+    if (kind === 'upload') {
+      const outcome = await executeUploadForUrl({
+        url,
+        user: req.user,
+        force,
+        overrides: {
+          titleOverride: req.body?.titleOverride,
+          imagesOverride: Array.isArray(req.body?.imagesOverride) ? req.body.imagesOverride : undefined,
+          categoryOverrideCode: req.body?.categoryOverrideCode,
+        },
+      });
+      const job = {
+        id,
+        kind,
+        status: outcome?.ok ? 'done' : 'failed',
+        outcome,
+        result: outcome?.result || null,
+        error: outcome?.error || null,
+      };
+      legacyJobs.set(id, job);
+      return res.json({ ok: true, job });
+    }
+
+    return res.status(400).json({ ok: false, error: 'unsupported_kind' });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+app.get('/api/jobs/:id', authRequired, async (req, res) => {
+  const id = String(req.params?.id || '').trim();
+  const job = legacyJobs.get(id);
+  if (!job) return res.status(404).json({ ok: false, error: 'job_not_found' });
+  return res.json({ ok: true, job });
 });
 
 function parseForceFlag(value) {
