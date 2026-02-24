@@ -1,5 +1,6 @@
-// Minimal service worker for PWA (cache-first for static assets)
-const CACHE = "couplus-static-v1";
+// Minimal service worker for PWA
+// NOTE: bump cache version when static behavior changes.
+const CACHE = "couplus-static-v2";
 const ASSETS = [
   "/",
   "/styles.css",
@@ -85,6 +86,20 @@ self.addEventListener("fetch", (event) => {
   if (url.pathname.startsWith("/api/")) {
     event.respondWith(
       fetch(req).catch(() => caches.match(req).then((r) => r || Response.error())),
+    );
+    return;
+  }
+
+  // Always try network first for core shell assets to avoid stale app logic.
+  if (url.pathname === "/app.js" || url.pathname === "/styles.css") {
+    event.respondWith(
+      fetch(req)
+        .then((res) => {
+          const copy = res.clone();
+          caches.open(CACHE).then((cache) => cache.put(req, copy)).catch(() => {});
+          return res;
+        })
+        .catch(() => caches.match(req).then((r) => r || Response.error())),
     );
     return;
   }
