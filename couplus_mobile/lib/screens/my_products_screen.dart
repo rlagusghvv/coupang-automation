@@ -140,6 +140,48 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
     }
   }
 
+  Future<void> _bulkArchive() async {
+    if (_selected.isEmpty) return;
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+
+    var okCount = 0;
+    var skippedCount = 0;
+    var failedCount = 0;
+
+    try {
+      for (final id in _selected) {
+        if (id.trim().isEmpty) {
+          skippedCount += 1;
+          continue;
+        }
+        try {
+          await widget.api.postJson('/api/catalog/$id/archive', {});
+          okCount += 1;
+        } catch (_) {
+          failedCount += 1;
+        }
+      }
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              '삭제 완료: 성공 $okCount · 스킵 $skippedCount · 실패 $failedCount',
+            ),
+          ),
+        );
+      }
+
+      setState(() => _selected.clear());
+      await _refresh();
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
   Future<void> _importBySellerProductId() async {
     final input = TextEditingController();
     final value = await showDialog<String>(
@@ -312,6 +354,11 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
                   onPressed:
                       _loading || _selected.isEmpty ? null : _clearSelection,
                   child: const Text('선택해제'),
+                ),
+                TextButton(
+                  onPressed:
+                      _loading || _selected.isEmpty ? null : _bulkArchive,
+                  child: const Text('삭제'),
                 ),
                 TextButton(
                   onPressed: _loading || _selected.isEmpty ? null : _bulkSync,

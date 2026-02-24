@@ -1023,7 +1023,8 @@ app.get("/api/catalog", authRequired, async (req, res) => {
     });
     let products = (listed.items || []).map(normalizeCatalogProduct);
     if (!status) {
-      products = products.filter((p) => String(p?.status || '').trim() !== 'deleted_remote');
+      const hiddenStatuses = new Set(["deleted_remote", "deleted_local"]);
+      products = products.filter((p) => !hiddenStatuses.has(String(p?.status || "").trim()));
     }
     return res.json({
       ok: true,
@@ -1160,6 +1161,34 @@ app.get("/api/catalog/:id", authRequired, async (req, res) => {
     const row = await getUploadedProductById(req.user.id, id);
     if (!row) return res.status(404).json({ ok: false, error: "not_found" });
     return res.json({ ok: true, product: normalizeCatalogProduct(row) });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+app.post("/api/catalog/:id/archive", authRequired, async (req, res) => {
+  try {
+    const id = String(req.params?.id || "").trim();
+    const row = await getUploadedProductById(req.user.id, id);
+    if (!row) return res.status(404).json({ ok: false, error: "not_found" });
+
+    const updated = await updateUploadedProductById({
+      userId: req.user.id,
+      id: row.id,
+      patch: { status: "deleted_local" },
+    });
+    if (!updated) return res.status(404).json({ ok: false, error: "not_found" });
+
+    await appendCatalogEvent({
+      userId: req.user.id,
+      catalogId: updated.id,
+      type: "CATALOG_ARCHIVED",
+      severity: "info",
+      message: "상품을 목록에서 숨겼습니다.",
+      data: { previousStatus: row.status || null },
+    });
+
+    return res.json({ ok: true, product: normalizeCatalogProduct(updated) });
   } catch (e) {
     return res.status(500).json({ ok: false, error: String(e?.message || e) });
   }
