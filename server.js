@@ -20,10 +20,17 @@ import {
   updateSettings,
   findDuplicateUpload,
   recordUploadedProduct,
+  listUploadedProducts,
+  getUploadedProductById,
+  getUploadedProductBySourceUrl,
+  getUploadedProductBySellerProductId,
+  updateUploadedProductById,
 } from "./src/server/storage_sqlite.js";
 import { exportOrdersToDomeme } from "./src/pipeline/exportOrdersToDomeme.js";
 import { uploadDomemeExcel } from "./src/pipeline/uploadDomemeExcel.js";
 import { spawn } from "node:child_process";
+import { getSellerProduct } from "./src/coupang/api/getSellerProduct.js";
+import { getSellerProductHistories } from "./src/coupang/api/getSellerProductHistories.js";
 
 const app = express();
 app.set("trust proxy", true);
@@ -589,6 +596,886 @@ app.get('/api/jobs/:id', authRequired, async (req, res) => {
   const job = legacyJobs.get(id);
   if (!job) return res.status(404).json({ ok: false, error: 'job_not_found' });
   return res.json({ ok: true, job });
+});
+
+
+function toPositiveIntOrNull(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return Math.floor(n);
+}
+
+function normalizeStringList(values = [], max = 50) {
+  if (!Array.isArray(values)) return [];
+  return values
+    .map((v) => String(v || "").trim())
+    .filter((v, idx, arr) => v.length > 0 && arr.indexOf(v) === idx)
+    .slice(0, max);
+}
+
+function safeJsonParse(raw, fallback = null) {
+  if (raw == null) return fallback;
+  if (typeof raw === "object") return raw;
+  try {
+    return JSON.parse(String(raw));
+  } catch {
+    return fallback;
+  }
+}
+
+function pickFirstNonEmpty(...values) {
+  for (const value of values) {
+    const text = String(value || "").trim();
+    if (text) return text;
+  }
+  return "";
+}
+
+function isApprovedStatus(statusName) {
+  const s = String(statusName || "").trim().toLowerCase();
+  if (!s) return false;
+  return (
+    s.includes("approved") ||
+    s.includes("승인완료") ||
+    s.includes("판매중") ||
+    s.includes("active")
+  );
+}
+
+function extractDetailHtmlFromSellerData(data) {
+  const d = data && typeof data === "object" ? data : {};
+  const items = Array.isArray(d.items) ? d.items : [];
+  const item0 = items[0] || {};
+  const direct =
+    item0.content ||
+    item0.contentText ||
+    item0.contentHtml ||
+    d.content ||
+    d.contentText ||
+    d.contentHtml ||
+    "";
+  if (String(direct || "").trim()) return String(direct);
+  const contentBlocks = Array.isArray(item0.contents) ? item0.contents : [];
+  const merged = contentBlocks
+    .flatMap((block) => (Array.isArray(block?.contentDetails) ? block.contentDetails : []))
+    .map((detail) => String(detail?.content || "").trim())
+    .filter(Boolean)
+    .join("\n");
+  return merged;
+}
+
+function extractMainImageFromSellerData(data) {
+  const d = data && typeof data === "object" ? data : {};
+  const items = Array.isArray(d.items) ? d.items : [];
+  const item0 = items[0] || {};
+  const images = Array.isArray(item0.images) ? item0.images : [];
+  const firstImage = images[0] || {};
+  return pickFirstNonEmpty(
+    firstImage.cdnPath,
+    firstImage.vendorPath,
+    firstImage.imageUrl,
+    firstImage.path,
+    d.mainImageUrl,
+    d.imageUrl,
+  );
+}
+
+function extractSellerStatusSnapshot({
+  sellerProductId,
+  responseBody,
+  historiesBody = null,
+  httpStatus = null,
+}) {
+  const bodyObj = safeJsonParse(responseBody, {});
+  const data = bodyObj?.data || bodyObj || {};
+  const statusName = pickFirstNonEmpty(
+    data?.statusName,
+    data?.status?.statusName,
+    data?.status,
+  );
+  const productIdRaw = data?.productId ?? data?.displayProductId ?? data?.displayProductCode ?? null;
+  const vendorItemIdRaw = data?.vendorItemId ?? data?.itemId ?? null;
+  const productId = productIdRaw == null ? null : String(productIdRaw).trim() || null;
+  const vendorItemId = vendorItemIdRaw == null ? null : String(vendorItemIdRaw).trim() || null;
+  const approved = isApprovedStatus(statusName);
+  const title = pickFirstNonEmpty(
+    data?.displayProductName,
+    data?.sellerProductName,
+    data?.name,
+    data?.items?.[0]?.itemName,
+  );
+  const mainImageUrl = extractMainImageFromSellerData(data) || null;
+  const detailHtml = extractDetailHtmlFromSellerData(data);
+
+  const histObj = safeJsonParse(historiesBody, {});
+  const historyItems = Array.isArray(histObj?.data)
+    ? histObj.data
+    : Array.isArray(histObj)
+      ? histObj
+      : [];
+  const lastHistory = historyItems[0] || null;
+
+  return {
+    ok: true,
+    sellerProductId: String(sellerProductId || "").trim(),
+    httpStatus: Number.isFinite(Number(httpStatus)) ? Number(httpStatus) : null,
+    statusName: statusName || null,
+    approved,
+    productId,
+    vendorItemId,
+    title: title || null,
+    mainImageUrl,
+    productUrl: productId ? `https://www.coupang.com/vp/products/${productId}` : null,
+    detailLength: String(detailHtml || "").trim().length,
+    detailEmpty: !String(detailHtml || "").trim(),
+    lastHistory,
+    checkedAt: new Date().toISOString(),
+  };
+}
+
+function inferCatalogStatus(currentStatus, snapshot = null, fallback = "confirmed") {
+  const current = String(currentStatus || "").trim();
+  if (!snapshot || snapshot.ok !== true) {
+    if (current) return current;
+    return fallback;
+  }
+  if (snapshot.detailEmpty) return "deployed_invalid";
+  if (snapshot.approved) return "deployed";
+  if (current === "deploy_failed" || current === "deployed_invalid") return current;
+  return "confirmed";
+}
+
+function normalizeCatalogProduct(row) {
+  const meta = row?.meta && typeof row.meta === "object" ? row.meta : {};
+  const detailImages = normalizeStringList(
+    Array.isArray(meta.detailImages) ? meta.detailImages : [],
+    100,
+  );
+  const mainImageUrl = pickFirstNonEmpty(meta.mainImageUrl, row?.imageUrl, detailImages[0] || "");
+  const followUp = meta.followUp && typeof meta.followUp === "object" ? meta.followUp : {};
+  const validation = meta.validation && typeof meta.validation === "object" ? meta.validation : {};
+  const sourceUrl = pickFirstNonEmpty(row?.sourceUrl, meta.sourceUrl);
+  return {
+    id: String(row?.id ?? ""),
+    sourceUrl,
+    confirmedTitle: pickFirstNonEmpty(meta.confirmedTitle, row?.title),
+    mainImageUrl,
+    detailImages,
+    presetId: meta.presetId == null ? null : String(meta.presetId || "").trim() || null,
+    categoryOverride: toPositiveIntOrNull(meta.categoryOverride),
+    sellerProductId: row?.sellerProductId == null ? null : String(row.sellerProductId || "").trim() || null,
+    status: String(row?.status || "confirmed"),
+    followUp,
+    validation,
+    lastSyncedAt: String(meta.lastSyncedAt || "").trim() || null,
+    deployedAt: String(meta.deployedAt || "").trim() || null,
+    createdAt: row?.createdAt || null,
+  };
+}
+
+function getCatalogEventsFromMeta(meta, limit = 200) {
+  if (!meta || typeof meta !== "object") return [];
+  const events = Array.isArray(meta.events) ? meta.events : [];
+  return events.slice(0, Math.max(1, Math.min(500, Number(limit) || 200)));
+}
+
+async function appendCatalogEvent({ userId, catalogId, type, severity = "info", message = "", data = null }) {
+  const row = await getUploadedProductById(userId, catalogId);
+  if (!row) return null;
+  const meta = row.meta && typeof row.meta === "object" ? { ...row.meta } : {};
+  const events = Array.isArray(meta.events) ? [...meta.events] : [];
+  events.unshift({
+    id: crypto.randomUUID(),
+    type: String(type || "INFO").trim() || "INFO",
+    severity: String(severity || "info").trim() || "info",
+    message: String(message || "").trim(),
+    data: data && typeof data === "object" ? data : {},
+    createdAt: new Date().toISOString(),
+  });
+  if (events.length > 500) events.length = 500;
+  meta.events = events;
+  return updateUploadedProductById({
+    userId,
+    id: row.id,
+    patch: { metaReplace: meta },
+  });
+}
+
+function getCoupangAuth(settings = {}) {
+  const accessKey = String(settings?.coupangAccessKey || "").trim();
+  const secretKey = String(settings?.coupangSecretKey || "").trim();
+  if (!accessKey || !secretKey) return null;
+  return { accessKey, secretKey };
+}
+
+async function fetchSellerStatusLive({ sellerProductId, settings, includeHistory = true }) {
+  const spid = String(sellerProductId || "").trim();
+  if (!spid) {
+    return { ok: false, error: "seller_product_id_required" };
+  }
+  const auth = getCoupangAuth(settings);
+  if (!auth) {
+    return { ok: false, error: "coupang_keys_missing" };
+  }
+
+  const productRes = await getSellerProduct({
+    sellerProductId: spid,
+    accessKey: auth.accessKey,
+    secretKey: auth.secretKey,
+  });
+  if (!productRes || Number(productRes.status) >= 400) {
+    const bodyObj = safeJsonParse(productRes?.body, {});
+    return {
+      ok: false,
+      error: "coupang_status_fetch_failed",
+      httpStatus: Number(productRes?.status || 0) || null,
+      detail: bodyObj,
+    };
+  }
+
+  let historiesBody = null;
+  if (includeHistory) {
+    try {
+      const histRes = await getSellerProductHistories({
+        sellerProductId: spid,
+        accessKey: auth.accessKey,
+        secretKey: auth.secretKey,
+      });
+      if (histRes && Number(histRes.status) < 500) {
+        historiesBody = histRes.body;
+      }
+    } catch {}
+  }
+
+  const snapshot = extractSellerStatusSnapshot({
+    sellerProductId: spid,
+    responseBody: productRes.body,
+    historiesBody,
+    httpStatus: productRes.status,
+  });
+  return snapshot;
+}
+
+async function upsertCatalogProductFromPayload({ userId, payload = {}, defaultStatus = "confirmed" }) {
+  const sourceUrlInput = String(payload.sourceUrl || payload.url || "").trim();
+  const sellerProductIdInput = String(payload.sellerProductId || "").trim();
+  const sourceUrl = sourceUrlInput || (sellerProductIdInput ? `coupang://seller-product/${sellerProductIdInput}` : "");
+  if (!sourceUrl) throw new Error("missing sourceUrl");
+
+  const confirmedTitle = String(payload.confirmedTitle || payload.title || "").trim();
+  const mainImageUrl = String(payload.mainImageUrl || "").trim();
+  const detailImages = normalizeStringList(payload.detailImages, 200);
+  const categoryOverride = toPositiveIntOrNull(payload.categoryOverride);
+  const presetIdRaw = String(payload.presetId || "").trim();
+  const presetId = presetIdRaw || null;
+
+  const existingBySource = await getUploadedProductBySourceUrl(userId, sourceUrl);
+  const existingBySpid =
+    !existingBySource && sellerProductIdInput
+      ? await getUploadedProductBySellerProductId(userId, sellerProductIdInput)
+      : null;
+  const existing = existingBySource || existingBySpid || null;
+
+  const prevMeta = existing?.meta && typeof existing.meta === "object" ? existing.meta : {};
+  const mergedMeta = {
+    ...prevMeta,
+    confirmedTitle: confirmedTitle || pickFirstNonEmpty(prevMeta.confirmedTitle, existing?.title),
+    mainImageUrl: mainImageUrl || pickFirstNonEmpty(prevMeta.mainImageUrl, existing?.imageUrl),
+    detailImages: detailImages.length > 0 ? detailImages : normalizeStringList(prevMeta.detailImages || [], 200),
+    presetId,
+    categoryOverride,
+  };
+
+  if (existing) {
+    const updated = await updateUploadedProductById({
+      userId,
+      id: existing.id,
+      patch: {
+        sourceUrl,
+        title: mergedMeta.confirmedTitle || existing.title || "상품",
+        imageUrl: mergedMeta.mainImageUrl || existing.imageUrl || "",
+        sellerProductId:
+          sellerProductIdInput ||
+          String(existing.sellerProductId || "").trim() ||
+          null,
+        status: String(payload.status || existing.status || defaultStatus),
+        metaReplace: mergedMeta,
+      },
+    });
+    return updated;
+  }
+
+  await recordUploadedProduct({
+    userId,
+    sourceUrl,
+    title: mergedMeta.confirmedTitle || "상품",
+    imageUrl: mergedMeta.mainImageUrl || "",
+    imageFingerprint: String(payload.imageFingerprint || "").trim(),
+    sellerProductId: sellerProductIdInput || null,
+    status: String(payload.status || defaultStatus),
+    meta: mergedMeta,
+  });
+
+  return (
+    (await getUploadedProductBySourceUrl(userId, sourceUrl)) ||
+    (sellerProductIdInput
+      ? await getUploadedProductBySellerProductId(userId, sellerProductIdInput)
+      : null)
+  );
+}
+
+app.get("/api/catalog", authRequired, async (req, res) => {
+  try {
+    const limit = Math.max(1, Math.min(500, Number(req.query?.limit || 100) || 100));
+    const offset = Math.max(0, Number(req.query?.offset || 0) || 0);
+    const q = String(req.query?.q || "").trim();
+    const status = String(req.query?.status || "").trim();
+
+    const listed = await listUploadedProducts({
+      userId: req.user.id,
+      q,
+      status,
+      limit,
+      offset,
+    });
+    const products = (listed.items || []).map(normalizeCatalogProduct);
+    return res.json({
+      ok: true,
+      products,
+      total: Number(listed.total || products.length),
+      limit: listed.limit ?? limit,
+      offset: listed.offset ?? offset,
+    });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+app.post("/api/catalog/import", authRequired, async (req, res) => {
+  try {
+    const b = req.body || {};
+    const sellerProductId = String(b.sellerProductId || "").trim();
+    if (!sellerProductId) {
+      return res.status(400).json({ ok: false, error: "sellerProductId required" });
+    }
+
+    const live = await fetchSellerStatusLive({
+      sellerProductId,
+      settings: req.user.settings || {},
+      includeHistory: true,
+    });
+
+    const sourceUrl = String(b.sourceUrl || "").trim() || `coupang://seller-product/${sellerProductId}`;
+    const product = await upsertCatalogProductFromPayload({
+      userId: req.user.id,
+      payload: {
+        sourceUrl,
+        sellerProductId,
+        confirmedTitle: String(b.confirmedTitle || live.title || "").trim(),
+        mainImageUrl: String(b.mainImageUrl || live.mainImageUrl || "").trim(),
+        detailImages: Array.isArray(b.detailImages) ? b.detailImages : [],
+        status: inferCatalogStatus("confirmed", live, "confirmed"),
+      },
+      defaultStatus: "confirmed",
+    });
+    if (!product) return res.status(500).json({ ok: false, error: "catalog_import_failed" });
+
+    const currentMeta = product.meta && typeof product.meta === "object" ? { ...product.meta } : {};
+    if (live?.ok) {
+      currentMeta.followUp = live;
+      currentMeta.lastSyncedAt = new Date().toISOString();
+      if (live.detailEmpty) {
+        currentMeta.validation = {
+          ok: false,
+          checkedAt: new Date().toISOString(),
+          errors: ["detail_empty"],
+        };
+      }
+    }
+
+    const saved = await updateUploadedProductById({
+      userId: req.user.id,
+      id: product.id,
+      patch: {
+        status: inferCatalogStatus(product.status, live, "confirmed"),
+        metaReplace: currentMeta,
+      },
+    });
+    const normalized = normalizeCatalogProduct(saved || product);
+    await appendCatalogEvent({
+      userId: req.user.id,
+      catalogId: normalized.id,
+      type: "CATALOG_IMPORT",
+      severity: live?.ok ? "info" : "warn",
+      message: live?.ok ? "쿠팡 상품을 카탈로그로 가져왔습니다." : "카탈로그로 가져왔지만 상태 조회는 실패했습니다.",
+      data: { sellerProductId, live },
+    });
+    return res.json({ ok: true, product: normalized, status: live });
+  } catch (e) {
+    return res.status(400).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+app.post("/api/catalog/confirm", authRequired, async (req, res) => {
+  try {
+    const b = req.body || {};
+    const sourceUrl = String(b.sourceUrl || b.url || "").trim();
+    if (!sourceUrl) return res.status(400).json({ ok: false, error: "missing url" });
+
+    const row = await upsertCatalogProductFromPayload({
+      userId: req.user.id,
+      payload: {
+        sourceUrl,
+        confirmedTitle: String(b.confirmedTitle || b.title || "").trim(),
+        mainImageUrl: String(b.mainImageUrl || "").trim(),
+        detailImages: Array.isArray(b.detailImages) ? b.detailImages : [],
+        presetId: b.presetId,
+        categoryOverride: b.categoryOverride,
+        status: "confirmed",
+      },
+      defaultStatus: "confirmed",
+    });
+    if (!row) return res.status(500).json({ ok: false, error: "confirm_failed" });
+
+    await appendCatalogEvent({
+      userId: req.user.id,
+      catalogId: row.id,
+      type: "CATALOG_CONFIRMED",
+      severity: "info",
+      message: "미리보기 확정이 저장되었습니다.",
+      data: {
+        sourceUrl,
+        confirmedTitle: String(b.confirmedTitle || b.title || "").trim(),
+      },
+    });
+
+    return res.json({ ok: true, product: normalizeCatalogProduct(row) });
+  } catch (e) {
+    return res.status(400).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+app.get("/api/catalog/:id/events", authRequired, async (req, res) => {
+  try {
+    const id = String(req.params?.id || "").trim();
+    const row = await getUploadedProductById(req.user.id, id);
+    if (!row) return res.status(404).json({ ok: false, error: "not_found" });
+    const limit = Math.max(1, Math.min(500, Number(req.query?.limit || 200) || 200));
+    return res.json({ ok: true, events: getCatalogEventsFromMeta(row.meta, limit) });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+app.get("/api/catalog/:id", authRequired, async (req, res) => {
+  try {
+    const id = String(req.params?.id || "").trim();
+    const row = await getUploadedProductById(req.user.id, id);
+    if (!row) return res.status(404).json({ ok: false, error: "not_found" });
+    return res.json({ ok: true, product: normalizeCatalogProduct(row) });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+app.post("/api/catalog/:id", authRequired, async (req, res) => {
+  try {
+    const id = String(req.params?.id || "").trim();
+    const current = await getUploadedProductById(req.user.id, id);
+    if (!current) return res.status(404).json({ ok: false, error: "not_found" });
+
+    const b = req.body || {};
+    const nextMeta = current.meta && typeof current.meta === "object" ? { ...current.meta } : {};
+
+    if (b.confirmedTitle != null) {
+      nextMeta.confirmedTitle = String(b.confirmedTitle || "").trim();
+    }
+    if (b.mainImageUrl != null) {
+      nextMeta.mainImageUrl = String(b.mainImageUrl || "").trim();
+    }
+    if (Array.isArray(b.detailImages)) {
+      nextMeta.detailImages = normalizeStringList(b.detailImages, 200);
+    }
+    if (Object.prototype.hasOwnProperty.call(b, "presetId")) {
+      const preset = String(b.presetId || "").trim();
+      nextMeta.presetId = preset || null;
+    }
+    if (Object.prototype.hasOwnProperty.call(b, "categoryOverride")) {
+      nextMeta.categoryOverride = toPositiveIntOrNull(b.categoryOverride);
+    }
+    if (b.followUp && typeof b.followUp === "object") {
+      nextMeta.followUp = b.followUp;
+    }
+    if (b.validation && typeof b.validation === "object") {
+      nextMeta.validation = b.validation;
+    }
+
+    const updated = await updateUploadedProductById({
+      userId: req.user.id,
+      id,
+      patch: {
+        sourceUrl:
+          b.sourceUrl != null
+            ? String(b.sourceUrl || "").trim()
+            : current.sourceUrl,
+        title: pickFirstNonEmpty(nextMeta.confirmedTitle, current.title),
+        imageUrl: pickFirstNonEmpty(nextMeta.mainImageUrl, current.imageUrl),
+        sellerProductId:
+          b.sellerProductId != null
+            ? String(b.sellerProductId || "").trim() || null
+            : current.sellerProductId,
+        status:
+          b.status != null
+            ? String(b.status || "").trim() || current.status
+            : current.status,
+        metaReplace: nextMeta,
+      },
+    });
+    if (!updated) return res.status(404).json({ ok: false, error: "not_found" });
+
+    await appendCatalogEvent({
+      userId: req.user.id,
+      catalogId: updated.id,
+      type: "CATALOG_UPDATED",
+      severity: "info",
+      message: "상품 편집 내용을 저장했습니다.",
+      data: {
+        hasTitle: Boolean(nextMeta.confirmedTitle),
+        detailImages: Array.isArray(nextMeta.detailImages) ? nextMeta.detailImages.length : 0,
+      },
+    });
+
+    return res.json({ ok: true, product: normalizeCatalogProduct(updated) });
+  } catch (e) {
+    return res.status(400).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+app.post("/api/catalog/:id/sync", authRequired, async (req, res) => {
+  try {
+    const id = String(req.params?.id || "").trim();
+    const row = await getUploadedProductById(req.user.id, id);
+    if (!row) return res.status(404).json({ ok: false, error: "not_found" });
+
+    const spid = String(row.sellerProductId || "").trim();
+    if (!spid) return res.status(400).json({ ok: false, error: "sellerProductId missing" });
+
+    const live = await fetchSellerStatusLive({
+      sellerProductId: spid,
+      settings: req.user.settings || {},
+      includeHistory: true,
+    });
+
+    const nextMeta = row.meta && typeof row.meta === "object" ? { ...row.meta } : {};
+    nextMeta.lastSyncedAt = new Date().toISOString();
+    if (live?.ok) {
+      nextMeta.followUp = live;
+      nextMeta.mainImageUrl = pickFirstNonEmpty(nextMeta.mainImageUrl, live.mainImageUrl, row.imageUrl);
+      nextMeta.confirmedTitle = pickFirstNonEmpty(nextMeta.confirmedTitle, live.title, row.title);
+      nextMeta.validation = {
+        ok: !live.detailEmpty,
+        checkedAt: new Date().toISOString(),
+        errors: live.detailEmpty ? ["detail_empty"] : [],
+      };
+    }
+
+    const updated = await updateUploadedProductById({
+      userId: req.user.id,
+      id: row.id,
+      patch: {
+        status: inferCatalogStatus(row.status, live, "confirmed"),
+        title: pickFirstNonEmpty(nextMeta.confirmedTitle, row.title),
+        imageUrl: pickFirstNonEmpty(nextMeta.mainImageUrl, row.imageUrl),
+        metaReplace: nextMeta,
+      },
+    });
+
+    await appendCatalogEvent({
+      userId: req.user.id,
+      catalogId: row.id,
+      type: "STATUS_SYNC",
+      severity: live?.ok ? "info" : "warn",
+      message: live?.ok
+        ? `상태 동기화 완료: ${live.statusName || "-"}`
+        : `상태 동기화 실패: ${live?.error || "unknown"}`,
+      data: { sellerProductId: spid, live },
+    });
+
+    return res.json({
+      ok: true,
+      status: live,
+      product: normalizeCatalogProduct(updated || row),
+    });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+app.post("/api/catalog/:id/deploy", authRequired, async (req, res) => {
+  try {
+    const id = String(req.params?.id || "").trim();
+    const row = await getUploadedProductById(req.user.id, id);
+    if (!row) return res.status(404).json({ ok: false, error: "not_found" });
+
+    const sourceUrl = String(row.sourceUrl || "").trim();
+    if (!sourceUrl) {
+      return res.status(400).json({ ok: false, error: "sourceUrl missing" });
+    }
+
+    const jobId = crypto.randomUUID();
+    const job = {
+      id: jobId,
+      kind: "catalog_deploy",
+      catalogId: String(row.id),
+      status: "running",
+      createdAt: new Date().toISOString(),
+      result: null,
+      errorCode: null,
+      errorMessage: null,
+    };
+    legacyJobs.set(jobId, job);
+    res.json({ ok: true, job });
+
+    setTimeout(async () => {
+      try {
+        const latest = await getUploadedProductById(req.user.id, row.id);
+        if (!latest) throw new Error("not_found");
+        const meta = latest.meta && typeof latest.meta === "object" ? { ...latest.meta } : {};
+        const overrides = {
+          titleOverride: String(meta.confirmedTitle || "").trim() || undefined,
+          imagesOverride: Array.isArray(meta.detailImages)
+            ? normalizeStringList(meta.detailImages, 200)
+            : undefined,
+          categoryOverrideCode: toPositiveIntOrNull(meta.categoryOverride),
+        };
+
+        const outcome = await executeUploadForUrl({
+          url: sourceUrl,
+          user: req.user,
+          force: true,
+          overrides,
+        });
+
+        const uploadResult = outcome?.result || buildSkippedResult(outcome);
+        const skipReason = normalizeSkipReason(outcome);
+        const skippedAsDuplicate =
+          Boolean(outcome?.skipped) &&
+          (skipReason === "duplicate_url" ||
+            skipReason === "duplicate_title" ||
+            skipReason === "duplicate_fingerprint");
+        const deploySuccess = Boolean(outcome?.ok) || skippedAsDuplicate;
+        const sellerProductId = resolveOutcomeSellerProductId(outcome);
+        let live = null;
+        if (sellerProductId) {
+          live = await fetchSellerStatusLive({
+            sellerProductId,
+            settings: req.user.settings || {},
+            includeHistory: true,
+          });
+        }
+
+        const validation =
+          live && live.ok
+            ? {
+                ok: !live.detailEmpty,
+                checkedAt: new Date().toISOString(),
+                errors: live.detailEmpty ? ["detail_empty"] : [],
+              }
+            : meta.validation && typeof meta.validation === "object"
+              ? meta.validation
+              : {};
+
+        const nextMeta = {
+          ...meta,
+          followUp: live && live.ok ? live : uploadResult?.followUp || meta.followUp || {},
+          validation,
+          deployedAt: new Date().toISOString(),
+          lastDeployResult: {
+            ok: Boolean(outcome?.ok),
+            skipped: Boolean(outcome?.skipped),
+            skipReason,
+            deploySuccess,
+            error: outcome?.error || null,
+            at: new Date().toISOString(),
+          },
+        };
+
+        const updated = await updateUploadedProductById({
+          userId: req.user.id,
+          id: latest.id,
+          patch: {
+            title: pickFirstNonEmpty(uploadResult?.draft?.title, nextMeta.confirmedTitle, latest.title),
+            imageUrl: pickFirstNonEmpty(uploadResult?.draft?.imageUrl, nextMeta.mainImageUrl, latest.imageUrl),
+            imageFingerprint: pickFirstNonEmpty(
+              outcome?.preview?.imageFingerprint,
+              latest.imageFingerprint,
+            ),
+            sellerProductId: sellerProductId || latest.sellerProductId || null,
+            status: !deploySuccess
+              ? "deploy_failed"
+              : inferCatalogStatus(latest.status, live, "confirmed"),
+            metaReplace: nextMeta,
+          },
+        });
+
+        await appendCatalogEvent({
+          userId: req.user.id,
+          catalogId: latest.id,
+          type: deploySuccess ? "DEPLOY_SUCCESS" : "DEPLOY_FAILED",
+          severity: deploySuccess ? "info" : "error",
+          message: deploySuccess
+            ? `업로드 완료${sellerProductId ? ` (SPID ${sellerProductId})` : ""}`
+            : `업로드 실패: ${outcome?.error || skipReason || "upload_failed"}`,
+          data: {
+            sellerProductId,
+            skipReason,
+            live,
+          },
+        });
+
+        const finished = {
+          ...job,
+          status: deploySuccess ? "success" : "failed",
+          errorCode: deploySuccess ? null : String(outcome?.error || skipReason || "upload_failed"),
+          errorMessage: deploySuccess ? null : "업로드에 실패했습니다.",
+          result: {
+            result: uploadResult,
+            outcome,
+            product: normalizeCatalogProduct(updated || latest),
+          },
+        };
+        legacyJobs.set(jobId, finished);
+      } catch (e) {
+        legacyJobs.set(jobId, {
+          ...job,
+          status: "failed",
+          errorCode: "catalog_deploy_exception",
+          errorMessage: String(e?.message || e),
+          result: {
+            result: {
+              ok: false,
+              error: "catalog_deploy_exception",
+              detail: String(e?.message || e),
+            },
+          },
+        });
+      }
+    }, 0);
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+app.get("/api/products/status/:sellerProductId", authRequired, async (req, res) => {
+  try {
+    const sellerProductId = String(req.params?.sellerProductId || "").trim();
+    if (!sellerProductId) {
+      return res.status(400).json({ ok: false, error: "sellerProductId required" });
+    }
+    const status = await fetchSellerStatusLive({
+      sellerProductId,
+      settings: req.user.settings || {},
+      includeHistory: true,
+    });
+
+    const linked = await getUploadedProductBySellerProductId(req.user.id, sellerProductId);
+    if (linked && status?.ok) {
+      const nextMeta = linked.meta && typeof linked.meta === "object" ? { ...linked.meta } : {};
+      nextMeta.followUp = status;
+      nextMeta.lastSyncedAt = new Date().toISOString();
+      nextMeta.validation = {
+        ok: !status.detailEmpty,
+        checkedAt: new Date().toISOString(),
+        errors: status.detailEmpty ? ["detail_empty"] : [],
+      };
+      await updateUploadedProductById({
+        userId: req.user.id,
+        id: linked.id,
+        patch: {
+          status: inferCatalogStatus(linked.status, status, "confirmed"),
+          title: pickFirstNonEmpty(nextMeta.confirmedTitle, status.title, linked.title),
+          imageUrl: pickFirstNonEmpty(nextMeta.mainImageUrl, status.mainImageUrl, linked.imageUrl),
+          metaReplace: nextMeta,
+        },
+      });
+    }
+
+    return res.json({
+      ok: Boolean(status?.ok),
+      status,
+      sellerProductId,
+    });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+app.post("/api/products/status/refresh", authRequired, async (req, res) => {
+  try {
+    const sellerProductIds = normalizeStringList(req.body?.sellerProductIds, 100);
+    let targets = sellerProductIds;
+    if (targets.length === 0) {
+      const listed = await listUploadedProducts({
+        userId: req.user.id,
+        q: "",
+        status: "",
+        limit: 200,
+        offset: 0,
+      });
+      targets = normalizeStringList(
+        (listed.items || []).map((row) => row?.sellerProductId),
+        100,
+      );
+    }
+
+    const results = [];
+    for (const sellerProductId of targets) {
+      const live = await fetchSellerStatusLive({
+        sellerProductId,
+        settings: req.user.settings || {},
+        includeHistory: true,
+      });
+      const linked = await getUploadedProductBySellerProductId(req.user.id, sellerProductId);
+      if (linked && live?.ok) {
+        const nextMeta = linked.meta && typeof linked.meta === "object" ? { ...linked.meta } : {};
+        nextMeta.followUp = live;
+        nextMeta.lastSyncedAt = new Date().toISOString();
+        nextMeta.validation = {
+          ok: !live.detailEmpty,
+          checkedAt: new Date().toISOString(),
+          errors: live.detailEmpty ? ["detail_empty"] : [],
+        };
+        await updateUploadedProductById({
+          userId: req.user.id,
+          id: linked.id,
+          patch: {
+            status: inferCatalogStatus(linked.status, live, "confirmed"),
+            title: pickFirstNonEmpty(nextMeta.confirmedTitle, live.title, linked.title),
+            imageUrl: pickFirstNonEmpty(nextMeta.mainImageUrl, live.mainImageUrl, linked.imageUrl),
+            metaReplace: nextMeta,
+          },
+        });
+      }
+      results.push({
+        sellerProductId,
+        ok: Boolean(live?.ok),
+        statusName: live?.statusName || null,
+        approved: Boolean(live?.approved),
+        productId: live?.productId || null,
+        error: live?.ok ? null : live?.error || "status_fetch_failed",
+      });
+    }
+
+    return res.json({
+      ok: true,
+      total: targets.length,
+      success: results.filter((x) => x.ok).length,
+      failed: results.filter((x) => !x.ok).length,
+      results,
+    });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
 });
 
 function parseForceFlag(value) {

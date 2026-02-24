@@ -10,8 +10,11 @@ import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 class ProductDetailScreen extends StatefulWidget {
-  const ProductDetailScreen(
-      {super.key, required this.api, required this.productId});
+  const ProductDetailScreen({
+    super.key,
+    required this.api,
+    required this.productId,
+  });
 
   final ApiClient api;
   final String productId;
@@ -88,24 +91,27 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
     try {
       final cat = int.tryParse(_category.text.trim());
 
-      final json =
-          await widget.api.postJson('/api/catalog/${widget.productId}', {
-        'confirmedTitle': _title.text.trim(),
-        'presetId':
-            (_presetId ?? '').trim().isEmpty ? null : (_presetId ?? '').trim(),
-        'categoryOverride': cat,
-        'detailImages': _detailImages,
-        if (_detailImages.isNotEmpty)
-          'mainImageUrl': _detailImages.first, // simple default
-      });
+      final json = await widget.api.postJson(
+        '/api/catalog/${widget.productId}',
+        {
+          'confirmedTitle': _title.text.trim(),
+          'presetId': (_presetId ?? '').trim().isEmpty
+              ? null
+              : (_presetId ?? '').trim(),
+          'categoryOverride': cat,
+          'detailImages': _detailImages,
+          if (_detailImages.isNotEmpty)
+            'mainImageUrl': _detailImages.first, // simple default
+        },
+      );
 
       final p = (json['product'] as Map?)?.cast<String, dynamic>();
       setState(() => _product = p);
 
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('저장했어요.')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('저장했어요.')));
       }
     } catch (e) {
       setState(() => _error = e.toString());
@@ -138,19 +144,47 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
     });
 
     try {
-      final json = await widget.api
-          .postJson('/api/catalog/${widget.productId}/deploy', {});
+      final json = await widget.api.postJson(
+        '/api/catalog/${widget.productId}/deploy',
+        {},
+      );
       final job = (json['job'] as Map?)?.cast<String, dynamic>();
       final jobId = (job?['id'] ?? '').toString();
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-              content:
-                  Text(jobId.isEmpty ? '배포를 시작했어요.' : '배포 시작: job $jobId')),
+            content: Text(jobId.isEmpty ? '배포를 시작했어요.' : '배포 시작: job $jobId'),
+          ),
         );
       }
 
+      await _refresh();
+    } catch (e) {
+      setState(() => _error = e.toString());
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _syncStatus() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+
+    try {
+      final json = await widget.api.postJson(
+        '/api/catalog/${widget.productId}/sync',
+        {},
+      );
+      final status = (json['status'] as Map?)?.cast<String, dynamic>();
+      final statusName = (status?['statusName'] ?? '-').toString();
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('동기화 완료: $statusName')));
+      }
       await _refresh();
     } catch (e) {
       setState(() => _error = e.toString());
@@ -192,21 +226,30 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
               children: [
                 SectionHeader(
                   '메타',
-                  trailing: TextButton(
-                    onPressed: _loading
-                        ? null
-                        : () {
-                            Navigator.of(context).push(
-                              MaterialPageRoute(
-                                builder: (_) => CatalogEventsScreen(
-                                  api: widget.api,
-                                  catalogId: widget.productId,
-                                  title: '이벤트',
-                                ),
-                              ),
-                            );
-                          },
-                    child: const Text('이벤트'),
+                  trailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      TextButton(
+                        onPressed: _loading ? null : _syncStatus,
+                        child: const Text('동기화'),
+                      ),
+                      TextButton(
+                        onPressed: _loading
+                            ? null
+                            : () {
+                                Navigator.of(context).push(
+                                  MaterialPageRoute(
+                                    builder: (_) => CatalogEventsScreen(
+                                      api: widget.api,
+                                      catalogId: widget.productId,
+                                      title: '이벤트',
+                                    ),
+                                  ),
+                                );
+                              },
+                        child: const Text('이벤트'),
+                      ),
+                    ],
                   ),
                 ),
                 const SizedBox(height: 10),
@@ -216,15 +259,20 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                   CopyableSingleLineRow(k: '원본 URL', value: sourceUrl),
                 if (sellerProductId.isNotEmpty)
                   CopyableSingleLineRow(
-                      k: 'SellerProductId', value: sellerProductId),
+                    k: 'SellerProductId',
+                    value: sellerProductId,
+                  ),
                 if (sellerProductId.isNotEmpty)
                   TextButton(
                     onPressed: () async {
                       final uri = Uri.tryParse(
-                          'https://www.coupang.com/vp/products/$sellerProductId?failRedirectApp=true');
+                        'https://www.coupang.com/vp/products/$sellerProductId?failRedirectApp=true',
+                      );
                       if (uri != null) {
-                        await launchUrl(uri,
-                            mode: LaunchMode.externalApplication);
+                        await launchUrl(
+                          uri,
+                          mode: LaunchMode.externalApplication,
+                        );
                       }
                     },
                     child: const Text('쿠팡 상품 열기'),
@@ -324,10 +372,9 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                   Text(
                     '상세 이미지가 비어있어요. (배포 후 검증에서 실패할 수 있어요)',
                     style: TextStyle(
-                      color: Theme.of(context)
-                          .colorScheme
-                          .onSurface
-                          .withValues(alpha: 0.7),
+                      color: Theme.of(
+                        context,
+                      ).colorScheme.onSurface.withValues(alpha: 0.7),
                     ),
                   ),
               ],
@@ -346,10 +393,9 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                     style: TextStyle(
                       fontFamily: 'monospace',
                       fontSize: 12,
-                      color: Theme.of(context)
-                          .colorScheme
-                          .onSurface
-                          .withValues(alpha: 0.8),
+                      color: Theme.of(
+                        context,
+                      ).colorScheme.onSurface.withValues(alpha: 0.8),
                     ),
                   ),
                 ],

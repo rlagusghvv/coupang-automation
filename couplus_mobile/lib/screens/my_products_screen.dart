@@ -41,15 +41,19 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
     });
 
     try {
-      final json = await widget.api.getJson('/api/catalog', query: {
-        'limit': '200',
-        if (_status.trim().isNotEmpty) 'status': _status.trim(),
-        if (_q.text.trim().isNotEmpty) 'q': _q.text.trim(),
-      });
+      final json = await widget.api.getJson(
+        '/api/catalog',
+        query: {
+          'limit': '200',
+          if (_status.trim().isNotEmpty) 'status': _status.trim(),
+          if (_q.text.trim().isNotEmpty) 'q': _q.text.trim(),
+        },
+      );
       final list = (json['products'] as List?) ?? const [];
       setState(() {
-        _products =
-            list.map((e) => (e as Map).cast<String, dynamic>()).toList();
+        _products = list
+            .map((e) => (e as Map).cast<String, dynamic>())
+            .toList();
       });
     } catch (e) {
       setState(() => _error = e.toString());
@@ -98,6 +102,67 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
     }
   }
 
+  Future<void> _importBySellerProductId() async {
+    final input = TextEditingController();
+    final value = await showDialog<String>(
+      context: context,
+      builder: (ctx) {
+        return AlertDialog(
+          title: const Text('기존 쿠팡 상품 가져오기'),
+          content: TextField(
+            controller: input,
+            autofocus: true,
+            decoration: const InputDecoration(
+              labelText: 'SellerProductId',
+              hintText: '예) 1234567890',
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: const Text('취소'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(ctx).pop(input.text.trim()),
+              child: const Text('가져오기'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (!mounted) return;
+    final sellerProductId = (value ?? '').trim();
+    if (sellerProductId.isEmpty) return;
+
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+
+    try {
+      final json = await widget.api.postJson('/api/catalog/import', {
+        'sellerProductId': sellerProductId,
+      });
+      final p = (json['product'] as Map?)?.cast<String, dynamic>();
+      final savedId = (p?['id'] ?? '').toString();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              savedId.isEmpty ? '가져오기를 완료했어요.' : '가져오기 완료: ID $savedId',
+            ),
+          ),
+        );
+      }
+      await _refresh();
+    } catch (e) {
+      setState(() => _error = e.toString());
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
   Widget _statusChip(BuildContext context, String value, String label) {
     final active = _status == value;
     final c = active
@@ -121,6 +186,11 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
       title: _selectMode ? '내 상품(선택 ${_selected.length})' : '내 상품',
       onRefresh: _refresh,
       actions: [
+        IconButton(
+          onPressed: _loading ? null : _importBySellerProductId,
+          tooltip: '기존 상품 가져오기',
+          icon: const Icon(Icons.playlist_add),
+        ),
         IconButton(
           onPressed: _loading
               ? null
@@ -161,6 +231,8 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
                 const SizedBox(width: 8),
                 _statusChip(context, 'confirmed', 'confirmed'),
                 const SizedBox(width: 8),
+                _statusChip(context, 'uploaded', 'uploaded'),
+                const SizedBox(width: 8),
                 _statusChip(context, 'deployed', 'deployed'),
                 const SizedBox(width: 8),
                 _statusChip(context, 'deployed_invalid', 'invalid'),
@@ -183,7 +255,9 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
                   child: const Text('동기화'),
                 ),
                 TextButton(
-                  onPressed: _loading || _selected.isEmpty ? null : _bulkRedeploy,
+                  onPressed: _loading || _selected.isEmpty
+                      ? null
+                      : _bulkRedeploy,
                   child: const Text('재배포'),
                 ),
               ],
@@ -197,12 +271,11 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
           if (_products.isEmpty && !_loading)
             AppCard(
               child: Text(
-                '아직 확정된 상품이 없어요. 작업 탭에서 미리보기 → 업로드 실행을 하면 자동으로 저장됩니다.',
+                '아직 확정된 상품이 없어요. 작업 탭에서 미리보기 → 업로드 실행 후, 우상단 + 버튼으로 기존 쿠팡 상품도 가져올 수 있어요.',
                 style: TextStyle(
-                  color: Theme.of(context)
-                      .colorScheme
-                      .onSurface
-                      .withValues(alpha: 0.7),
+                  color: Theme.of(
+                    context,
+                  ).colorScheme.onSurface.withValues(alpha: 0.7),
                 ),
               ),
             )
@@ -213,123 +286,119 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
               itemCount: _products.length,
               separatorBuilder: (_, __) => const SizedBox(height: 10),
               itemBuilder: (ctx, i) {
-                  final p = _products[i];
-                  final id = (p['id'] ?? '').toString();
-                  final title = (p['confirmedTitle'] ?? '').toString();
-                  final status = (p['status'] ?? '').toString();
-                  final img = (p['mainImageUrl'] ?? '').toString();
-                  final sellerProductId =
-                      (p['sellerProductId'] ?? '').toString();
-                  final selected = _selected.contains(id);
+                final p = _products[i];
+                final id = (p['id'] ?? '').toString();
+                final title = (p['confirmedTitle'] ?? '').toString();
+                final status = (p['status'] ?? '').toString();
+                final img = (p['mainImageUrl'] ?? '').toString();
+                final sellerProductId = (p['sellerProductId'] ?? '').toString();
+                final selected = _selected.contains(id);
 
-                  return AppCard(
-                    onTap: id.isEmpty
-                        ? null
-                        : () async {
-                            if (_selectMode) {
-                              setState(() {
-                                if (selected) {
-                                  _selected.remove(id);
-                                } else {
-                                  _selected.add(id);
-                                }
-                              });
-                              return;
-                            }
+                return AppCard(
+                  onTap: id.isEmpty
+                      ? null
+                      : () async {
+                          if (_selectMode) {
+                            setState(() {
+                              if (selected) {
+                                _selected.remove(id);
+                              } else {
+                                _selected.add(id);
+                              }
+                            });
+                            return;
+                          }
 
-                            await Navigator.of(context).push(
-                              MaterialPageRoute(
-                                builder: (_) => ProductDetailScreen(
-                                  api: widget.api,
-                                  productId: id,
-                                ),
+                          await Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (_) => ProductDetailScreen(
+                                api: widget.api,
+                                productId: id,
                               ),
-                            );
-                            if (mounted) await _refresh();
-                          },
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        if (_selectMode)
-                          Padding(
-                            padding: const EdgeInsets.only(right: 10, top: 4),
-                            child: Checkbox(
-                              value: selected,
-                              onChanged: id.isEmpty
-                                  ? null
-                                  : (v) {
-                                      setState(() {
-                                        if (v == true) {
-                                          _selected.add(id);
-                                        } else {
-                                          _selected.remove(id);
-                                        }
-                                      });
-                                    },
                             ),
+                          );
+                          if (mounted) await _refresh();
+                        },
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      if (_selectMode)
+                        Padding(
+                          padding: const EdgeInsets.only(right: 10, top: 4),
+                          child: Checkbox(
+                            value: selected,
+                            onChanged: id.isEmpty
+                                ? null
+                                : (v) {
+                                    setState(() {
+                                      if (v == true) {
+                                        _selected.add(id);
+                                      } else {
+                                        _selected.remove(id);
+                                      }
+                                    });
+                                  },
                           ),
-                        ClipRRect(
-                          borderRadius: BorderRadius.circular(10),
-                          child: img.isEmpty
-                              ? Container(
-                                  width: 66,
-                                  height: 66,
-                                  color: Theme.of(context)
-                                      .colorScheme
-                                      .surfaceContainerHighest,
-                                  child: Icon(
-                                    Icons.image_outlined,
-                                    color: Theme.of(context)
-                                        .colorScheme
-                                        .onSurface
-                                        .withValues(alpha: 0.5),
-                                  ),
-                                )
-                              : Image.network(
-                                  widget.api.proxyImageUrl(img),
-                                  width: 66,
-                                  height: 66,
-                                  fit: BoxFit.cover,
-                                ),
                         ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                title.isEmpty ? '(제목 없음)' : title,
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.w900,
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(10),
+                        child: img.isEmpty
+                            ? Container(
+                                width: 66,
+                                height: 66,
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.surfaceContainerHighest,
+                                child: Icon(
+                                  Icons.image_outlined,
+                                  color: Theme.of(context).colorScheme.onSurface
+                                      .withValues(alpha: 0.5),
                                 ),
+                              )
+                            : Image.network(
+                                widget.api.proxyImageUrl(img),
+                                width: 66,
+                                height: 66,
+                                fit: BoxFit.cover,
                               ),
-                              const SizedBox(height: 6),
-                              Wrap(
-                                spacing: 8,
-                                runSpacing: 6,
-                                children: [
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              title.isEmpty ? '(제목 없음)' : title,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w900,
+                              ),
+                            ),
+                            const SizedBox(height: 6),
+                            Wrap(
+                              spacing: 8,
+                              runSpacing: 6,
+                              children: [
+                                InfoChip(
+                                  label: status.isEmpty ? '-' : status,
+                                  color: Theme.of(context).colorScheme.primary,
+                                ),
+                                if (sellerProductId.isNotEmpty)
                                   InfoChip(
-                                    label: status.isEmpty ? '-' : status,
-                                    color:
-                                        Theme.of(context).colorScheme.primary,
+                                    label: 'SPID $sellerProductId',
+                                    color: const Color(0xFF2F9E44),
                                   ),
-                                  if (sellerProductId.isNotEmpty)
-                                    InfoChip(
-                                      label: 'SPID $sellerProductId',
-                                      color: const Color(0xFF2F9E44),
-                                    ),
-                                ],
-                              ),
-                            ],
-                          ),
+                              ],
+                            ),
+                          ],
                         ),
-                      ],
-                    ),
-                  );
-                },
-              ),
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
         ],
       ),
     );

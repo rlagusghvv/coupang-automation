@@ -430,3 +430,172 @@ export async function recordUploadedProduct({
     db.close();
   }
 }
+
+export async function listUploadedProducts({ userId, q = "", status = "", limit = 200, offset = 0 } = {}) {
+  const uid = String(userId || "global").trim() || "global";
+  const where = ["user_id = ?"];
+  const params = [uid];
+
+  const statusText = String(status || "").trim();
+  if (statusText) {
+    where.push("status = ?");
+    params.push(statusText);
+  }
+
+  const keyword = String(q || "").trim();
+  if (keyword) {
+    const like = `%${keyword}%`;
+    where.push("(title LIKE ? OR source_url LIKE ? OR seller_product_id LIKE ?)");
+    params.push(like, like, like);
+  }
+
+  const safeLimit = Math.min(Math.max(Number(limit) || 50, 1), 500);
+  const safeOffset = Math.max(Number(offset) || 0, 0);
+
+  const db = openDb();
+  try {
+    const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
+    const rows = await dbAll(
+      db,
+      `SELECT * FROM ${UPLOADED_PRODUCTS_TABLE} ${whereSql} ORDER BY id DESC LIMIT ? OFFSET ?`,
+      [...params, safeLimit, safeOffset],
+    );
+    const cntRow = await dbGet(db, `SELECT COUNT(1) AS cnt FROM ${UPLOADED_PRODUCTS_TABLE} ${whereSql}`, params);
+    return {
+      items: rows.map(normalizeRow),
+      total: Number(cntRow?.cnt || 0),
+      limit: safeLimit,
+      offset: safeOffset,
+    };
+  } finally {
+    db.close();
+  }
+}
+
+export async function getUploadedProductById(userId, id) {
+  const uid = String(userId || "global").trim() || "global";
+  const nid = Number(id);
+  if (!Number.isFinite(nid) || nid <= 0) return null;
+  const db = openDb();
+  try {
+    const row = await dbGet(
+      db,
+      `SELECT * FROM ${UPLOADED_PRODUCTS_TABLE} WHERE user_id = ? AND id = ? LIMIT 1`,
+      [uid, Math.floor(nid)],
+    );
+    return normalizeRow(row);
+  } finally {
+    db.close();
+  }
+}
+
+export async function getUploadedProductBySourceUrl(userId, sourceUrl) {
+  const uid = String(userId || "global").trim() || "global";
+  const raw = String(sourceUrl || "").trim();
+  if (!raw) return null;
+  const db = openDb();
+  try {
+    const row = await dbGet(
+      db,
+      `SELECT * FROM ${UPLOADED_PRODUCTS_TABLE} WHERE user_id = ? AND source_url = ? ORDER BY id DESC LIMIT 1`,
+      [uid, raw],
+    );
+    return normalizeRow(row);
+  } finally {
+    db.close();
+  }
+}
+
+export async function getUploadedProductBySellerProductId(userId, sellerProductId) {
+  const uid = String(userId || "global").trim() || "global";
+  const spid = String(sellerProductId || "").trim();
+  if (!spid) return null;
+  const db = openDb();
+  try {
+    const row = await dbGet(
+      db,
+      `SELECT * FROM ${UPLOADED_PRODUCTS_TABLE}
+       WHERE user_id = ? AND seller_product_id = ?
+       ORDER BY id DESC LIMIT 1`,
+      [uid, spid],
+    );
+    return normalizeRow(row);
+  } finally {
+    db.close();
+  }
+}
+
+export async function updateUploadedProductById({ userId, id, patch = {} } = {}) {
+  const uid = String(userId || "global").trim() || "global";
+  const nid = Number(id);
+  if (!Number.isFinite(nid) || nid <= 0) throw new Error("invalid id");
+
+  const db = openDb();
+  try {
+    const row = await dbGet(
+      db,
+      `SELECT * FROM ${UPLOADED_PRODUCTS_TABLE} WHERE user_id = ? AND id = ? LIMIT 1`,
+      [uid, Math.floor(nid)],
+    );
+    if (!row) return null;
+
+    const current = normalizeRow(row) || {};
+    const title = patch.title != null ? String(patch.title || "") : String(current.title || "");
+    const sourceUrl = patch.sourceUrl != null ? String(patch.sourceUrl || "") : String(current.sourceUrl || "");
+    const imageUrl = patch.imageUrl != null ? String(patch.imageUrl || "") : String(current.imageUrl || "");
+    const imageFingerprint =
+      patch.imageFingerprint != null
+        ? String(patch.imageFingerprint || "")
+        : String(current.imageFingerprint || "");
+    const sellerProductId =
+      patch.sellerProductId == null ? current.sellerProductId ?? null : String(patch.sellerProductId || "") || null;
+    const status = patch.status != null ? String(patch.status || "uploaded") : String(current.status || "uploaded");
+
+    const mergedMeta =
+      patch.metaReplace && typeof patch.metaReplace === "object"
+        ? { ...patch.metaReplace }
+        : {
+            ...(current.meta && typeof current.meta === "object" ? current.meta : {}),
+            ...(patch.metaMerge && typeof patch.metaMerge === "object" ? patch.metaMerge : {}),
+          };
+
+    await dbRun(
+      db,
+      `UPDATE ${UPLOADED_PRODUCTS_TABLE}
+       SET source_url = ?,
+           normalized_url = ?,
+           title = ?,
+           normalized_title = ?,
+           image_url = ?,
+           image_fingerprint = ?,
+           seller_product_id = ?,
+           status = ?,
+           meta_json = ?,
+           created_at = ?
+       WHERE user_id = ? AND id = ?`,
+      [
+        sourceUrl,
+        normalizeSourceUrlForDedupe(sourceUrl),
+        title,
+        normalizeTitleForDedupe(title),
+        imageUrl,
+        imageFingerprint,
+        sellerProductId,
+        status,
+        JSON.stringify(mergedMeta || {}),
+        new Date().toISOString(),
+        uid,
+        Math.floor(nid),
+      ],
+    );
+
+    const updated = await dbGet(
+      db,
+      `SELECT * FROM ${UPLOADED_PRODUCTS_TABLE} WHERE user_id = ? AND id = ? LIMIT 1`,
+      [uid, Math.floor(nid)],
+    );
+    return normalizeRow(updated);
+  } finally {
+    db.close();
+  }
+}
