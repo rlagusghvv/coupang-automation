@@ -856,6 +856,22 @@ async function fetchSellerStatusLive({ sellerProductId, settings, includeHistory
   return snapshot;
 }
 
+function isRemoteDeleted(live = null) {
+  if (!live || live.ok) return false;
+  const status = Number(live?.httpStatus || 0);
+  if (status === 404) return true;
+  const merged = [live?.error, JSON.stringify(live?.detail || {})]
+    .map((x) => String(x || '').toLowerCase())
+    .join(' ');
+  return (
+    merged.includes('not_found') ||
+    merged.includes('not found') ||
+    merged.includes('존재하지') ||
+    merged.includes('없는 상품') ||
+    merged.includes('sellerproductid')
+  );
+}
+
 async function upsertCatalogProductFromPayload({ userId, payload = {}, defaultStatus = "confirmed" }) {
   const sourceUrlInput = String(payload.sourceUrl || payload.url || "").trim();
   const sellerProductIdInput = String(payload.sellerProductId || "").trim();
@@ -938,11 +954,14 @@ app.get("/api/catalog", authRequired, async (req, res) => {
       limit,
       offset,
     });
-    const products = (listed.items || []).map(normalizeCatalogProduct);
+    let products = (listed.items || []).map(normalizeCatalogProduct);
+    if (!status) {
+      products = products.filter((p) => String(p?.status || '').trim() !== 'deleted_remote');
+    }
     return res.json({
       ok: true,
       products,
-      total: Number(listed.total || products.length),
+      total: products.length,
       limit: listed.limit ?? limit,
       offset: listed.offset ?? offset,
     });
@@ -964,6 +983,7 @@ app.post("/api/catalog/import", authRequired, async (req, res) => {
       settings: req.user.settings || {},
       includeHistory: true,
     });
+    const remoteDeleted = isRemoteDeleted(live);
 
     const sourceUrl = String(b.sourceUrl || "").trim() || `coupang://seller-product/${sellerProductId}`;
     const product = await upsertCatalogProductFromPayload({
@@ -974,7 +994,7 @@ app.post("/api/catalog/import", authRequired, async (req, res) => {
         confirmedTitle: String(b.confirmedTitle || live.title || "").trim(),
         mainImageUrl: String(b.mainImageUrl || live.mainImageUrl || "").trim(),
         detailImages: Array.isArray(b.detailImages) ? b.detailImages : [],
-        status: inferCatalogStatus("confirmed", live, "confirmed"),
+        status: remoteDeleted ? "deleted_remote" : inferCatalogStatus("confirmed", live, "confirmed"),
       },
       defaultStatus: "confirmed",
     });
@@ -997,7 +1017,7 @@ app.post("/api/catalog/import", authRequired, async (req, res) => {
       userId: req.user.id,
       id: product.id,
       patch: {
-        status: inferCatalogStatus(product.status, live, "confirmed"),
+        status: remoteDeleted ? "deleted_remote" : inferCatalogStatus(product.status, live, "confirmed"),
         metaReplace: currentMeta,
       },
     });
@@ -1167,23 +1187,37 @@ app.post("/api/catalog/:id/sync", authRequired, async (req, res) => {
     });
 
     const nextMeta = row.meta && typeof row.meta === "object" ? { ...row.meta } : {};
-    nextMeta.lastSyncedAt = new Date().toISOString();
+    const nowIso = new Date().toISOString();
+    nextMeta.lastSyncedAt = nowIso;
+    const remoteDeleted = isRemoteDeleted(live);
     if (live?.ok) {
       nextMeta.followUp = live;
       nextMeta.mainImageUrl = pickFirstNonEmpty(nextMeta.mainImageUrl, live.mainImageUrl, row.imageUrl);
       nextMeta.confirmedTitle = pickFirstNonEmpty(nextMeta.confirmedTitle, live.title, row.title);
       nextMeta.validation = {
         ok: !live.detailEmpty,
-        checkedAt: new Date().toISOString(),
+        checkedAt: nowIso,
         errors: live.detailEmpty ? ["detail_empty"] : [],
       };
+      nextMeta.remoteDeleted = false;
+    } else {
+      nextMeta.lastRemoteError = live;
+      if (remoteDeleted) {
+        nextMeta.remoteDeleted = true;
+        nextMeta.remoteDeletedAt = nowIso;
+        nextMeta.validation = {
+          ok: false,
+          checkedAt: nowIso,
+          errors: ["remote_deleted"],
+        };
+      }
     }
 
     const updated = await updateUploadedProductById({
       userId: req.user.id,
       id: row.id,
       patch: {
-        status: inferCatalogStatus(row.status, live, "confirmed"),
+        status: remoteDeleted ? "deleted_remote" : inferCatalogStatus(row.status, live, "confirmed"),
         title: pickFirstNonEmpty(nextMeta.confirmedTitle, row.title),
         imageUrl: pickFirstNonEmpty(nextMeta.mainImageUrl, row.imageUrl),
         metaReplace: nextMeta,
@@ -1194,11 +1228,13 @@ app.post("/api/catalog/:id/sync", authRequired, async (req, res) => {
       userId: req.user.id,
       catalogId: row.id,
       type: "STATUS_SYNC",
-      severity: live?.ok ? "info" : "warn",
+      severity: live?.ok ? "info" : remoteDeleted ? "warn" : "error",
       message: live?.ok
         ? `상태 동기화 완료: ${live.statusName || "-"}`
-        : `상태 동기화 실패: ${live?.error || "unknown"}`,
-      data: { sellerProductId: spid, live },
+        : remoteDeleted
+          ? "Wing에서 삭제된 상품으로 확인되어 목록에서 숨김 처리했습니다."
+          : `상태 동기화 실패: ${live?.error || "unknown"}`,
+      data: { sellerProductId: spid, live, remoteDeleted },
     });
 
     return res.json({
@@ -1379,22 +1415,38 @@ app.get("/api/products/status/:sellerProductId", authRequired, async (req, res) 
     });
 
     const linked = await getUploadedProductBySellerProductId(req.user.id, sellerProductId);
-    if (linked && status?.ok) {
+    const remoteDeleted = isRemoteDeleted(status);
+    if (linked) {
       const nextMeta = linked.meta && typeof linked.meta === "object" ? { ...linked.meta } : {};
-      nextMeta.followUp = status;
-      nextMeta.lastSyncedAt = new Date().toISOString();
-      nextMeta.validation = {
-        ok: !status.detailEmpty,
-        checkedAt: new Date().toISOString(),
-        errors: status.detailEmpty ? ["detail_empty"] : [],
-      };
+      const nowIso = new Date().toISOString();
+      nextMeta.lastSyncedAt = nowIso;
+      if (status?.ok) {
+        nextMeta.followUp = status;
+        nextMeta.validation = {
+          ok: !status.detailEmpty,
+          checkedAt: nowIso,
+          errors: status.detailEmpty ? ["detail_empty"] : [],
+        };
+        nextMeta.remoteDeleted = false;
+      } else {
+        nextMeta.lastRemoteError = status;
+        if (remoteDeleted) {
+          nextMeta.remoteDeleted = true;
+          nextMeta.remoteDeletedAt = nowIso;
+          nextMeta.validation = {
+            ok: false,
+            checkedAt: nowIso,
+            errors: ["remote_deleted"],
+          };
+        }
+      }
       await updateUploadedProductById({
         userId: req.user.id,
         id: linked.id,
         patch: {
-          status: inferCatalogStatus(linked.status, status, "confirmed"),
-          title: pickFirstNonEmpty(nextMeta.confirmedTitle, status.title, linked.title),
-          imageUrl: pickFirstNonEmpty(nextMeta.mainImageUrl, status.mainImageUrl, linked.imageUrl),
+          status: remoteDeleted ? "deleted_remote" : inferCatalogStatus(linked.status, status, "confirmed"),
+          title: pickFirstNonEmpty(nextMeta.confirmedTitle, status?.title, linked.title),
+          imageUrl: pickFirstNonEmpty(nextMeta.mainImageUrl, status?.mainImageUrl, linked.imageUrl),
           metaReplace: nextMeta,
         },
       });
@@ -1404,6 +1456,7 @@ app.get("/api/products/status/:sellerProductId", authRequired, async (req, res) 
       ok: Boolean(status?.ok),
       status,
       sellerProductId,
+      remoteDeleted,
     });
   } catch (e) {
     return res.status(500).json({ ok: false, error: String(e?.message || e) });
@@ -1436,22 +1489,38 @@ app.post("/api/products/status/refresh", authRequired, async (req, res) => {
         includeHistory: true,
       });
       const linked = await getUploadedProductBySellerProductId(req.user.id, sellerProductId);
-      if (linked && live?.ok) {
+      const remoteDeleted = isRemoteDeleted(live);
+      if (linked) {
         const nextMeta = linked.meta && typeof linked.meta === "object" ? { ...linked.meta } : {};
-        nextMeta.followUp = live;
-        nextMeta.lastSyncedAt = new Date().toISOString();
-        nextMeta.validation = {
-          ok: !live.detailEmpty,
-          checkedAt: new Date().toISOString(),
-          errors: live.detailEmpty ? ["detail_empty"] : [],
-        };
+        const nowIso = new Date().toISOString();
+        nextMeta.lastSyncedAt = nowIso;
+        if (live?.ok) {
+          nextMeta.followUp = live;
+          nextMeta.validation = {
+            ok: !live.detailEmpty,
+            checkedAt: nowIso,
+            errors: live.detailEmpty ? ["detail_empty"] : [],
+          };
+          nextMeta.remoteDeleted = false;
+        } else {
+          nextMeta.lastRemoteError = live;
+          if (remoteDeleted) {
+            nextMeta.remoteDeleted = true;
+            nextMeta.remoteDeletedAt = nowIso;
+            nextMeta.validation = {
+              ok: false,
+              checkedAt: nowIso,
+              errors: ["remote_deleted"],
+            };
+          }
+        }
         await updateUploadedProductById({
           userId: req.user.id,
           id: linked.id,
           patch: {
-            status: inferCatalogStatus(linked.status, live, "confirmed"),
-            title: pickFirstNonEmpty(nextMeta.confirmedTitle, live.title, linked.title),
-            imageUrl: pickFirstNonEmpty(nextMeta.mainImageUrl, live.mainImageUrl, linked.imageUrl),
+            status: remoteDeleted ? "deleted_remote" : inferCatalogStatus(linked.status, live, "confirmed"),
+            title: pickFirstNonEmpty(nextMeta.confirmedTitle, live?.title, linked.title),
+            imageUrl: pickFirstNonEmpty(nextMeta.mainImageUrl, live?.mainImageUrl, linked.imageUrl),
             metaReplace: nextMeta,
           },
         });
@@ -1462,6 +1531,7 @@ app.post("/api/products/status/refresh", authRequired, async (req, res) => {
         statusName: live?.statusName || null,
         approved: Boolean(live?.approved),
         productId: live?.productId || null,
+        remoteDeleted,
         error: live?.ok ? null : live?.error || "status_fetch_failed",
       });
     }
