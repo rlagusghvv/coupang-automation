@@ -9,6 +9,7 @@ const DB_PATH = path.join(DATA_DIR, "app.db");
 const UPLOADED_PRODUCTS_TABLE = "uploaded_products";
 const RECOMMENDATIONS_TABLE = "recommendations";
 const RECOMMENDATIONS_STATE_TABLE = "recommendations_state";
+const RECOMMENDATIONS_SEEN_TABLE = "recommendations_seen";
 
 function ensureDir() {
   if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -191,6 +192,24 @@ export async function initDb() {
     "next_keyword_idx INTEGER NOT NULL DEFAULT 0",
   );
   await ensureColumn(db, RECOMMENDATIONS_STATE_TABLE, "updated_at", "updated_at TEXT NOT NULL DEFAULT ''");
+
+  await dbRun(
+    db,
+    `CREATE TABLE IF NOT EXISTS ${RECOMMENDATIONS_SEEN_TABLE} (
+      user_id TEXT NOT NULL,
+      source_url TEXT NOT NULL,
+      last_seen_at TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      PRIMARY KEY (user_id, source_url)
+    )`,
+  );
+  await ensureColumn(db, RECOMMENDATIONS_SEEN_TABLE, "last_seen_at", "last_seen_at TEXT NOT NULL DEFAULT ''");
+  await ensureColumn(db, RECOMMENDATIONS_SEEN_TABLE, "created_at", "created_at TEXT NOT NULL DEFAULT ''");
+  await dbRun(
+    db,
+    `CREATE INDEX IF NOT EXISTS idx_recommendations_seen_user_last_seen
+      ON ${RECOMMENDATIONS_SEEN_TABLE} (user_id, last_seen_at DESC)`,
+  );
 
   db.close();
 }

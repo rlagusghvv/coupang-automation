@@ -36,6 +36,7 @@ import { getSellerProductHistories } from "./src/coupang/api/getSellerProductHis
 import {
   listRecommendations,
   fillRecommendationsForUser,
+  refreshRecommendationsForUser,
 } from "./src/server/recommendations.js";
 
 const app = express();
@@ -2156,6 +2157,37 @@ app.post("/api/recommendations/fill", authRequired, async (req, res) => {
     return res.json({
       ok: true,
       fill,
+      items,
+    });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+app.post("/api/recommendations/refresh", authRequired, async (req, res) => {
+  try {
+    const keywords = normalizeStringList(req.body?.keywords, 30);
+    const targetCount = Math.max(5, Math.min(100, Number(req.body?.targetCount || 20) || 20));
+    const cooldownDays = Math.max(
+      1,
+      Math.min(60, Number(req.body?.cooldownDays || req.user?.settings?.recommendationCooldownDays || 7) || 7),
+    );
+
+    const refresh = await refreshRecommendationsForUser({
+      userId: req.user.id,
+      settings: req.user.settings || {},
+      keywords,
+      targetCount,
+      cooldownDays,
+    });
+
+    const items = await listRecommendations(req.user.id, {
+      limit: Math.max(40, targetCount),
+    });
+
+    return res.json({
+      ok: true,
+      refresh,
       items,
     });
   } catch (e) {

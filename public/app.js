@@ -1040,6 +1040,43 @@ async function loadRecommendations() {
   }
 }
 
+async function refreshRecommendationsReplacing() {
+  if (recoRefreshBtn) recoRefreshBtn.disabled = true;
+  setStatus("추천 새로고침 중... (기존 목록 교체)", "");
+  try {
+    const keywords = parseKeywords(recoKeywordsEl?.value);
+    const body = { targetCount: 20 };
+    if (keywords.length) body.keywords = keywords;
+
+    const res = await fetch("/api/recommendations/refresh", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok || !json.ok) {
+      setStatus("추천 새로고침 실패", "bad");
+      log(json);
+      return;
+    }
+
+    const refresh = json.refresh || {};
+    const removed = Number(refresh.removedCount || 0);
+    const count = Number(refresh.count || 0);
+    const cooldown = Number(refresh.cooldownDays || 7);
+    setStatus(
+      `추천 새로고침 완료 (이전 ${removed}개 교체, 새 ${count}개 / 재노출 제외 ${cooldown}일)`,
+      "ok",
+    );
+    renderRecoList(json.items || []);
+  } catch (e) {
+    setStatus("추천 새로고침 에러", "bad");
+    log(String(e?.message || e));
+  } finally {
+    if (recoRefreshBtn) recoRefreshBtn.disabled = false;
+  }
+}
+
 async function fillRecommendations() {
   if (recoFillBtn) recoFillBtn.disabled = true;
   setStatus("후보 생성 중...", "");
@@ -1890,7 +1927,7 @@ domemeSessionSaveBtn?.addEventListener("click", async () => {
 
   // recommendations
   recoFillBtn?.addEventListener("click", fillRecommendations);
-  recoRefreshBtn?.addEventListener("click", loadRecommendations);
+  recoRefreshBtn?.addEventListener("click", refreshRecommendationsReplacing);
   recoAutoUploadBtn?.addEventListener("click", autoUploadRecommendations);
   await loadRecommendations();
 })();

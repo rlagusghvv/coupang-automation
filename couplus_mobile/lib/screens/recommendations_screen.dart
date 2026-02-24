@@ -45,6 +45,47 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
     }
   }
 
+  Future<void> _refreshReplacing() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final json = await widget.api.postJson('/api/recommendations/refresh', {
+        'targetCount': 20,
+      });
+      final list = (json['items'] as List?) ?? const [];
+      final refresh = (json['refresh'] as Map?)?.cast<String, dynamic>() ??
+          const <String, dynamic>{};
+      final removed =
+          int.tryParse((refresh['removedCount'] ?? 0).toString()) ?? 0;
+      final count =
+          int.tryParse((refresh['count'] ?? list.length).toString()) ??
+              list.length;
+      final cooldown =
+          int.tryParse((refresh['cooldownDays'] ?? 7).toString()) ?? 7;
+
+      setState(() {
+        _items = list.map((e) => (e as Map).cast<String, dynamic>()).toList();
+        _selected.clear();
+      });
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              '추천 새로고침 완료: 기존 $removed개 교체, 새 $count개 (재노출 제외 $cooldown일)',
+            ),
+          ),
+        );
+      }
+    } catch (e) {
+      setState(() => _error = e.toString());
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
   // Upload is done from the detail preview screen.
 
   Future<void> _uploadSelected() async {
@@ -104,8 +145,7 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content:
-                Text('다중 업로드 완료: 성공 $uploaded / 스킵 $skipped / 실패 $failed'),
+            content: Text('다중 업로드 완료: 성공 $uploaded / 스킵 $skipped / 실패 $failed'),
           ),
         );
       }
@@ -197,7 +237,7 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
 
     return AppScaffold(
       title: selectedCount > 0 ? '추천 (선택 $selectedCount)' : '추천',
-      onRefresh: _refresh,
+      onRefresh: _refreshReplacing,
       actions: [
         if (selectedCount > 0)
           IconButton(
@@ -215,7 +255,7 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
           tooltip: '지금 추천 생성',
         ),
         IconButton(
-          onPressed: _loading ? null : _refresh,
+          onPressed: _loading ? null : _refreshReplacing,
           icon: const Icon(Icons.refresh),
         ),
       ],
@@ -258,7 +298,7 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
           ),
           if (_error != null) ...[
             const SizedBox(height: 12),
-            ErrorBanner(message: _error!, onRetry: _refresh),
+            ErrorBanner(message: _error!, onRetry: _refreshReplacing),
           ],
           const SizedBox(height: 12),
           if (_items.isEmpty && !_loading)

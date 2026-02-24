@@ -3,6 +3,8 @@ import crypto from 'node:crypto';
 import { previewUploadFromUrl } from '../pipeline/previewUploadFromUrl.js';
 import { dbAll, dbRun, openDb } from './storage_sqlite_internal.js';
 
+const DEFAULT_RECOMMENDATION_COOLDOWN_DAYS = 7;
+
 function dbGetOne(db, sql, params = []) {
   return dbAll(db, sql, params).then((rows) => (rows && rows[0]) || null);
 }
@@ -338,6 +340,57 @@ async function setRecommendationsState(db, userId, nextKeywordIdx) {
     'INSERT INTO recommendations_state (user_id, next_keyword_idx, updated_at) VALUES (?, ?, ?) ON CONFLICT(user_id) DO UPDATE SET next_keyword_idx=excluded.next_keyword_idx, updated_at=excluded.updated_at',
     [userId, Number(nextKeywordIdx) || 0, nowIso()],
   );
+}
+
+function normalizeCooldownDays(value, fallback = DEFAULT_RECOMMENDATION_COOLDOWN_DAYS) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) {
+    return Math.max(1, Math.min(60, Number(fallback) || DEFAULT_RECOMMENDATION_COOLDOWN_DAYS));
+  }
+  return Math.max(1, Math.min(60, Math.floor(n)));
+}
+
+function cutoffIsoFromDays(days) {
+  const d = new Date();
+  d.setDate(d.getDate() - Math.max(0, Number(days) || 0));
+  return d.toISOString();
+}
+
+async function markCurrentRecommendationsAsSeen(db, userId, sourceUrls = []) {
+  const now = nowIso();
+  let marked = 0;
+  for (const rawUrl of sourceUrls) {
+    const sourceUrl = String(rawUrl || '').trim();
+    if (!sourceUrl) continue;
+    await dbRun(
+      db,
+      'INSERT INTO recommendations_seen (user_id, source_url, last_seen_at, created_at) ' +
+        'VALUES (?, ?, ?, ?) ' +
+        'ON CONFLICT(user_id, source_url) DO UPDATE SET last_seen_at=excluded.last_seen_at',
+      [userId, sourceUrl, now, now],
+    );
+    marked += 1;
+  }
+  return marked;
+}
+
+async function listRecentSeenUrls(db, userId, cooldownDays) {
+  const cutoff = cutoffIsoFromDays(cooldownDays);
+  const rows = await dbAll(
+    db,
+    'SELECT source_url FROM recommendations_seen WHERE user_id = ? AND last_seen_at >= ?',
+    [userId, cutoff],
+  );
+  return rows.map((r) => String(r?.source_url || '').trim()).filter(Boolean);
+}
+
+async function listUploadedSourceUrls(db, userId, limit = 5000) {
+  const rows = await dbAll(
+    db,
+    'SELECT source_url FROM uploaded_products WHERE user_id = ? ORDER BY created_at DESC LIMIT ?',
+    [userId, Math.max(1, Math.min(10000, Number(limit) || 5000))],
+  );
+  return rows.map((r) => String(r?.source_url || '').trim()).filter(Boolean);
 }
 
 export async function listRecommendations(userId, { limit = 50 } = {}) {
@@ -721,6 +774,74 @@ export async function fillRecommendationsForUser({ userId, settings, keywords, t
 
   const up = await upsertRecommendationsForUser({ userId, items: batch.items, maxKeep: Math.max(60, Number(targetCount) || 20) });
   return { ok: true, ...up, keyword: kw };
+}
+
+
+export async function refreshRecommendationsForUser({
+  userId,
+  settings,
+  keywords,
+  targetCount = 20,
+  cooldownDays,
+  onProgress = null,
+} = {}) {
+  const seed = Array.isArray(keywords) && keywords.length > 0 ? keywords : defaultKeywordSet();
+  const target = Math.max(5, Math.min(100, Number(targetCount) || 20));
+  const cooldown = normalizeCooldownDays(
+    cooldownDays ?? settings?.recommendationCooldownDays,
+    DEFAULT_RECOMMENDATION_COOLDOWN_DAYS,
+  );
+
+  const db = openDb();
+  const existingRows = await dbAll(
+    db,
+    'SELECT source_url FROM recommendations WHERE user_id = ?',
+    [userId],
+  );
+  const existingUrls = existingRows
+    .map((r) => String(r?.source_url || '').trim())
+    .filter(Boolean);
+
+  const markedCount = await markCurrentRecommendationsAsSeen(db, userId, existingUrls);
+  const recentSeenUrls = await listRecentSeenUrls(db, userId, cooldown);
+  const uploadedUrls = await listUploadedSourceUrls(db, userId, 8000);
+  const excludeUrls = new Set([...recentSeenUrls, ...uploadedUrls]);
+
+  await dbRun(db, 'DELETE FROM recommendations WHERE user_id = ?', [userId]);
+
+  const state = await getRecommendationsState(db, userId);
+  await setRecommendationsState(db, userId, state.nextKeywordIdx + 1);
+  db.close();
+
+  if (typeof onProgress === 'function') {
+    try {
+      onProgress({
+        stage: 'refresh_start',
+        removed: existingUrls.length,
+        cooldownDays: cooldown,
+        excluded: excludeUrls.size,
+      });
+    } catch {}
+  }
+
+  const batch = await generateRecommendationsBatch({
+    settings,
+    keywords: seed,
+    topN: target,
+    excludeUrls,
+    onProgress,
+  });
+
+  await replaceRecommendationsForUser({ userId, items: batch.items });
+
+  return {
+    ok: true,
+    count: batch.items.length,
+    removedCount: existingUrls.length,
+    markedCount,
+    cooldownDays: cooldown,
+    excludedCount: excludeUrls.size,
+  };
 }
 
 export function startRecommendationLoop({ getUsers, hour = 9, minute = 0, intervalMs = 60_000 }) {
