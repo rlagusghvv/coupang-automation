@@ -259,6 +259,18 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
     setState(() => _selected.clear());
   }
 
+  Widget _thumbPlaceholder(BuildContext context) {
+    return Container(
+      width: 66,
+      height: 66,
+      color: Theme.of(context).colorScheme.surfaceContainerHighest,
+      child: Icon(
+        Icons.image_outlined,
+        color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.5),
+      ),
+    );
+  }
+
   Widget _statusChip(BuildContext context, String value, String label) {
     final active = _status == value;
     final c = active
@@ -452,25 +464,14 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
                       ClipRRect(
                         borderRadius: BorderRadius.circular(10),
                         child: img.isEmpty
-                            ? Container(
-                                width: 66,
-                                height: 66,
-                                color: Theme.of(
-                                  context,
-                                ).colorScheme.surfaceContainerHighest,
-                                child: Icon(
-                                  Icons.image_outlined,
-                                  color: Theme.of(context)
-                                      .colorScheme
-                                      .onSurface
-                                      .withValues(alpha: 0.5),
-                                ),
-                              )
+                            ? _thumbPlaceholder(context)
                             : Image.network(
                                 widget.api.proxyImageUrl(img),
                                 width: 66,
                                 height: 66,
                                 fit: BoxFit.cover,
+                                errorBuilder: (_, __, ___) =>
+                                    _thumbPlaceholder(context),
                               ),
                       ),
                       const SizedBox(width: 12),

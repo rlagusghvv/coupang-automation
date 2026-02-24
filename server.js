@@ -800,11 +800,16 @@ function normalizeCatalogProduct(row) {
     Array.isArray(meta.detailImages) ? meta.detailImages : [],
     100,
   );
-  const mainImageUrl = pickFirstNonEmpty(meta.mainImageUrl, row?.imageUrl, detailImagesRaw[0] || "");
+  const followUp = meta.followUp && typeof meta.followUp === "object" ? meta.followUp : {};
+  const mainImageUrl = pickFirstNonEmpty(
+    meta.mainImageUrl,
+    followUp.mainImageUrl,
+    row?.imageUrl,
+    detailImagesRaw[0] || "",
+  );
   const detailImages = detailImagesRaw.length > 0
     ? detailImagesRaw
     : (mainImageUrl ? [mainImageUrl] : []);
-  const followUp = meta.followUp && typeof meta.followUp === "object" ? meta.followUp : {};
   const validation = meta.validation && typeof meta.validation === "object" ? meta.validation : {};
   const sourceUrl = pickFirstNonEmpty(row?.sourceUrl, meta.sourceUrl);
   return {
