@@ -348,10 +348,42 @@ export async function recordUploadedProduct({
   meta = {},
 }) {
   const uid = String(userId || "global").trim() || "global";
+  const rawSourceUrl = String(sourceUrl || "");
   const normalizedUrl = normalizeSourceUrlForDedupe(sourceUrl);
   const normalizedTitle = normalizeTitleForDedupe(title);
+  const payload = [
+    normalizedUrl,
+    String(title || ""),
+    normalizedTitle,
+    String(imageUrl || ""),
+    String(imageFingerprint || ""),
+    sellerProductId != null ? String(sellerProductId) : null,
+    String(status || "uploaded"),
+    JSON.stringify(meta || {}),
+    new Date().toISOString(),
+    uid,
+    rawSourceUrl,
+  ];
+
   const db = openDb();
   try {
+    const updated = await dbRun(
+      db,
+      `UPDATE ${UPLOADED_PRODUCTS_TABLE}
+       SET normalized_url = ?,
+           title = ?,
+           normalized_title = ?,
+           image_url = ?,
+           image_fingerprint = ?,
+           seller_product_id = ?,
+           status = ?,
+           meta_json = ?,
+           created_at = ?
+       WHERE user_id = ? AND source_url = ?`,
+      payload,
+    );
+    if (updated.changes > 0) return;
+
     await dbRun(
       db,
       `INSERT INTO ${UPLOADED_PRODUCTS_TABLE}
@@ -359,7 +391,7 @@ export async function recordUploadedProduct({
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         uid,
-        String(sourceUrl || ""),
+        rawSourceUrl,
         normalizedUrl,
         String(title || ""),
         normalizedTitle,
@@ -370,6 +402,29 @@ export async function recordUploadedProduct({
         JSON.stringify(meta || {}),
         new Date().toISOString(),
       ],
+    );
+  } catch (err) {
+    const msg = String(err?.message || "").toLowerCase();
+    const sourceUrlConflict =
+      msg.includes("sqlite_constraint") &&
+      msg.includes(`${UPLOADED_PRODUCTS_TABLE}.user_id`) &&
+      msg.includes(`${UPLOADED_PRODUCTS_TABLE}.source_url`);
+    if (!sourceUrlConflict) throw err;
+
+    await dbRun(
+      db,
+      `UPDATE ${UPLOADED_PRODUCTS_TABLE}
+       SET normalized_url = ?,
+           title = ?,
+           normalized_title = ?,
+           image_url = ?,
+           image_fingerprint = ?,
+           seller_product_id = ?,
+           status = ?,
+           meta_json = ?,
+           created_at = ?
+       WHERE user_id = ? AND source_url = ?`,
+      payload,
     );
   } finally {
     db.close();
