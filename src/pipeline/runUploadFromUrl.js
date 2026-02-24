@@ -27,7 +27,7 @@ import { previewUploadFromUrl } from "./previewUploadFromUrl.js";
 import { evaluateQcGate } from "./qcGate.js";
 
 const OUTBOUND_SHIPPING_PLACE_CODE = "24093380";
-const DISPLAY_CATEGORY_CODE = 77723;
+const DISPLAY_CATEGORY_CODE = 0;
 const IP_CHECK_URLS = ["https://ifconfig.me/ip", "https://api.ipify.org"];
 const IMAGE_CHECK_TIMEOUT_MS = 8000;
 const CREATE_RETRY_MAX = 1;
@@ -174,6 +174,11 @@ function buildItemAttributesFromOptionValues(values) {
   return attrs.length > 0 ? attrs : null;
 }
 
+function toPositiveInt(value) {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : null;
+}
+
 export async function runUploadFromUrl(inputUrl, settings = {}, runtime = {}) {
   const c = classifyUrl(inputUrl);
   if (!c.ok) {
@@ -236,93 +241,116 @@ export async function runUploadFromUrl(inputUrl, settings = {}, runtime = {}) {
   }
 
   const qcInfo = { ok: true, metrics: qcGate.metrics || {} };
-  const localImageBase = resolveLocalImageBase(settings);
-
-  const outDir = path.join(process.cwd(), "out");
+  const preferSourceImageUrls =
+    String(settings.preferSourceImageUrls ?? process.env.PREFER_SOURCE_IMAGE_URLS ?? "1").trim() !==
+    "0";
   const rawMax = Number(settings.maxContentImages);
   const maxContentImages = Number.isFinite(rawMax) ? rawMax : 30;
   const filteredImages = Array.isArray(previewResult?.preview?.contentImagesFiltered)
     ? previewResult.preview.contentImagesFiltered
     : [];
   const contentImages = filteredImages.slice(0, Math.max(0, maxContentImages));
-  const downloadList = Array.from(new Set([draft.imageUrl, ...contentImages])).filter(Boolean);
 
-  const storageStatePath =
-    process.env.DOMEGGOOK_STORAGE_STATE || path.join(process.cwd(), "storageState.json");
-  const downloaded = await downloadImagesWithPlaywright({
-    pageUrl: draft.sourceUrl,
-    imageUrls: downloadList,
-    outDir,
-    baseUrl: localImageBase,
-    storageStatePath,
-  });
+  let imageUrl = "";
+  let contentLocalUrls = [];
 
-  if (String(settings.pagesAutoDeploy || "").trim() === "1") {
-    const deployRes = await deployPagesAssets({
-      directory: outDir,
-      subDirName: "couplus-out",
-      projectName: String(settings.pagesProjectName || "").trim(),
-      apiToken: String(settings.pagesApiToken || "").trim(),
-      accountId: String(settings.pagesAccountId || "").trim(),
+  if (preferSourceImageUrls) {
+    imageUrl = String(draft.imageUrl || "").trim();
+    contentLocalUrls = contentImages.map((u) => String(u || "").trim()).filter(Boolean);
+  } else {
+    const localImageBase = resolveLocalImageBase(settings);
+    const outDir = path.join(process.cwd(), "out");
+    const downloadList = Array.from(new Set([draft.imageUrl, ...contentImages])).filter(Boolean);
+
+    const storageStatePath =
+      process.env.DOMEGGOOK_STORAGE_STATE || path.join(process.cwd(), "storageState.json");
+    const downloaded = await downloadImagesWithPlaywright({
+      pageUrl: draft.sourceUrl,
+      imageUrls: downloadList,
+      outDir,
+      baseUrl: localImageBase,
+      storageStatePath,
     });
-    if (!deployRes.ok) {
+
+    if (String(settings.pagesAutoDeploy || "").trim() === "1") {
+      const deployRes = await deployPagesAssets({
+        directory: outDir,
+        subDirName: "couplus-out",
+        projectName: String(settings.pagesProjectName || "").trim(),
+        apiToken: String(settings.pagesApiToken || "").trim(),
+        accountId: String(settings.pagesAccountId || "").trim(),
+      });
+      if (!deployRes.ok) {
+        return buildResult({
+          ok: false,
+          skipped: false,
+          error: "pages_deploy_failed",
+          detail: deployRes.error,
+          deploy: {
+            code: deployRes.code ?? null,
+            stdout: deployRes.stdout || "",
+            stderr: deployRes.stderr || "",
+          },
+          qc: qcInfo,
+          preview: previewResult.preview,
+          draft: { title: draft.title, price: draft.price, imageUrl: draft.imageUrl },
+        });
+      }
+      await new Promise((r) => setTimeout(r, 3000));
+    }
+
+    imageUrl = downloaded.urlMap[draft.imageUrl];
+    if (!imageUrl) {
       return buildResult({
         ok: false,
         skipped: false,
-        error: "pages_deploy_failed",
-        detail: deployRes.error,
-        deploy: {
-          code: deployRes.code ?? null,
-          stdout: deployRes.stdout || "",
-          stderr: deployRes.stderr || "",
+        error: "main image download failed",
+        qc: qcInfo,
+        preview: previewResult.preview,
+        draft: { title: draft.title, price: draft.price, imageUrl: draft.imageUrl },
+      });
+    }
+
+    const downloadedMainFilePath = findDownloadedFilePath(downloaded, imageUrl);
+    const localOutFallbackOk =
+      isCouplusOutUrl(imageUrl) &&
+      downloadedMainFilePath &&
+      fs.existsSync(downloadedMainFilePath);
+
+    const imageReachable = localOutFallbackOk
+      ? true
+      : await isUrlReachable(imageUrl, IMAGE_CHECK_TIMEOUT_MS);
+
+    if (!imageReachable) {
+      return buildResult({
+        ok: false,
+        skipped: false,
+        error: "image_host_unreachable",
+        imageUrl,
+        detail: {
+          localOutFallbackOk,
+          localFileExists: Boolean(downloadedMainFilePath && fs.existsSync(downloadedMainFilePath)),
         },
         qc: qcInfo,
         preview: previewResult.preview,
         draft: { title: draft.title, price: draft.price, imageUrl: draft.imageUrl },
       });
     }
-    await new Promise((r) => setTimeout(r, 3000));
+
+    contentLocalUrls = contentImages.map((u) => downloaded.urlMap[u]).filter(Boolean);
   }
 
-  const imageUrl = downloaded.urlMap[draft.imageUrl];
   if (!imageUrl) {
     return buildResult({
       ok: false,
       skipped: false,
-      error: "main image download failed",
+      error: "main_image_missing",
       qc: qcInfo,
       preview: previewResult.preview,
       draft: { title: draft.title, price: draft.price, imageUrl: draft.imageUrl },
     });
   }
 
-  const downloadedMainFilePath = findDownloadedFilePath(downloaded, imageUrl);
-  const localOutFallbackOk =
-    isCouplusOutUrl(imageUrl) &&
-    downloadedMainFilePath &&
-    fs.existsSync(downloadedMainFilePath);
-
-  const imageReachable = localOutFallbackOk
-    ? true
-    : await isUrlReachable(imageUrl, IMAGE_CHECK_TIMEOUT_MS);
-
-  if (!imageReachable) {
-    return buildResult({
-      ok: false,
-      skipped: false,
-      error: "image_host_unreachable",
-      imageUrl,
-      detail: {
-        localOutFallbackOk,
-        localFileExists: Boolean(downloadedMainFilePath && fs.existsSync(downloadedMainFilePath)),
-      },
-      qc: qcInfo,
-      preview: previewResult.preview,
-      draft: { title: draft.title, price: draft.price, imageUrl: draft.imageUrl },
-    });
-  }
-
-  const contentLocalUrls = contentImages.map((u) => downloaded.urlMap[u]).filter(Boolean);
   const contentHtml =
     contentLocalUrls.length > 0 ? buildImageOnlyHtmlFromUrls(contentLocalUrls) : draft.contentText || "";
 
@@ -343,12 +371,16 @@ export async function runUploadFromUrl(inputUrl, settings = {}, runtime = {}) {
   }
 
   const categoryOverrideCode = Number(settings.categoryOverrideCode);
+  const defaultCategoryFallback =
+    toPositiveInt(settings.defaultDisplayCategoryCode) ??
+    toPositiveInt(process.env.DEFAULT_DISPLAY_CATEGORY_CODE) ??
+    DISPLAY_CATEGORY_CODE;
   const displayCategoryCode = Number.isFinite(categoryOverrideCode) && categoryOverrideCode > 0
     ? categoryOverrideCode
     : resolveDisplayCategoryCode({
         title: draft.title,
         categoryText: draft.categoryText,
-        fallback: DISPLAY_CATEGORY_CODE,
+        fallback: defaultCategoryFallback,
       });
 
   const finalPrice = computePrice(draft.price, {
@@ -378,14 +410,14 @@ export async function runUploadFromUrl(inputUrl, settings = {}, runtime = {}) {
     notices = null;
   } else {
     const useRecommend =
-      String(settings.autoCategoryRecommend || process.env.AUTO_CATEGORY_RECOMMEND || "").trim() ===
-      "1";
+      String(settings.autoCategoryRecommend ?? process.env.AUTO_CATEGORY_RECOMMEND ?? "1").trim() !==
+      "0";
     if (useRecommend) {
       try {
         const rec = await recommendCategory({
           productName: draft.title,
           productDescription: draft.contentText?.slice(0, 2000) || "",
-          productImageUrl: imageUrl,
+          productImageUrl: draft.imageUrl,
           accessKey,
           secretKey,
         });
@@ -398,11 +430,28 @@ export async function runUploadFromUrl(inputUrl, settings = {}, runtime = {}) {
     try {
       const meta = await getCategoryMetas({ displayCategoryCode: finalCategoryCode, accessKey, secretKey });
       if (meta.status !== 200) {
-        finalCategoryCode = DISPLAY_CATEGORY_CODE;
+        finalCategoryCode = toPositiveInt(displayCategoryCode);
       }
     } catch {
-      finalCategoryCode = DISPLAY_CATEGORY_CODE;
+      finalCategoryCode = toPositiveInt(displayCategoryCode);
     }
+  }
+
+  if (!allowAutoCategory && !toPositiveInt(finalCategoryCode)) {
+    return buildResult({
+      ok: false,
+      skipped: false,
+      error: "category_unresolved",
+      detail: {
+        message: "카테고리를 자동으로 확정하지 못했습니다. categoryOverrideCode를 설정해 주세요.",
+        title: draft.title,
+      },
+      qc: qcInfo,
+      preview: previewResult.preview,
+      draft: { title: draft.title, price: draft.price, imageUrl: draft.imageUrl },
+      create: emptyCreate(),
+      followUp: emptyFollowUp(),
+    });
   }
 
   const autoRequest = String(settings.autoRequest || "").trim() === "1";
