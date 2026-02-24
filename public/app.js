@@ -410,6 +410,15 @@ function renderSummary(result) {
     return result?.create?.status ? `HTTP ${result.create.status}` : "알 수 없음";
   })();
 
+  const approved = (() => {
+    if (followUp?.approved === true) return true;
+    const statusName = String(followUp?.statusName || "").toUpperCase();
+    return statusName.includes("승인완료") || statusName === "APPROVED";
+  })();
+
+  const visibilityStatus = approved ? "승인완료(노출 가능)" : "승인 대기/검수 중";
+  const productId = followUp?.productId || "-";
+
   const ipBlocked = (() => {
     try {
       const rawBody = result?.create?.body || "";
@@ -433,16 +442,23 @@ function renderSummary(result) {
       <div class="label">생성 결과</div><div>${createStatus}</div>
       <div class="label">승인 요청</div><div>${approvalMsg}</div>
       <div class="label">승인 상태</div><div>${followUp?.statusName || "-"}</div>
+      <div class="label">노출 상태</div><div>${visibilityStatus}</div>
+      <div class="label">대표상품 ID</div><div>${productId}</div>
     </div>
     ${ipBlocked ? `<div class="warn">IP 허용 필요: ${ipBlocked}</div>` : ""}
     ${
-      followUp?.approved && followUp?.productUrl
-        ? `<div class="row"><div class="label">상품 페이지</div><div><a id="productLink" href="${followUp.productUrl}" target="_blank" rel="noreferrer">바로 열기</a></div></div>`
+      followUp?.productUrl
+        ? `<div class="row"><div class="label">쿠팡 상품 페이지(대표상품)</div><div><a id="productLink" href="${followUp.productUrl}" target="_blank" rel="noreferrer">바로 열기</a></div></div>`
+        : ""
+    }
+    ${
+      !approved
+        ? `<div class="warn">등록은 되었지만 아직 승인/노출 전일 수 있습니다. WING에서 SellerProductId(${created})로 상태를 확인하세요.</div>`
         : ""
     }
   `;
 
-  if (followUp?.approved && followUp?.productUrl) {
+  if (approved && followUp?.productUrl) {
     const key = `opened:${followUp.productUrl}`;
     if (!localStorage.getItem(key)) {
       localStorage.setItem(key, "1");
