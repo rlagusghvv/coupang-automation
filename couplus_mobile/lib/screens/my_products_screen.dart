@@ -51,9 +51,8 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
       );
       final list = (json['products'] as List?) ?? const [];
       setState(() {
-        _products = list
-            .map((e) => (e as Map).cast<String, dynamic>())
-            .toList();
+        _products =
+            list.map((e) => (e as Map).cast<String, dynamic>()).toList();
       });
     } catch (e) {
       setState(() => _error = e.toString());
@@ -64,19 +63,58 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
 
   Future<void> _bulkSync() async {
     if (_selected.isEmpty) return;
-    setState(() => _loading = true);
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+
+    var okCount = 0;
+    var skippedCount = 0;
+    var failedCount = 0;
+
     try {
+      final byId = <String, Map<String, dynamic>>{
+        for (final p in _products) (p['id'] ?? '').toString(): p,
+      };
+
       for (final id in _selected) {
-        await widget.api.postJson('/api/catalog/$id/sync', {});
+        final current = byId[id] ?? const <String, dynamic>{};
+        final localSpid = (current['sellerProductId'] ?? '').toString().trim();
+        if (localSpid.isEmpty) {
+          skippedCount += 1;
+          continue;
+        }
+
+        try {
+          final json = await widget.api.postJson('/api/catalog/$id/sync', {});
+          if (json['skipped'] == true) {
+            skippedCount += 1;
+          } else {
+            okCount += 1;
+          }
+        } catch (_) {
+          failedCount += 1;
+        }
       }
+
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('동기화 ${_selected.length}건 실행했어요.')),
+          SnackBar(
+            content: Text(
+              '동기화 완료: 성공 $okCount · 스킵 $skippedCount · 실패 $failedCount',
+            ),
+          ),
         );
       }
+
+      if (failedCount > 0 && mounted) {
+        setState(
+          () =>
+              _error = '일부 동기화 실패 ($failedCount건). 다시 시도하거나 상세에서 개별 동기화해 주세요.',
+        );
+      }
+
       await _refresh();
-    } catch (e) {
-      setState(() => _error = e.toString());
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -271,9 +309,8 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
                   child: const Text('전체선택'),
                 ),
                 TextButton(
-                  onPressed: _loading || _selected.isEmpty
-                      ? null
-                      : _clearSelection,
+                  onPressed:
+                      _loading || _selected.isEmpty ? null : _clearSelection,
                   child: const Text('선택해제'),
                 ),
                 TextButton(
@@ -281,9 +318,8 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
                   child: const Text('동기화'),
                 ),
                 TextButton(
-                  onPressed: _loading || _selected.isEmpty
-                      ? null
-                      : _bulkRedeploy,
+                  onPressed:
+                      _loading || _selected.isEmpty ? null : _bulkRedeploy,
                   child: const Text('재배포'),
                 ),
               ],
@@ -377,7 +413,9 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
                                 ).colorScheme.surfaceContainerHighest,
                                 child: Icon(
                                   Icons.image_outlined,
-                                  color: Theme.of(context).colorScheme.onSurface
+                                  color: Theme.of(context)
+                                      .colorScheme
+                                      .onSurface
                                       .withValues(alpha: 0.5),
                                 ),
                               )

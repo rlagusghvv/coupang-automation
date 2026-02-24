@@ -794,6 +794,28 @@ function normalizeCatalogProduct(row) {
   };
 }
 
+function parseSellerProductIdFromUrl(rawUrl) {
+  const url = String(rawUrl || "").trim();
+  if (!url) return "";
+  const customMatch = url.match(/^coupang:\/\/seller-product\/(\d+)/i);
+  if (customMatch?.[1]) return customMatch[1];
+  const webMatch = url.match(/\/vp\/products\/(\d+)/i);
+  if (webMatch?.[1]) return webMatch[1];
+  return "";
+}
+
+function resolveCatalogSellerProductId(row) {
+  const meta = row?.meta && typeof row.meta === "object" ? row.meta : {};
+  return pickFirstNonEmpty(
+    row?.sellerProductId,
+    meta?.sellerProductId,
+    meta?.followUp?.sellerProductId,
+    parseSellerProductIdFromUrl(row?.sourceUrl),
+    parseSellerProductIdFromUrl(meta?.sourceUrl),
+    parseSellerProductIdFromUrl(meta?.followUp?.productUrl),
+  );
+}
+
 function getCatalogEventsFromMeta(meta, limit = 200) {
   if (!meta || typeof meta !== "object") return [];
   const events = Array.isArray(meta.events) ? meta.events : [];
@@ -1219,11 +1241,35 @@ app.post("/api/catalog/:id", authRequired, async (req, res) => {
 app.post("/api/catalog/:id/sync", authRequired, async (req, res) => {
   try {
     const id = String(req.params?.id || "").trim();
-    const row = await getUploadedProductById(req.user.id, id);
+    let row = await getUploadedProductById(req.user.id, id);
     if (!row) return res.status(404).json({ ok: false, error: "not_found" });
 
-    const spid = String(row.sellerProductId || "").trim();
-    if (!spid) return res.status(400).json({ ok: false, error: "sellerProductId missing" });
+    const spid = resolveCatalogSellerProductId(row);
+    if (!spid) {
+      await appendCatalogEvent({
+        userId: req.user.id,
+        catalogId: row.id,
+        type: "STATUS_SYNC_SKIPPED",
+        severity: "warn",
+        message: "동기화를 건너뜀: sellerProductId가 없습니다.",
+        data: { reason: "sellerProductId_missing" },
+      });
+      return res.json({
+        ok: true,
+        skipped: true,
+        reason: "sellerProductId_missing",
+        product: normalizeCatalogProduct(row),
+      });
+    }
+
+    if (!String(row.sellerProductId || "").trim()) {
+      const patched = await updateUploadedProductById({
+        userId: req.user.id,
+        id: row.id,
+        patch: { sellerProductId: spid },
+      });
+      if (patched) row = patched;
+    }
 
     const live = await fetchSellerStatusLive({
       sellerProductId: spid,
