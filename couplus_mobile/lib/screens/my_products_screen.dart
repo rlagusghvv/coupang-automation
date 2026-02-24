@@ -163,6 +163,22 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
     }
   }
 
+  void _selectAllVisible() {
+    final ids = _products
+        .map((p) => (p['id'] ?? '').toString())
+        .where((id) => id.isNotEmpty)
+        .toSet();
+    setState(() {
+      _selected
+        ..clear()
+        ..addAll(ids);
+    });
+  }
+
+  void _clearSelection() {
+    setState(() => _selected.clear());
+  }
+
   Widget _statusChip(BuildContext context, String value, String label) {
     final active = _status == value;
     final c = active
@@ -250,6 +266,16 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
               ),
               const Spacer(),
               if (_selectMode) ...[
+                TextButton(
+                  onPressed: _loading ? null : _selectAllVisible,
+                  child: const Text('전체선택'),
+                ),
+                TextButton(
+                  onPressed: _loading || _selected.isEmpty
+                      ? null
+                      : _clearSelection,
+                  child: const Text('선택해제'),
+                ),
                 TextButton(
                   onPressed: _loading || _selected.isEmpty ? null : _bulkSync,
                   child: const Text('동기화'),

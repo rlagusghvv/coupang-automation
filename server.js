@@ -642,6 +642,24 @@ function isApprovedStatus(statusName) {
   );
 }
 
+function isDeletedStatusName(statusName) {
+  const s = String(statusName || "").trim().toLowerCase();
+  if (!s) return false;
+  return (
+    s.includes("삭제") ||
+    s.includes("판매중지") ||
+    s.includes("판매 종료") ||
+    s.includes("판매종료") ||
+    s.includes("노출중지") ||
+    s.includes("중지") ||
+    s.includes("종료") ||
+    s.includes("deleted") ||
+    s.includes("discontinued") ||
+    s.includes("closed") ||
+    s.includes("stopped")
+  );
+}
+
 function extractDetailHtmlFromSellerData(data) {
   const d = data && typeof data === "object" ? data : {};
   const items = Array.isArray(d.items) ? d.items : [];
@@ -698,6 +716,7 @@ function extractSellerStatusSnapshot({
   const productId = productIdRaw == null ? null : String(productIdRaw).trim() || null;
   const vendorItemId = vendorItemIdRaw == null ? null : String(vendorItemIdRaw).trim() || null;
   const approved = isApprovedStatus(statusName);
+  const deleted = isDeletedStatusName(statusName);
   const title = pickFirstNonEmpty(
     data?.displayProductName,
     data?.sellerProductName,
@@ -721,6 +740,7 @@ function extractSellerStatusSnapshot({
     httpStatus: Number.isFinite(Number(httpStatus)) ? Number(httpStatus) : null,
     statusName: statusName || null,
     approved,
+    deleted,
     productId,
     vendorItemId,
     title: title || null,
@@ -739,6 +759,7 @@ function inferCatalogStatus(currentStatus, snapshot = null, fallback = "confirme
     if (current) return current;
     return fallback;
   }
+  if (snapshot.deleted) return "deleted_remote";
   if (snapshot.detailEmpty) return "deployed_invalid";
   if (snapshot.approved) return "deployed";
   if (current === "deploy_failed" || current === "deployed_invalid") return current;
@@ -801,6 +822,19 @@ async function appendCatalogEvent({ userId, catalogId, type, severity = "info", 
   });
 }
 
+function bodyLooksNotFoundError(bodyObj) {
+  const merged = JSON.stringify(bodyObj || {}).toLowerCase();
+  if (!merged || merged === '{}') return false;
+  return (
+    merged.includes('not_found') ||
+    merged.includes('not found') ||
+    merged.includes('존재하지') ||
+    merged.includes('없는 상품') ||
+    merged.includes('유효하지 않은') ||
+    merged.includes('sellerproductid')
+  );
+}
+
 function getCoupangAuth(settings = {}) {
   const accessKey = String(settings?.coupangAccessKey || "").trim();
   const secretKey = String(settings?.coupangSecretKey || "").trim();
@@ -823,13 +857,22 @@ async function fetchSellerStatusLive({ sellerProductId, settings, includeHistory
     accessKey: auth.accessKey,
     secretKey: auth.secretKey,
   });
+  const productBodyObj = safeJsonParse(productRes?.body, {});
   if (!productRes || Number(productRes.status) >= 400) {
-    const bodyObj = safeJsonParse(productRes?.body, {});
     return {
       ok: false,
       error: "coupang_status_fetch_failed",
       httpStatus: Number(productRes?.status || 0) || null,
-      detail: bodyObj,
+      detail: productBodyObj,
+    };
+  }
+
+  if (!productBodyObj?.data && bodyLooksNotFoundError(productBodyObj)) {
+    return {
+      ok: false,
+      error: "remote_not_found",
+      httpStatus: Number(productRes?.status || 0) || null,
+      detail: productBodyObj,
     };
   }
 
@@ -849,7 +892,7 @@ async function fetchSellerStatusLive({ sellerProductId, settings, includeHistory
 
   const snapshot = extractSellerStatusSnapshot({
     sellerProductId: spid,
-    responseBody: productRes.body,
+    responseBody: productBodyObj,
     historiesBody,
     httpStatus: productRes.status,
   });
@@ -857,7 +900,9 @@ async function fetchSellerStatusLive({ sellerProductId, settings, includeHistory
 }
 
 function isRemoteDeleted(live = null) {
-  if (!live || live.ok) return false;
+  if (!live) return false;
+  if (live.ok && isDeletedStatusName(live?.statusName)) return true;
+  if (live.ok) return false;
   const status = Number(live?.httpStatus || 0);
   if (status === 404) return true;
   const merged = [live?.error, JSON.stringify(live?.detail || {})]
