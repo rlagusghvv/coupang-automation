@@ -9,6 +9,7 @@ import { previewUploadFromUrl } from "./src/pipeline/previewUploadFromUrl.js";
 import { evaluateQcGate } from "./src/pipeline/qcGate.js";
 import { classifyUrl } from "./src/utils/urlFilter.js";
 import { computePrice } from "./src/utils/price.js";
+import { extractImageUrls } from "./src/utils/contentImages.js";
 import { resolveDisplayCategoryCode } from "./src/utils/categoryMap.js";
 import { suggestTitlesHybrid } from "./src/utils/titleSuggest.js";
 import {
@@ -740,6 +741,16 @@ function extractSellerStatusSnapshot({
   );
   const mainImageUrl = extractMainImageFromSellerData(data) || null;
   const detailHtml = extractDetailHtmlFromSellerData(data);
+  const detailImages = normalizeStringList(extractImageUrls(detailHtml), 200);
+  const categoryCode = toPositiveIntOrNull(
+    data?.displayCategoryCode ??
+      data?.displayCategoryId ??
+      data?.categoryCode ??
+      data?.displayCategory ??
+      data?.items?.[0]?.displayCategoryCode ??
+      data?.items?.[0]?.displayCategoryId ??
+      data?.items?.[0]?.categoryCode,
+  );
 
   const histObj = safeJsonParse(historiesBody, {});
   const historyItems = Array.isArray(histObj?.data)
@@ -760,6 +771,8 @@ function extractSellerStatusSnapshot({
     vendorItemId,
     title: title || null,
     mainImageUrl,
+    detailImages,
+    categoryCode,
     productUrl: productId ? `https://www.coupang.com/vp/products/${productId}` : null,
     detailLength: String(detailHtml || "").trim().length,
     detailEmpty: !String(detailHtml || "").trim(),
@@ -810,6 +823,41 @@ function normalizeCatalogProduct(row) {
     deployedAt: String(meta.deployedAt || "").trim() || null,
     createdAt: row?.createdAt || null,
   };
+}
+
+function applyLiveSnapshotToMeta(meta, live, { fallbackTitle = "", fallbackImageUrl = "" } = {}) {
+  const nextMeta = meta && typeof meta === "object" ? { ...meta } : {};
+  if (!live || live.ok !== true) return nextMeta;
+
+  nextMeta.followUp = live;
+  nextMeta.mainImageUrl = pickFirstNonEmpty(nextMeta.mainImageUrl, live.mainImageUrl, fallbackImageUrl);
+  nextMeta.confirmedTitle = pickFirstNonEmpty(nextMeta.confirmedTitle, live.title, fallbackTitle);
+
+  const liveDetailImages = normalizeStringList(
+    Array.isArray(live.detailImages) ? live.detailImages : [],
+    200,
+  );
+  if (liveDetailImages.length > 0) {
+    nextMeta.detailImages = liveDetailImages;
+  } else if (
+    (!Array.isArray(nextMeta.detailImages) || nextMeta.detailImages.length === 0) &&
+    String(nextMeta.mainImageUrl || "").trim()
+  ) {
+    nextMeta.detailImages = [String(nextMeta.mainImageUrl).trim()];
+  }
+
+  const liveCategoryCode = toPositiveIntOrNull(live.categoryCode);
+  if (liveCategoryCode && !toPositiveIntOrNull(nextMeta.categoryOverride)) {
+    nextMeta.categoryOverride = liveCategoryCode;
+  }
+
+  nextMeta.validation = {
+    ok: !live.detailEmpty,
+    checkedAt: new Date().toISOString(),
+    errors: live.detailEmpty ? ["detail_empty"] : [],
+  };
+  nextMeta.remoteDeleted = false;
+  return nextMeta;
 }
 
 function parseSellerProductIdFromUrl(rawUrl) {
@@ -1338,15 +1386,16 @@ app.post("/api/catalog/:id/sync", authRequired, async (req, res) => {
     nextMeta.lastSyncedAt = nowIso;
     const remoteDeleted = isRemoteDeleted(live);
     if (live?.ok) {
-      nextMeta.followUp = live;
-      nextMeta.mainImageUrl = pickFirstNonEmpty(nextMeta.mainImageUrl, live.mainImageUrl, row.imageUrl);
-      nextMeta.confirmedTitle = pickFirstNonEmpty(nextMeta.confirmedTitle, live.title, row.title);
-      nextMeta.validation = {
-        ok: !live.detailEmpty,
-        checkedAt: nowIso,
-        errors: live.detailEmpty ? ["detail_empty"] : [],
-      };
-      nextMeta.remoteDeleted = false;
+      Object.assign(
+        nextMeta,
+        applyLiveSnapshotToMeta(nextMeta, live, {
+          fallbackTitle: row.title,
+          fallbackImageUrl: row.imageUrl,
+        }),
+      );
+      if (nextMeta.validation && typeof nextMeta.validation === "object") {
+        nextMeta.validation.checkedAt = nowIso;
+      }
     } else {
       nextMeta.lastRemoteError = live;
       if (remoteDeleted) {
@@ -1483,7 +1532,8 @@ app.post("/api/catalog/:id/deploy", authRequired, async (req, res) => {
         const usedCategoryCode =
           toPositiveIntOrNull(uploadResult?.category?.used) ||
           toPositiveIntOrNull(uploadResult?.category?.requested) ||
-          toPositiveIntOrNull(meta?.categoryOverride);
+          toPositiveIntOrNull(meta?.categoryOverride) ||
+          toPositiveIntOrNull(live?.categoryCode);
 
         const nextMeta = {
           ...meta,
@@ -1499,7 +1549,10 @@ app.post("/api/catalog/:id/deploy", authRequired, async (req, res) => {
           detailImages:
             deployedDetailImages.length > 0
               ? deployedDetailImages
-              : normalizeStringList(Array.isArray(meta.detailImages) ? meta.detailImages : [], 200),
+              : normalizeStringList(
+                  Array.isArray(live?.detailImages) ? live.detailImages : Array.isArray(meta.detailImages) ? meta.detailImages : [],
+                  200,
+                ),
           categoryOverride: usedCategoryCode,
           deployedAt: new Date().toISOString(),
           lastDeployResult: {
@@ -1597,13 +1650,16 @@ app.get("/api/products/status/:sellerProductId", authRequired, async (req, res) 
       const nowIso = new Date().toISOString();
       nextMeta.lastSyncedAt = nowIso;
       if (status?.ok) {
-        nextMeta.followUp = status;
-        nextMeta.validation = {
-          ok: !status.detailEmpty,
-          checkedAt: nowIso,
-          errors: status.detailEmpty ? ["detail_empty"] : [],
-        };
-        nextMeta.remoteDeleted = false;
+        Object.assign(
+          nextMeta,
+          applyLiveSnapshotToMeta(nextMeta, status, {
+            fallbackTitle: linked.title,
+            fallbackImageUrl: linked.imageUrl,
+          }),
+        );
+        if (nextMeta.validation && typeof nextMeta.validation === "object") {
+          nextMeta.validation.checkedAt = nowIso;
+        }
       } else {
         nextMeta.lastRemoteError = status;
         if (remoteDeleted) {
@@ -1671,13 +1727,16 @@ app.post("/api/products/status/refresh", authRequired, async (req, res) => {
         const nowIso = new Date().toISOString();
         nextMeta.lastSyncedAt = nowIso;
         if (live?.ok) {
-          nextMeta.followUp = live;
-          nextMeta.validation = {
-            ok: !live.detailEmpty,
-            checkedAt: nowIso,
-            errors: live.detailEmpty ? ["detail_empty"] : [],
-          };
-          nextMeta.remoteDeleted = false;
+          Object.assign(
+            nextMeta,
+            applyLiveSnapshotToMeta(nextMeta, live, {
+              fallbackTitle: linked.title,
+              fallbackImageUrl: linked.imageUrl,
+            }),
+          );
+          if (nextMeta.validation && typeof nextMeta.validation === "object") {
+            nextMeta.validation.checkedAt = nowIso;
+          }
         } else {
           nextMeta.lastRemoteError = live;
           if (remoteDeleted) {
