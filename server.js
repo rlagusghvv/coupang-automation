@@ -617,6 +617,38 @@ function normalizeSkipReason(result) {
   return raw;
 }
 
+function resolveOutcomeSellerProductId(outcome) {
+  const fromCreate = outcome?.result?.create?.sellerProductId;
+  if (fromCreate != null && String(fromCreate).trim()) return String(fromCreate).trim();
+
+  const dup = outcome?.duplicate || outcome?.result?.duplicate;
+  const fromDuplicate = dup?.sellerProductId ?? dup?.seller_product_id;
+  if (fromDuplicate != null && String(fromDuplicate).trim()) return String(fromDuplicate).trim();
+
+  return null;
+}
+
+function buildSkippedResult(outcome) {
+  const skipReason = normalizeSkipReason(outcome);
+  return {
+    ok: false,
+    skipped: true,
+    skipReason,
+    reason: skipReason,
+    error: skipReason,
+    detail: outcome?.detail || null,
+    duplicate: outcome?.duplicate || null,
+    create: {
+      status: null,
+      body: null,
+      sellerProductId: resolveOutcomeSellerProductId(outcome),
+    },
+    followUp: {
+      statusName: null,
+    },
+  };
+}
+
 function appendUploadHistoryFromOutcome(url, outcome) {
   const result = outcome?.result || null;
   appendUploadHistory({
@@ -629,7 +661,7 @@ function appendUploadHistoryFromOutcome(url, outcome) {
     title: result?.draft?.title || outcome?.preview?.title || "",
     finalPrice: result?.finalPrice ?? null,
     optionsCount: Array.isArray(result?.optionsUsed) ? result.optionsUsed.length : 0,
-    sellerProductId: result?.create?.sellerProductId ?? null,
+    sellerProductId: resolveOutcomeSellerProductId(outcome),
     createStatus: result?.create?.status ?? null,
     error: result?.error || outcome?.error || null,
   });
@@ -826,7 +858,14 @@ async function handleSingleUpload(req, res) {
       }
 
       if (outcome.skipped) {
-        return res.json({ ok: true, skipped: true, skipReason: normalizeSkipReason(outcome), outcome });
+        const result = buildSkippedResult(outcome);
+        return res.json({
+          ok: true,
+          skipped: true,
+          skipReason: normalizeSkipReason(outcome),
+          result,
+          outcome,
+        });
       }
 
       return res.json({ ok: true, result: outcome.result, outcome });
@@ -866,7 +905,7 @@ app.post("/api/upload/bulk", authRequired, async (req, res) => {
           skipped: Boolean(outcome?.skipped),
           skipReason: normalizeSkipReason(outcome),
           error: outcome?.error || null,
-          sellerProductId: outcome?.result?.create?.sellerProductId ?? null,
+          sellerProductId: resolveOutcomeSellerProductId(outcome),
         });
       }
 
