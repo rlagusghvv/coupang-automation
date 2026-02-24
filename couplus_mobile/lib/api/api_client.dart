@@ -27,11 +27,16 @@ class ApiException implements Exception {
 class ApiClient {
   ApiClient({http.Client? client, String? baseUrl, SessionStore? sessionStore})
       : _client = client ?? http.Client(),
-        _baseUrl = baseUrl ?? defaultBaseUrl,
+        _baseUrl = _normalizeBase(baseUrl ?? defaultBaseUrl),
         _sessionStore = sessionStore ?? SessionStore();
 
+  static const List<String> _fallbackBaseUrls = <String>[
+    'https://app.splui.com',
+    'https://app2.splui.com',
+  ];
+
   static String get defaultBaseUrl {
-    // On web, use the same origin (so the app works from any hostname).
+    // On web, start with current origin and fallback automatically.
     if (kIsWeb) {
       return Uri.base.origin;
     }
@@ -58,9 +63,17 @@ class ApiClient {
   String? _cookie; // e.g. "session=..."
   bool _loaded = false;
 
-  Uri _u(String path, [Map<String, String>? query]) {
+  static String _normalizeBase(String raw) {
+    var v = raw.trim();
+    while (v.endsWith('/')) {
+      v = v.substring(0, v.length - 1);
+    }
+    return v;
+  }
+
+  Uri _uForBase(String base, String path, [Map<String, String>? query]) {
     final p = path.startsWith('/') ? path : '/$path';
-    return Uri.parse(baseUrl).replace(path: p, queryParameters: query);
+    return Uri.parse(base).replace(path: p, queryParameters: query);
   }
 
   Future<void> init() async {
@@ -68,7 +81,7 @@ class ApiClient {
     _cookie = await _sessionStore.loadCookie();
     final savedBaseUrl = await _sessionStore.loadBaseUrl();
     if (savedBaseUrl != null && savedBaseUrl.trim().isNotEmpty) {
-      _baseUrl = savedBaseUrl.trim();
+      _baseUrl = _normalizeBase(savedBaseUrl);
     }
     _loaded = true;
   }
@@ -88,7 +101,7 @@ class ApiClient {
   }
 
   Future<void> setBaseUrl(String next) async {
-    final v = next.trim();
+    final v = _normalizeBase(next);
     if (v.isEmpty) return;
     _baseUrl = v;
     await _sessionStore.saveBaseUrl(v);
@@ -119,10 +132,99 @@ class ApiClient {
     }
   }
 
-  Future<Map<String, dynamic>> getJson(String path, {Map<String, String>? query}) async {
+  bool _looksHtml(String body) {
+    final t = body.trimLeft().toLowerCase();
+    return t.startsWith('<!doctype html') || t.startsWith('<html');
+  }
+
+  List<String> _candidateBaseUrls() {
+    final out = <String>[];
+    final seen = <String>{};
+
+    void add(String? raw) {
+      final v = _normalizeBase(raw ?? '');
+      if (v.isEmpty) return;
+      if (seen.add(v)) out.add(v);
+    }
+
+    add(_baseUrl);
+    if (kIsWeb) add(Uri.base.origin);
+    for (final b in _fallbackBaseUrls) {
+      add(b);
+    }
+    return out;
+  }
+
+  bool _shouldRetryWithFallback(http.Response res) {
+    final code = res.statusCode;
+    if (code == 404 || code == 502 || code == 503 || code == 504) return true;
+    if (_looksHtml(res.body)) return true;
+    return false;
+  }
+
+  Future<void> _rememberBaseIfChanged(String nextBase) async {
+    final v = _normalizeBase(nextBase);
+    if (v == _baseUrl) return;
+    _baseUrl = v;
+    await _sessionStore.saveBaseUrl(v);
+  }
+
+  Future<http.Response> _requestWithFallback({
+    required String method,
+    required String path,
+    Map<String, String>? query,
+    Map<String, String>? headers,
+    Object? body,
+  }) async {
+    final bases = _candidateBaseUrls();
+    Object? lastError;
+
+    for (var i = 0; i < bases.length; i += 1) {
+      final base = bases[i];
+      final uri = _uForBase(base, path, query);
+      try {
+        late http.Response res;
+        if (method == 'GET') {
+          res = await _client.get(uri, headers: headers);
+        } else if (method == 'POST') {
+          res = await _client.post(uri, headers: headers, body: body);
+        } else if (method == 'DELETE') {
+          res = await _client.delete(uri, headers: headers);
+        } else {
+          throw StateError('unsupported method: $method');
+        }
+
+        _captureSetCookie(res);
+
+        final hasNext = i < bases.length - 1;
+        if (_shouldRetryWithFallback(res) && hasNext) {
+          continue;
+        }
+
+        if (res.statusCode < 400 && !_looksHtml(res.body)) {
+          await _rememberBaseIfChanged(base);
+        }
+
+        return res;
+      } catch (e) {
+        lastError = e;
+        final hasNext = i < bases.length - 1;
+        if (!hasNext) rethrow;
+      }
+    }
+
+    throw lastError ?? StateError('request failed');
+  }
+
+  Future<Map<String, dynamic>> getJson(String path,
+      {Map<String, String>? query}) async {
     await init();
-    final res = await _client.get(_u(path, query), headers: _headers());
-    _captureSetCookie(res);
+    final res = await _requestWithFallback(
+      method: 'GET',
+      path: path,
+      query: query,
+      headers: _headers(),
+    );
 
     final body = res.body;
 
@@ -148,14 +250,15 @@ class ApiClient {
     return json;
   }
 
-  Future<Map<String, dynamic>> postJson(String path, Map<String, dynamic> body) async {
+  Future<Map<String, dynamic>> postJson(
+      String path, Map<String, dynamic> body) async {
     await init();
-    final res = await _client.post(
-      _u(path),
+    final res = await _requestWithFallback(
+      method: 'POST',
+      path: path,
       headers: _headers(extra: {'Content-Type': 'application/json'}),
       body: jsonEncode(body),
     );
-    _captureSetCookie(res);
 
     final raw = res.body;
     Map<String, dynamic> json;
@@ -182,8 +285,11 @@ class ApiClient {
 
   Future<Map<String, dynamic>> deleteJson(String path) async {
     await init();
-    final res = await _client.delete(_u(path), headers: _headers());
-    _captureSetCookie(res);
+    final res = await _requestWithFallback(
+      method: 'DELETE',
+      path: path,
+      headers: _headers(),
+    );
 
     final raw = res.body;
     Map<String, dynamic> json;
