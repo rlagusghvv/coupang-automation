@@ -9,6 +9,7 @@ import { previewUploadFromUrl } from "./src/pipeline/previewUploadFromUrl.js";
 import { evaluateQcGate } from "./src/pipeline/qcGate.js";
 import { classifyUrl } from "./src/utils/urlFilter.js";
 import { computePrice } from "./src/utils/price.js";
+import { resolveDisplayCategoryCode } from "./src/utils/categoryMap.js";
 import { suggestTitlesHybrid } from "./src/utils/titleSuggest.js";
 import {
   initDb,
@@ -113,6 +114,20 @@ async function enrichPreviewForClient(previewRaw, settings = {}) {
     finalPrice: Number.isFinite(Number(finalPrice)) ? Number(finalPrice) : finalPrice ?? null,
     images,
     optionsCount: options.length,
+  };
+
+  const overrideCategoryCode = toPositiveIntOrNull(settings?.categoryOverrideCode);
+  const resolvedCategoryCode = overrideCategoryCode || resolveDisplayCategoryCode({
+    title: draft.title,
+    categoryText: draft.categoryText,
+    fallback: 0,
+  });
+  preview.category = {
+    usedCode: Number.isFinite(Number(resolvedCategoryCode)) && Number(resolvedCategoryCode) > 0
+      ? String(Math.floor(Number(resolvedCategoryCode)))
+      : "",
+    requestedCode: overrideCategoryCode ? String(overrideCategoryCode) : "",
+    source: overrideCategoryCode ? "override" : "rule",
   };
 
   if (!Array.isArray(preview.options) || preview.options.length === 0) {
@@ -768,11 +783,14 @@ function inferCatalogStatus(currentStatus, snapshot = null, fallback = "confirme
 
 function normalizeCatalogProduct(row) {
   const meta = row?.meta && typeof row.meta === "object" ? row.meta : {};
-  const detailImages = normalizeStringList(
+  const detailImagesRaw = normalizeStringList(
     Array.isArray(meta.detailImages) ? meta.detailImages : [],
     100,
   );
-  const mainImageUrl = pickFirstNonEmpty(meta.mainImageUrl, row?.imageUrl, detailImages[0] || "");
+  const mainImageUrl = pickFirstNonEmpty(meta.mainImageUrl, row?.imageUrl, detailImagesRaw[0] || "");
+  const detailImages = detailImagesRaw.length > 0
+    ? detailImagesRaw
+    : (mainImageUrl ? [mainImageUrl] : []);
   const followUp = meta.followUp && typeof meta.followUp === "object" ? meta.followUp : {};
   const validation = meta.validation && typeof meta.validation === "object" ? meta.validation : {};
   const sourceUrl = pickFirstNonEmpty(row?.sourceUrl, meta.sourceUrl);
@@ -1110,13 +1128,22 @@ app.post("/api/catalog/confirm", authRequired, async (req, res) => {
     const sourceUrl = String(b.sourceUrl || b.url || "").trim();
     if (!sourceUrl) return res.status(400).json({ ok: false, error: "missing url" });
 
+    const confirmDetailImages = normalizeStringList(
+      Array.isArray(b.detailImages) ? b.detailImages : [],
+      200,
+    );
+    const confirmMainImageUrl = String(b.mainImageUrl || "").trim();
+    if (confirmDetailImages.length === 0 && confirmMainImageUrl) {
+      confirmDetailImages.push(confirmMainImageUrl);
+    }
+
     const row = await upsertCatalogProductFromPayload({
       userId: req.user.id,
       payload: {
         sourceUrl,
         confirmedTitle: String(b.confirmedTitle || b.title || "").trim(),
-        mainImageUrl: String(b.mainImageUrl || "").trim(),
-        detailImages: Array.isArray(b.detailImages) ? b.detailImages : [],
+        mainImageUrl: confirmMainImageUrl,
+        detailImages: confirmDetailImages,
         presetId: b.presetId,
         categoryOverride: b.categoryOverride,
         status: "confirmed",
@@ -1441,10 +1468,39 @@ app.post("/api/catalog/:id/deploy", authRequired, async (req, res) => {
               ? meta.validation
               : {};
 
+        const uploadPreview = uploadResult?.preview && typeof uploadResult.preview === "object"
+          ? uploadResult.preview
+          : {};
+        const outcomePreview = outcome?.preview && typeof outcome.preview === "object"
+          ? outcome.preview
+          : {};
+
+        const deployedDetailImages = uniqueStrings([
+          ...(Array.isArray(uploadPreview?.contentImagesFiltered) ? uploadPreview.contentImagesFiltered : []),
+          ...(Array.isArray(outcomePreview?.contentImagesFiltered) ? outcomePreview.contentImagesFiltered : []),
+        ]).slice(0, 200);
+
+        const usedCategoryCode =
+          toPositiveIntOrNull(uploadResult?.category?.used) ||
+          toPositiveIntOrNull(uploadResult?.category?.requested) ||
+          toPositiveIntOrNull(meta?.categoryOverride);
+
         const nextMeta = {
           ...meta,
           followUp: live && live.ok ? live : uploadResult?.followUp || meta.followUp || {},
           validation,
+          mainImageUrl: pickFirstNonEmpty(
+            uploadResult?.draft?.imageUrl,
+            uploadPreview?.mainImageUrl,
+            outcomePreview?.mainImageUrl,
+            meta.mainImageUrl,
+            latest.imageUrl,
+          ),
+          detailImages:
+            deployedDetailImages.length > 0
+              ? deployedDetailImages
+              : normalizeStringList(Array.isArray(meta.detailImages) ? meta.detailImages : [], 200),
+          categoryOverride: usedCategoryCode,
           deployedAt: new Date().toISOString(),
           lastDeployResult: {
             ok: Boolean(outcome?.ok),
