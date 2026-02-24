@@ -93,6 +93,8 @@ const uploadConfirmProceedBtn = $("uploadConfirmProceed");
 const recoKeywordsEl = $("recoKeywords");
 const recoFillBtn = $("recoFill");
 const recoRefreshBtn = $("recoRefresh");
+const recoAutoCountEl = $("recoAutoCount");
+const recoAutoUploadBtn = $("recoAutoUpload");
 const recoListEl = $("recoList");
 
 const domeggookSessionBtn = $("createDomeggookSession");
@@ -1073,6 +1075,47 @@ async function fillRecommendations() {
   }
 }
 
+async function autoUploadRecommendations() {
+  if (recoAutoUploadBtn) recoAutoUploadBtn.disabled = true;
+  setStatus("추천 자동 업로드 실행 중...", "");
+  try {
+    const rawLimit = Number(recoAutoCountEl?.value || 5);
+    const limit = Math.max(1, Math.min(30, Number.isFinite(rawLimit) ? rawLimit : 5));
+    if (recoAutoCountEl) recoAutoCountEl.value = String(limit);
+
+    const res = await fetch("/api/recommendations/auto-upload", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ limit, onlyEligible: "1" }),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok || !json.ok) {
+      setStatus("추천 자동 업로드 실패", "bad");
+      log(json);
+      return;
+    }
+
+    const summary = json.summary || {};
+    setStatus(
+      `자동 업로드 완료 (성공 ${summary.uploaded || 0} / 스킵 ${summary.skipped || 0} / 실패 ${summary.failed || 0})`,
+      summary.failed ? "bad" : "ok",
+    );
+    log(json);
+
+    if (Number(summary.uploaded || 0) > 0) {
+      playSuccessSound();
+    }
+
+    await loadRecommendations();
+    await loadUploadHistory();
+  } catch (e) {
+    setStatus("추천 자동 업로드 에러", "bad");
+    log(String(e?.message || e));
+  } finally {
+    if (recoAutoUploadBtn) recoAutoUploadBtn.disabled = false;
+  }
+}
+
 function renderDuplicate(existing) {
   const title = existing?.title || "";
   const pid = existing?.sellerProductId || "";
@@ -1848,5 +1891,6 @@ domemeSessionSaveBtn?.addEventListener("click", async () => {
   // recommendations
   recoFillBtn?.addEventListener("click", fillRecommendations);
   recoRefreshBtn?.addEventListener("click", loadRecommendations);
+  recoAutoUploadBtn?.addEventListener("click", autoUploadRecommendations);
   await loadRecommendations();
 })();

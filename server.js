@@ -33,6 +33,10 @@ import { uploadDomemeExcel } from "./src/pipeline/uploadDomemeExcel.js";
 import { spawn } from "node:child_process";
 import { getSellerProduct } from "./src/coupang/api/getSellerProduct.js";
 import { getSellerProductHistories } from "./src/coupang/api/getSellerProductHistories.js";
+import {
+  listRecommendations,
+  fillRecommendationsForUser,
+} from "./src/server/recommendations.js";
 
 const app = express();
 app.set("trust proxy", true);
@@ -2111,6 +2115,100 @@ app.post("/api/upload/bulk", authRequired, async (req, res) => {
         uploaded: items.filter((x) => x.ok && !x.skipped).length,
         skipped: items.filter((x) => x.skipped).length,
         failed: items.filter((x) => !x.ok && !x.skipped).length,
+        force,
+      };
+
+      return res.json({ ok: true, summary, items });
+    } catch (e) {
+      return res.status(500).json({ ok: false, error: String(e?.message || e) });
+    }
+  }, res);
+});
+
+app.get("/api/recommendations", authRequired, async (req, res) => {
+  try {
+    const limit = Math.max(1, Math.min(200, Number(req.query?.limit || 40) || 40));
+    const items = await listRecommendations(req.user.id, { limit });
+    return res.json({ ok: true, items });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+app.post("/api/recommendations/fill", authRequired, async (req, res) => {
+  try {
+    const keywords = normalizeStringList(req.body?.keywords, 30);
+    const targetCount = Math.max(5, Math.min(100, Number(req.body?.targetCount || 20) || 20));
+    const maxAddPerRun = Math.max(1, Math.min(20, Number(req.body?.maxAddPerRun || 6) || 6));
+
+    const fill = await fillRecommendationsForUser({
+      userId: req.user.id,
+      settings: req.user.settings || {},
+      keywords,
+      targetCount,
+      maxAddPerRun,
+    });
+
+    const items = await listRecommendations(req.user.id, {
+      limit: Math.max(40, targetCount),
+    });
+
+    return res.json({
+      ok: true,
+      fill,
+      items,
+    });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+app.post("/api/recommendations/auto-upload", authRequired, async (req, res) => {
+  return runUploadLocked(async () => {
+    try {
+      const limit = Math.max(1, Math.min(30, Number(req.body?.limit || 5) || 5));
+      const force = parseForceFlag(req.body?.force ?? req.query?.force);
+      const onlyEligibleRaw = String(req.body?.onlyEligible ?? "1").trim().toLowerCase();
+      const onlyEligible = !(onlyEligibleRaw === "0" || onlyEligibleRaw === "false" || onlyEligibleRaw === "no");
+
+      const recoItems = await listRecommendations(req.user.id, { limit: Math.max(limit, 50) });
+      const candidates = recoItems
+        .filter((it) => {
+          const url = String(it?.sourceUrl || "").trim();
+          if (!url) return false;
+          if (!onlyEligible) return true;
+          return Boolean(it?.qc?.eligibleUpload);
+        })
+        .slice(0, limit);
+
+      const items = [];
+      for (const cand of candidates) {
+        const outcome = await executeUploadForUrl({
+          url: cand.sourceUrl,
+          user: req.user,
+          force,
+        });
+        appendUploadHistoryFromOutcome(cand.sourceUrl, outcome);
+
+        items.push({
+          recommendationId: cand.id || null,
+          title: cand.title || "",
+          url: cand.sourceUrl,
+          ok: Boolean(outcome?.ok),
+          skipped: Boolean(outcome?.skipped),
+          skipReason: normalizeSkipReason(outcome),
+          error: outcome?.error || null,
+          sellerProductId: resolveOutcomeSellerProductId(outcome),
+        });
+      }
+
+      const summary = {
+        requested: limit,
+        candidates: candidates.length,
+        uploaded: items.filter((x) => x.ok && !x.skipped).length,
+        skipped: items.filter((x) => x.skipped).length,
+        failed: items.filter((x) => !x.ok && !x.skipped).length,
+        onlyEligible,
         force,
       };
 

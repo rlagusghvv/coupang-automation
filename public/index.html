@@ -103,9 +103,11 @@
                   <label class="sr-only" for="recoKeywords">키워드</label>
                   <textarea id="recoKeywords" rows="2" placeholder="키워드(쉼표/줄바꿈 구분). 비우면 기본 키워드셋 사용" style="width: 100%;"></textarea>
                 </div>
-                <div class="btn-row" style="margin-top: 8px;">
+                <div class="btn-row" style="margin-top: 8px; flex-wrap: wrap;">
                   <button id="recoFill" type="button">후보 채우기</button>
                   <button id="recoRefresh" type="button" class="ghost">목록 새로고침</button>
+                  <input id="recoAutoCount" type="number" min="1" max="30" value="5" style="width:88px" aria-label="자동 업로드 개수" />
+                  <button id="recoAutoUpload" type="button">추천 자동 업로드</button>
                 </div>
                 <p class="hint">‘후보 채우기’는 캐시에 쌓아두는 방식이라 안정적입니다. 각 후보는 ‘미리보기’로 확인 후 업로드하세요.</p>
                 <div class="mini-card" id="recoList"></div>

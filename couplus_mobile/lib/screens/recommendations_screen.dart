@@ -98,17 +98,35 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
     try {
       final json = await widget.api
           .postJson('/api/recommendations/fill', {'targetCount': 20});
+
+      // New server response: returns items directly.
+      final directItems = (json['items'] as List?) ?? const [];
+      if (directItems.isNotEmpty) {
+        setState(() {
+          _items = directItems
+              .map((e) => (e as Map).cast<String, dynamic>())
+              .toList();
+          _selected.clear();
+          _error = null;
+        });
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('추천 후보를 생성했어요.')),
+          );
+        }
+        return;
+      }
+
+      // Legacy server response: job-based polling.
       final job = (json['job'] as Map?)?.cast<String, dynamic>() ?? {};
       final jobId = (job['id'] ?? '').toString();
 
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('추천 생성 시작했어요. 잠시만 기다려주세요…')),
-        );
-      }
-
       if (jobId.isNotEmpty) {
-        // Poll job for up to ~15 minutes and show progress if available.
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('추천 생성 시작했어요. 잠시만 기다려주세요…')),
+          );
+        }
         for (var i = 0; i < 450; i += 1) {
           await Future<void>.delayed(const Duration(seconds: 2));
           final j = await widget.api.getJson('/api/jobs/$jobId');

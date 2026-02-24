@@ -36,14 +36,14 @@ class ApiClient {
       return Uri.base.origin;
     }
     // Native default (can be changed in More 탭)
-    return 'https://app2.splui.com';
+    return 'https://app.splui.com';
   }
 
   final http.Client _client;
   String _baseUrl;
   final SessionStore _sessionStore;
 
-  String get baseUrl => kIsWeb ? Uri.base.origin : _baseUrl;
+  String get baseUrl => _baseUrl;
 
   String proxyImageUrl(String rawUrl) {
     final u = rawUrl.trim();
@@ -66,11 +66,9 @@ class ApiClient {
   Future<void> init() async {
     if (_loaded) return;
     _cookie = await _sessionStore.loadCookie();
-    if (!kIsWeb) {
-      final savedBaseUrl = await _sessionStore.loadBaseUrl();
-      if (savedBaseUrl != null && savedBaseUrl.trim().isNotEmpty) {
-        _baseUrl = savedBaseUrl.trim();
-      }
+    final savedBaseUrl = await _sessionStore.loadBaseUrl();
+    if (savedBaseUrl != null && savedBaseUrl.trim().isNotEmpty) {
+      _baseUrl = savedBaseUrl.trim();
     }
     _loaded = true;
   }

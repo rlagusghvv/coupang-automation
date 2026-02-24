@@ -7,6 +7,8 @@ import sqlite3 from "sqlite3";
 const DATA_DIR = path.join(process.cwd(), "data");
 const DB_PATH = path.join(DATA_DIR, "app.db");
 const UPLOADED_PRODUCTS_TABLE = "uploaded_products";
+const RECOMMENDATIONS_TABLE = "recommendations";
+const RECOMMENDATIONS_STATE_TABLE = "recommendations_state";
 
 function ensureDir() {
   if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -120,6 +122,75 @@ export async function initDb() {
     `CREATE INDEX IF NOT EXISTS idx_uploaded_products_user_fingerprint
       ON ${UPLOADED_PRODUCTS_TABLE} (user_id, image_fingerprint)`,
   );
+
+  await dbRun(
+    db,
+    `CREATE TABLE IF NOT EXISTS ${RECOMMENDATIONS_TABLE} (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      source_url TEXT NOT NULL,
+      keyword TEXT NOT NULL DEFAULT '',
+      title TEXT NOT NULL DEFAULT '',
+      main_image_url TEXT NOT NULL DEFAULT '',
+      source_price REAL,
+      shipping_fee REAL,
+      final_price REAL,
+      profit REAL,
+      margin_rate REAL,
+      score REAL,
+      reason TEXT NOT NULL DEFAULT '',
+      payload_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL
+    )`,
+  );
+  await ensureColumn(db, RECOMMENDATIONS_TABLE, "keyword", "keyword TEXT NOT NULL DEFAULT ''");
+  await ensureColumn(db, RECOMMENDATIONS_TABLE, "title", "title TEXT NOT NULL DEFAULT ''");
+  await ensureColumn(
+    db,
+    RECOMMENDATIONS_TABLE,
+    "main_image_url",
+    "main_image_url TEXT NOT NULL DEFAULT ''",
+  );
+  await ensureColumn(db, RECOMMENDATIONS_TABLE, "source_price", "source_price REAL");
+  await ensureColumn(db, RECOMMENDATIONS_TABLE, "shipping_fee", "shipping_fee REAL");
+  await ensureColumn(db, RECOMMENDATIONS_TABLE, "final_price", "final_price REAL");
+  await ensureColumn(db, RECOMMENDATIONS_TABLE, "profit", "profit REAL");
+  await ensureColumn(db, RECOMMENDATIONS_TABLE, "margin_rate", "margin_rate REAL");
+  await ensureColumn(db, RECOMMENDATIONS_TABLE, "score", "score REAL");
+  await ensureColumn(db, RECOMMENDATIONS_TABLE, "reason", "reason TEXT NOT NULL DEFAULT ''");
+  await ensureColumn(
+    db,
+    RECOMMENDATIONS_TABLE,
+    "payload_json",
+    "payload_json TEXT NOT NULL DEFAULT '{}'",
+  );
+  await ensureColumn(db, RECOMMENDATIONS_TABLE, "created_at", "created_at TEXT NOT NULL DEFAULT ''");
+  await dbRun(
+    db,
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_recommendations_user_source
+      ON ${RECOMMENDATIONS_TABLE} (user_id, source_url)`,
+  );
+  await dbRun(
+    db,
+    `CREATE INDEX IF NOT EXISTS idx_recommendations_user_score
+      ON ${RECOMMENDATIONS_TABLE} (user_id, score DESC)`,
+  );
+
+  await dbRun(
+    db,
+    `CREATE TABLE IF NOT EXISTS ${RECOMMENDATIONS_STATE_TABLE} (
+      user_id TEXT PRIMARY KEY,
+      next_keyword_idx INTEGER NOT NULL DEFAULT 0,
+      updated_at TEXT NOT NULL
+    )`,
+  );
+  await ensureColumn(
+    db,
+    RECOMMENDATIONS_STATE_TABLE,
+    "next_keyword_idx",
+    "next_keyword_idx INTEGER NOT NULL DEFAULT 0",
+  );
+  await ensureColumn(db, RECOMMENDATIONS_STATE_TABLE, "updated_at", "updated_at TEXT NOT NULL DEFAULT ''");
 
   db.close();
 }
