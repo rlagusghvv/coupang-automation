@@ -57,32 +57,60 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
     });
 
     try {
-      int started = 0;
-      for (final u in urls) {
-        // Start job (do not block on completion for bulk)
-        await widget.api.postJson('/api/jobs/start', {
-          'kind': 'upload',
-          'url': u,
-          'force': '0',
-        });
-        started += 1;
-        if (mounted) {
-          setState(() {
-            _error = '다중 업로드 시작중… ($started/${urls.length})';
-          });
-        }
-        await Future<void>.delayed(const Duration(milliseconds: 350));
+      final json = await widget.api.postJson('/api/upload/bulk', {
+        'urls': urls,
+        'force': '0',
+      });
+
+      final summary =
+          (json['summary'] as Map?)?.cast<String, dynamic>() ?? const {};
+      final items = (json['items'] as List?) ?? const [];
+
+      int asInt(dynamic v) {
+        return int.tryParse((v ?? 0).toString()) ?? 0;
       }
 
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('선택한 ${urls.length}개 업로드 작업을 시작했어요.')),
-        );
+      final uploaded = asInt(summary['uploaded']);
+      final skipped = asInt(summary['skipped']);
+      final failed = asInt(summary['failed']);
+
+      final reasonCounts = <String, int>{};
+      for (final raw in items) {
+        final row = (raw as Map).cast<String, dynamic>();
+        if (row['skipped'] == true || row['ok'] == false) {
+          final reason = (row['skipReason'] ?? row['error'] ?? 'unknown')
+              .toString()
+              .trim();
+          if (reason.isEmpty) continue;
+          reasonCounts[reason] = (reasonCounts[reason] ?? 0) + 1;
+        }
       }
+
+      final reasonPreview = reasonCounts.entries.toList()
+        ..sort((a, b) => b.value.compareTo(a.value));
+      final reasonText = reasonPreview
+          .take(3)
+          .map((entry) => '${entry.key} ${entry.value}건')
+          .join(', ');
 
       setState(() {
         _selected.clear();
+        _error = failed > 0 || skipped > 0
+            ? '다중 업로드 완료: 성공 $uploaded / 스킵 $skipped / 실패 $failed'
+                '${reasonText.isNotEmpty ? ' ($reasonText)' : ''}'
+            : null;
       });
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content:
+                Text('다중 업로드 완료: 성공 $uploaded / 스킵 $skipped / 실패 $failed'),
+          ),
+        );
+      }
+
+      await _refresh();
     } catch (e) {
       setState(() => _error = e.toString());
     } finally {
