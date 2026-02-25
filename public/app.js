@@ -45,7 +45,6 @@ const settingsEls = {
   coupangDeliveryCompanyCode: $("deliveryCode"),
   imageProxyBase: $("proxyBase"),
   allowedIps: $("allowedIps"),
-  domeggookOpenApiKey: $("domeggookOpenApiKey"),
   domeggookStorageStatePath: $("domeggookStorageStatePath"),
   domemeId: $("domemeId"),
   domemePw: $("domemePw"),
@@ -562,9 +561,6 @@ async function loadSettings() {
   settingsEls.coupangDeliveryCompanyCode.value = s.coupangDeliveryCompanyCode || "";
   settingsEls.imageProxyBase.value = s.imageProxyBase || "";
   settingsEls.allowedIps.value = s.allowedIps || "";
-  if (settingsEls.domeggookOpenApiKey) {
-    settingsEls.domeggookOpenApiKey.value = s.domeggookOpenApiKey || "";
-  }
   if (settingsEls.domeggookStorageStatePath) {
     settingsEls.domeggookStorageStatePath.value = s.domeggookStorageStatePath || "";
   }
@@ -700,7 +696,6 @@ async function saveSettings() {
     coupangDeliveryCompanyCode: settingsEls.coupangDeliveryCompanyCode.value.trim(),
     imageProxyBase: settingsEls.imageProxyBase.value.trim(),
     allowedIps: settingsEls.allowedIps.value.trim(),
-    domeggookOpenApiKey: settingsEls.domeggookOpenApiKey?.value?.trim?.() || "",
     domeggookStorageStatePath: settingsEls.domeggookStorageStatePath?.value?.trim?.() || "",
     domemeId: settingsEls.domemeId.value.trim(),
     domemePw: settingsEls.domemePw.value,

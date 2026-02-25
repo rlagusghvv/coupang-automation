@@ -475,7 +475,7 @@ function detectRecommendationHint(keywordDiagnostics = []) {
   return '';
 }
 
-async function fetchFastCandidatesFromList({ keyword, limit = 80, storageStatePath = '', openApiKey = '' }) {
+async function fetchFastCandidatesFromList({ keyword, limit = 80, storageStatePath = '' }) {
   // v2: Prefer Domeggook OpenAPI if available.
   // Fallback: Playwright list scraping (legacy).
   const q = String(keyword || '').trim();
@@ -486,7 +486,6 @@ async function fetchFastCandidatesFromList({ keyword, limit = 80, storageStatePa
   try {
     const { domeggookOpenApiGetItemList } = await import('../utils/domeggook_openapi.js');
     const r = await domeggookOpenApiGetItemList({
-      apiKey: String(openApiKey || '').trim(),
       keyword: q,
       market: 'dome',
       page: 1,
@@ -678,7 +677,6 @@ async function generateRecommendationsBatch({ settings, keywords, topN = 20, exc
         keyword: kw,
         limit: 40,
         storageStatePath: String(settings?.domeggookStorageStatePath || ''),
-        openApiKey: String(settings?.domeggookOpenApiKey || ''),
       });
       list = Array.isArray(result?.items) ? result.items : [];
       if (result?.diagnostics) keywordDiagnostics.push(result.diagnostics);
