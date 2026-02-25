@@ -67,6 +67,21 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
     }
   }
 
+  Future<void> _reloadListQuietly() async {
+    try {
+      final json = await widget.api.getJson('/api/recommendations', query: {
+        'limit': '50',
+      });
+      final list = (json['items'] as List?) ?? const [];
+      if (!mounted) return;
+      setState(() {
+        _items = list.map((e) => (e as Map).cast<String, dynamic>()).toList();
+      });
+    } catch (_) {
+      // best-effort sync only
+    }
+  }
+
   Future<void> _refreshReplacing() async {
     setState(() {
       _loading = true;
@@ -109,6 +124,7 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
       }
     } catch (e) {
       setState(() => _error = e.toString());
+      await _reloadListQuietly();
     } finally {
       if (mounted) setState(() => _loading = false);
     }

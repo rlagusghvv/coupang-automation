@@ -57,7 +57,7 @@ export function defaultKeywordSet() {
   ];
 }
 
-export async function fetchDomeggookUrlsByKeyword({ keyword, limit = 40, storageStatePath = '', maxPages = 4 }) {
+export async function fetchDomeggookUrlsByKeyword({ keyword, limit = 40, storageStatePath = '', maxPages = 2 }) {
   const q = String(keyword || '').trim();
   if (!q) return [];
 
@@ -109,7 +109,7 @@ export async function fetchDomeggookUrlsByKeyword({ keyword, limit = 40, storage
     return out.slice(0, limit);
   };
 
-  const want = Math.max(1, Math.min(10, Number(maxPages) || 1));
+  const want = Math.max(1, Math.min(4, Number(maxPages) || 1));
 
   // 1) Try plain fetch across pages (best-effort; may be limited by bot mitigation)
   try {
@@ -117,7 +117,7 @@ export async function fetchDomeggookUrlsByKeyword({ keyword, limit = 40, storage
     for (let pageNo = 1; pageNo <= want && all.length < limit; pageNo += 1) {
       const listUrl = pageNo === 1 ? baseUrl : `${baseUrl}&page=${pageNo}`;
       const controller = new AbortController();
-      const t = setTimeout(() => controller.abort(), 15_000);
+      const t = setTimeout(() => controller.abort(), 8_000);
       const r = await fetch(listUrl, {
         signal: controller.signal,
         headers: { 'User-Agent': 'Mozilla/5.0', 'Referer': 'https://domeggook.com/' },
@@ -126,7 +126,7 @@ export async function fetchDomeggookUrlsByKeyword({ keyword, limit = 40, storage
       if (r.status === 429) throw new Error('domeggook_rate_limited');
       if (!r.ok) break;
       const html = await r.text();
-      await new Promise((r) => setTimeout(r, 450));
+      await new Promise((r) => setTimeout(r, 220));
       const out = extractFromHtml(html);
       for (const u of out) {
         if (!all.includes(u)) all.push(u);
@@ -149,9 +149,8 @@ export async function fetchDomeggookUrlsByKeyword({ keyword, limit = 40, storage
     const all = [];
     for (let pageNo = 1; pageNo <= want && all.length < limit; pageNo += 1) {
       const listUrl = pageNo === 1 ? baseUrl : `${baseUrl}&page=${pageNo}`;
-      await page.goto(listUrl, { waitUntil: 'domcontentloaded', timeout: 60_000 });
-      await page.waitForTimeout(1100);
-      await page.waitForTimeout(350);
+      await page.goto(listUrl, { waitUntil: 'domcontentloaded', timeout: 20_000 });
+      await page.waitForTimeout(650);
       const html = await page.content();
       const out = extractFromHtml(html);
       for (const u of out) {
@@ -592,16 +591,18 @@ async function fetchFastCandidatesFromList({ keyword, limit = 80, storageStatePa
   }
 
   // 2) Fallback: get URLs then fetch each item HTML (may hit 429)
-  const urls = await fetchDomeggookUrlsByKeyword({ keyword: q, limit, storageStatePath }).catch((e) => {
+  const urls = await fetchDomeggookUrlsByKeyword({ keyword: q, limit: Math.min(limit, 12), storageStatePath }).catch((e) => {
     diagnostics.errors.push(`url_seed: ${normalizeErrorMessage(e)}`);
     return [];
   });
   const out = [];
+  const maxFallbackFetch = Math.max(1, Math.min(8, Number(limit) || 8));
 
   for (const u of urls) {
+    if (out.length >= maxFallbackFetch) break;
     try {
       const controller = new AbortController();
-      const t = setTimeout(() => controller.abort(), 12000);
+      const t = setTimeout(() => controller.abort(), 4_000);
       const r = await fetch(u, {
         signal: controller.signal,
         headers: { 'User-Agent': 'Mozilla/5.0', 'Referer': 'https://domeggook.com/' },
@@ -637,7 +638,7 @@ async function fetchFastCandidatesFromList({ keyword, limit = 80, storageStatePa
       if (diagnostics.errors.length < 8) diagnostics.errors.push(`item_fetch: ${normalizeErrorMessage(e)}`);
     }
 
-    await new Promise((r) => setTimeout(r, 180));
+    await new Promise((r) => setTimeout(r, 80));
   }
 
   diagnostics.strategy = out.length ? 'url_fallback' : diagnostics.strategy;
@@ -663,14 +664,22 @@ function strictValidatePreview(preview, banKeywords = DEFAULT_BAN_KEYWORDS) {
   return { ok: true, contentImageCount };
 }
 
-async function generateRecommendationsBatch({ settings, keywords, topN = 20, excludeUrls = new Set(), onProgress = null }) {
+async function generateRecommendationsBatch({
+  settings,
+  keywords,
+  topN = 20,
+  excludeUrls = new Set(),
+  onProgress = null,
+  maxRuntimeMs = 55_000,
+  previewTimeoutMs = 12_000,
+} = {}) {
   const seed = Array.isArray(keywords) && keywords.length > 0 ? keywords : defaultKeywordSet();
   const startedAt = Date.now();
   const keywordDiagnostics = [];
 
   const candidates = [];
   for (const kw of seed.slice(0, 12)) {
-    if (Date.now() - startedAt > 6 * 60_000) break;
+    if (Date.now() - startedAt > Math.floor(maxRuntimeMs * 0.45)) break;
     let list = [];
     try {
       const result = await fetchFastCandidatesFromList({
@@ -718,7 +727,7 @@ async function generateRecommendationsBatch({ settings, keywords, topN = 20, exc
 
   const scoredPool = [];
   for (const c of uniq) {
-    if (Date.now() - startedAt > 8.5 * 60_000) break;
+    if (Date.now() - startedAt > Math.floor(maxRuntimeMs * 0.65)) break;
     if (containsBanKeyword(c.title, DEFAULT_BAN_KEYWORDS)) continue;
 
     const fakePreview = {
@@ -745,9 +754,11 @@ async function generateRecommendationsBatch({ settings, keywords, topN = 20, exc
 
   const final = [];
   let validated = 0;
+  const maxValidate = Math.max(topN * 3, 18);
   for (const cand of scoredPool) {
     if (final.length >= topN) break;
-    if (Date.now() - startedAt > 12 * 60_000) break;
+    if (validated >= maxValidate) break;
+    if (Date.now() - startedAt > Math.floor(maxRuntimeMs * 0.92)) break;
     if (excludeUrls.has(cand.sourceUrl)) continue;
 
     const prev = await withTimeout(
@@ -755,7 +766,7 @@ async function generateRecommendationsBatch({ settings, keywords, topN = 20, exc
         ...(settings || {}),
         maxContentImages: 30,
       }),
-      45_000,
+      previewTimeoutMs,
       'preview_timeout',
     ).catch(() => null);
 
@@ -791,6 +802,29 @@ async function generateRecommendationsBatch({ settings, keywords, topN = 20, exc
     });
   }
 
+  // Keep UX stable: if strict preview validation yielded too few items,
+  // backfill with scored candidates so the list is not almost empty.
+  let fallbackFilledCount = 0;
+  if (final.length < topN) {
+    const chosen = new Set(final.map((x) => String(x?.sourceUrl || '')));
+    for (const cand of scoredPool) {
+      if (final.length >= topN) break;
+      if (excludeUrls.has(cand.sourceUrl)) continue;
+      if (chosen.has(cand.sourceUrl)) continue;
+      chosen.add(cand.sourceUrl);
+
+      final.push({
+        ...cand,
+        payload: {
+          ...cand.payload,
+          qc: { detailImageCount: 0, tier: 'C', eligibleUpload: false },
+          quickFallback: true,
+        },
+      });
+      fallbackFilledCount += 1;
+    }
+  }
+
   const diagnostics = {
     keywordsTried: Math.min(seed.length, 12),
     collectedCandidates: candidates.length,
@@ -798,6 +832,7 @@ async function generateRecommendationsBatch({ settings, keywords, topN = 20, exc
     scoredCandidates: scoredPool.length,
     validated,
     kept: final.length,
+    fallbackFilledCount,
     keywordDiagnostics: keywordDiagnostics.slice(0, 12).map((d) => ({
       keyword: d.keyword,
       strategy: d.strategy || 'none',

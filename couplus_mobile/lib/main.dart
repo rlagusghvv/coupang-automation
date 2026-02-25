@@ -7,6 +7,7 @@ import 'package:couplus_mobile/screens/orders_screen.dart';
 import 'package:couplus_mobile/services/push_token_service.dart';
 import 'package:couplus_mobile/ui/app_theme.dart';
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
   runApp(const CouplusApp());
@@ -35,6 +36,7 @@ class RootTabs extends StatefulWidget {
 }
 
 class _RootTabsState extends State<RootTabs> {
+  static const _kLastTabIndex = 'last_tab_index';
   int _index = 0;
 
   late final ApiClient _api = ApiClient();
@@ -43,8 +45,26 @@ class _RootTabsState extends State<RootTabs> {
   void initState() {
     super.initState();
     _api.init();
+    _restoreLastTab();
     // Native APNs token -> server registration (best-effort)
     PushTokenService.instance.bind(_api);
+  }
+
+  Future<void> _restoreLastTab() async {
+    try {
+      final p = await SharedPreferences.getInstance();
+      final saved = p.getInt(_kLastTabIndex);
+      if (!mounted || saved == null) return;
+      if (saved < 0 || saved > 4) return;
+      setState(() => _index = saved);
+    } catch (_) {}
+  }
+
+  Future<void> _saveLastTab(int i) async {
+    try {
+      final p = await SharedPreferences.getInstance();
+      await p.setInt(_kLastTabIndex, i);
+    } catch (_) {}
   }
 
   @override
@@ -70,7 +90,10 @@ class _RootTabsState extends State<RootTabs> {
           borderRadius: BorderRadius.circular(18),
           child: NavigationBar(
             selectedIndex: _index,
-            onDestinationSelected: (i) => setState(() => _index = i),
+            onDestinationSelected: (i) {
+              setState(() => _index = i);
+              _saveLastTab(i);
+            },
             destinations: const [
               NavigationDestination(
                 icon: Icon(Icons.home_outlined),

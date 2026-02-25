@@ -1040,6 +1040,17 @@ async function loadRecommendations() {
   }
 }
 
+async function syncRecommendationsAfterError(tries = 4, waitMs = 1200) {
+  for (let i = 0; i < tries; i += 1) {
+    try {
+      await loadRecommendations();
+    } catch {}
+    if (i < tries - 1) {
+      await new Promise((r) => setTimeout(r, waitMs));
+    }
+  }
+}
+
 function formatRecoDiagnosticsHint(diagnostics) {
   if (!diagnostics || typeof diagnostics !== "object") return "";
   const hint = String(diagnostics.hint || "").trim();
@@ -1077,6 +1088,7 @@ async function refreshRecommendationsReplacing() {
     if (!res.ok || !json.ok) {
       setStatus("추천 새로고침 실패", "bad");
       log(json);
+      await syncRecommendationsAfterError();
       return;
     }
 
@@ -1104,6 +1116,7 @@ async function refreshRecommendationsReplacing() {
   } catch (e) {
     setStatus("추천 새로고침 에러", "bad");
     log(String(e?.message || e));
+    await syncRecommendationsAfterError();
   } finally {
     if (recoRefreshBtn) recoRefreshBtn.disabled = false;
   }
