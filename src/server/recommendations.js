@@ -652,6 +652,15 @@ function detectRecommendationHint(keywordDiagnostics = []) {
   return '';
 }
 
+function normalizeCandidateImageUrl(rawUrl) {
+  const s = String(rawUrl || '').trim();
+  if (!s) return '';
+  if (s.startsWith('//')) return `https:${s}`;
+  if (s.startsWith('/')) return `https://domeggook.com${s}`;
+  if (/^https?:\/\//i.test(s)) return s.replace(/^http:\/\//i, 'https://');
+  return '';
+}
+
 async function fetchFastCandidatesFromList({ keyword, limit = 80, storageStatePath = '' }) {
   // v2: Prefer Domeggook OpenAPI if available.
   // Fallback: Playwright list scraping (legacy).
@@ -683,9 +692,27 @@ async function fetchFastCandidatesFromList({ keyword, limit = 80, storageStatePa
         const price = Number(it?.price);
         const url = String(it?.url || '').trim() || '';
         const no = String(it?.no || '').trim();
+        const imageUrl = normalizeCandidateImageUrl(
+          it?.img ||
+          it?.image ||
+          it?.imageUrl ||
+          it?.img_url ||
+          it?.thumbnail ||
+          it?.thumb ||
+          it?.main_image ||
+          it?.main_image_url ||
+          it?.image_url ||
+          it?.list_img ||
+          it?.photo,
+        );
         const finalUrl = url || (no ? `https://domeggook.com/${no}` : '');
         if (!finalUrl || !title || !Number.isFinite(price)) continue;
-        out.push({ url: finalUrl.replace(/^http:\/\//, 'https://'), title: title.slice(0, 80), price });
+        out.push({
+          url: finalUrl.replace(/^http:\/\//, 'https://'),
+          title: title.slice(0, 80),
+          price,
+          imageUrl,
+        });
         if (out.length >= limit) break;
       }
       if (out.length) {
@@ -748,7 +775,21 @@ async function fetchFastCandidatesFromList({ keyword, limit = 80, storageStatePa
           if (kw && !hayNorm.includes(kw)) continue;
 
           seen.add(id);
-          out.push({ url: `https://domeggook.com/${id}`, title: title.slice(0, 80), price });
+          const imgEl = card?.querySelector?.('img');
+          const imageUrlRaw =
+            imgEl?.getAttribute?.('data-src') ||
+            imgEl?.getAttribute?.('src') ||
+            '';
+          let imageUrl = String(imageUrlRaw || '').trim();
+          if (imageUrl.startsWith('//')) imageUrl = `https:${imageUrl}`;
+          else if (imageUrl.startsWith('/')) imageUrl = `${location.origin}${imageUrl}`;
+          imageUrl = imageUrl.replace(/^http:\/\//i, 'https://');
+          out.push({
+            url: `https://domeggook.com/${id}`,
+            title: title.slice(0, 80),
+            price,
+            imageUrl,
+          });
           if (out.length >= 120) break;
         }
 
@@ -805,11 +846,19 @@ async function fetchFastCandidatesFromList({ keyword, limit = 80, storageStatePa
         return Number.isFinite(n) ? n : null;
       })();
 
+      const imageUrl = (() => {
+        const m = html.match(/<meta property=["']og:image["'] content=["']([^"']+)["']/i);
+        if (m && m[1]) return normalizeCandidateImageUrl(m[1]);
+        const m2 = html.match(/<img[^>]+src=["']([^"']+)["']/i);
+        if (m2 && m2[1]) return normalizeCandidateImageUrl(m2[1]);
+        return '';
+      })();
+
       if (!title || !price) continue;
       const hay = String(title).toLowerCase().replace(/\s+/g, '');
       const needle = String(q).trim().toLowerCase().replace(/\s+/g, '');
       if (needle && !hay.includes(needle)) continue;
-      out.push({ url: u, title, price });
+      out.push({ url: u, title, price, imageUrl });
       if (out.length >= limit) break;
     } catch (e) {
       if (String(e?.message || e).includes('rate_limited')) throw e;
@@ -923,6 +972,7 @@ async function generateRecommendationsBatch({
       sourceUrl: c.url,
       keyword: c.keyword,
       ...s,
+      mainImageUrl: normalizeCandidateImageUrl(c.imageUrl || s.mainImageUrl),
       payload: { fast: true },
     });
 

@@ -44,6 +44,8 @@ import {
 const app = express();
 app.set("trust proxy", true);
 app.use(express.json({ limit: "2mb" }));
+const PUBLIC_DIR = path.join(process.cwd(), "public");
+const PUBLIC_APP_DIR = path.join(PUBLIC_DIR, "app");
 
 // ✅ DB 초기화
 await initDb();
@@ -56,7 +58,17 @@ app.use(
   ),
 );
 app.use("/tmp", express.static(path.join(process.cwd(), "out"))); // /tmp/tmp_main.jpg 같은 형태로도 접근 가능
-app.use(express.static(path.join(process.cwd(), "public")));
+app.use(
+  "/app",
+  (req, res, next) => {
+    res.set("Cache-Control", "no-store, no-cache, must-revalidate");
+    res.set("Pragma", "no-cache");
+    res.set("Expires", "0");
+    next();
+  },
+  express.static(PUBLIC_APP_DIR),
+);
+app.use(express.static(PUBLIC_DIR));
 
 const PORT = Number(process.env.PORT || 3000);
 

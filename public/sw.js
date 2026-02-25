@@ -1,6 +1,6 @@
 // Minimal service worker for PWA
 // NOTE: bump cache version when static behavior changes.
-const CACHE = "couplus-static-v2";
+const CACHE = "couplus-static-v3";
 const ASSETS = [
   "/",
   "/styles.css",
@@ -87,6 +87,13 @@ self.addEventListener("fetch", (event) => {
     event.respondWith(
       fetch(req).catch(() => caches.match(req).then((r) => r || Response.error())),
     );
+    return;
+  }
+
+  // Never cache Flutter /app bundle via legacy root SW.
+  // This prevents stale UI when / (legacy app) and /app (Flutter app) coexist.
+  if (url.pathname === "/app" || url.pathname.startsWith("/app/")) {
+    event.respondWith(fetch(req));
     return;
   }
 
