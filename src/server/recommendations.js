@@ -39,6 +39,20 @@ export const DEFAULT_BAN_KEYWORDS = [
   '액체', '향수', '스프레이',
 ];
 
+// Recommendation scoring relaxation: these are often over-broad for
+// discovery candidates and can eliminate almost everything.
+const RELAXABLE_RECO_BAN_KEYWORDS = new Set([
+  '충전기',
+  '전동',
+  '전기',
+  '220v',
+  '110v',
+  'kc',
+  '인증',
+  '전파',
+  '스틱',
+]);
+
 export function defaultKeywordSet() {
   // v0: focus on pet + car/desk convenience items (higher perceived value, lower brand lock-in)
   return [
@@ -1100,6 +1114,7 @@ async function generateRecommendationsBatch({
 
   const scoredPool = [];
   const scoreRejectCounts = {};
+  const strictRejectCounts = {};
   for (const c of uniq) {
     if (Date.now() - startedAt > Math.floor(maxRuntimeMs * 0.65)) break;
     if (containsBanKeyword(c.title, DEFAULT_BAN_KEYWORDS)) continue;
@@ -1143,7 +1158,10 @@ async function generateRecommendationsBatch({
   if (scoredPool.length < Math.max(8, Math.floor(topN * 1.2))) {
     const relaxedMinProfit = Math.max(1000, Math.floor(thresholds.minProfit * 0.6));
     const relaxedMinMarginRate = Math.max(0.12, Number((thresholds.minMarginRate * 0.7).toFixed(3)));
-    const relaxedBanKeywords = scoredPool.length === 0 ? [] : DEFAULT_BAN_KEYWORDS;
+    const shouldRelaxBanKeywords = scoredPool.length < Math.max(4, Math.ceil(Number(topN || 20) * 0.6));
+    const relaxedBanKeywords = shouldRelaxBanKeywords
+      ? DEFAULT_BAN_KEYWORDS.filter((kw) => !RELAXABLE_RECO_BAN_KEYWORDS.has(String(kw || '').toLowerCase()))
+      : DEFAULT_BAN_KEYWORDS;
     const existing = new Set(scoredPool.map((x) => String(x?.sourceUrl || '').trim()));
     for (const c of uniq) {
       if (Date.now() - startedAt > Math.floor(maxRuntimeMs * 0.75)) break;
@@ -1218,6 +1236,8 @@ async function generateRecommendationsBatch({
 
     const v = strictValidatePreview(prev, DEFAULT_BAN_KEYWORDS);
     if (!v.ok) {
+      const reason = String(v.reason || 'strict_validate_failed');
+      strictRejectCounts[reason] = Number(strictRejectCounts[reason] || 0) + 1;
       if (typeof onProgress === 'function' && validated % 3 === 0) {
         try { onProgress({ stage: 'validate', validated, kept: final.length, qcRejected, target: topN }); } catch {}
       }
@@ -1313,6 +1333,7 @@ async function generateRecommendationsBatch({
     uniqueCandidates: uniq.length,
     scoredCandidates: scoredPool.length,
     scoreRejectCounts,
+    strictRejectCounts,
     thresholds,
     policy,
     validated,
@@ -1336,6 +1357,12 @@ async function generateRecommendationsBatch({
   if (final.length === 0) {
     if (qcRejected > 0) {
       diagnostics.hint = `QC 통과 상품을 찾지 못했습니다. 검증 ${validated}건 중 QC 탈락 ${qcRejected}건입니다.`;
+    } else if (validated > 0) {
+      const topStrictReject = Object.entries(strictRejectCounts)
+        .sort((a, b) => Number(b?.[1] || 0) - Number(a?.[1] || 0))[0];
+      if (topStrictReject && Number(topStrictReject[1] || 0) > 0) {
+        diagnostics.hint = `품질 검증 단계에서 제외되었습니다 (${topStrictReject[0]} ${topStrictReject[1]}건).`;
+      }
     } else if (Number(diagnostics.scoredCandidates || 0) === 0) {
       const topReject = Object.entries(scoreRejectCounts)
         .sort((a, b) => Number(b?.[1] || 0) - Number(a?.[1] || 0))[0];
