@@ -18,6 +18,9 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
   bool _loading = false;
   String? _error;
   String? _lastRunSummary;
+  String? _activeFillJobId;
+  Map<String, dynamic>? _fillProgress;
+  DateTime? _fillStartedAt;
   List<Map<String, dynamic>> _items = const [];
   List<Map<String, dynamic>> _savedItems = const [];
   final Set<String> _savedUrls = <String>{};
@@ -55,6 +58,65 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
       return '후보가 0개입니다. 키워드/네트워크 상태를 확인해 주세요.';
     }
     return '';
+  }
+
+  String _fillProgressMessage(Map<String, dynamic> progress) {
+    final stage = (progress['stage'] ?? '').toString();
+    switch (stage) {
+      case 'start':
+      case 'queued':
+        final target =
+            int.tryParse((progress['targetCount'] ?? 0).toString()) ?? 0;
+        return target > 0 ? '작업 대기열 등록 완료 (목표 $target개)' : '작업 대기열 등록 완료';
+      case 'refresh_start':
+        final removed =
+            int.tryParse((progress['removed'] ?? 0).toString()) ?? 0;
+        final excluded =
+            int.tryParse((progress['excluded'] ?? 0).toString()) ?? 0;
+        return '기존 추천 $removed개 정리 완료 · 재노출 제외 후보 $excluded개';
+      case 'collect':
+        final keyword = (progress['keyword'] ?? '').toString();
+        final candidates =
+            int.tryParse((progress['candidates'] ?? 0).toString()) ?? 0;
+        return keyword.isNotEmpty
+            ? '후보 수집 중: $keyword ($candidates개)'
+            : '후보 수집 중: $candidates개';
+      case 'validate':
+        final validated =
+            int.tryParse((progress['validated'] ?? 0).toString()) ?? 0;
+        final kept = int.tryParse((progress['kept'] ?? 0).toString()) ?? 0;
+        final target = int.tryParse((progress['target'] ?? 0).toString()) ?? 0;
+        return '품질 검증 중: 검증 $validated건 · 유지 $kept/$target';
+      case 'rate_limited':
+        return '도매꾹 요청 제한 감지(429) - 잠시 후 자동 재시도 권장';
+      case 'done':
+        final count = int.tryParse((progress['count'] ?? 0).toString()) ?? 0;
+        final removed =
+            int.tryParse((progress['removedCount'] ?? 0).toString()) ?? 0;
+        return '완료: 기존 $removed개 교체, 새 $count개';
+      default:
+        return '추천 채우기 진행 중...';
+    }
+  }
+
+  double? _fillProgressRatio(Map<String, dynamic> progress) {
+    final stage = (progress['stage'] ?? '').toString();
+    if (stage != 'validate') return null;
+    final kept = int.tryParse((progress['kept'] ?? 0).toString()) ?? 0;
+    final target = int.tryParse((progress['target'] ?? 0).toString()) ?? 0;
+    if (target <= 0) return null;
+    final ratio = kept / target;
+    if (ratio <= 0) return 0;
+    if (ratio >= 1) return 1;
+    return ratio;
+  }
+
+  String _fillElapsedLabel() {
+    final started = _fillStartedAt;
+    if (started == null) return '';
+    final sec = DateTime.now().difference(started).inSeconds;
+    if (sec <= 0) return '';
+    return '${sec}s';
   }
 
   @override
@@ -242,51 +304,121 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
     return overrides;
   }
 
+  Future<void> _applyFillResponse(Map<String, dynamic> json) async {
+    final list = (json['items'] as List?) ?? const [];
+    final fill = (json['fill'] as Map?)?.cast<String, dynamic>() ??
+        const <String, dynamic>{};
+    final removed = int.tryParse((fill['removedCount'] ?? 0).toString()) ?? 0;
+    final count =
+        int.tryParse((fill['count'] ?? list.length).toString()) ?? list.length;
+    final cooldown = int.tryParse((fill['cooldownDays'] ?? 7).toString()) ?? 7;
+    final diagnostics =
+        (fill['diagnostics'] as Map?)?.cast<String, dynamic>() ??
+            const <String, dynamic>{};
+    final hint = _diagnosticsHint(diagnostics);
+
+    setState(() {
+      _items = list.map((e) => (e as Map).cast<String, dynamic>()).toList();
+      _selected.clear();
+      _showSavedOnly = false;
+      _lastRunSummary = '마지막 채우기 ${_nowLabel()} · $count개 생성(이전 $removed개 교체)';
+      _fillProgress = {
+        'stage': 'done',
+        'count': count,
+        'removedCount': removed,
+      };
+      _activeFillJobId = null;
+    });
+
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          count > 0
+              ? '추천 채우기 완료: 기존 $removed개 교체, 새 $count개 (재노출 제외 $cooldown일)'
+              : '추천 채우기 완료: 새 0개 (재노출 제외 $cooldown일)${hint.isNotEmpty ? " - $hint" : ""}',
+        ),
+      ),
+    );
+  }
+
+  Future<Map<String, dynamic>?> _pollFillJob(String jobId) async {
+    for (var i = 0; i < 180; i += 1) {
+      await Future<void>.delayed(const Duration(seconds: 1));
+      final j = await widget.api.getJson('/api/jobs/$jobId');
+      final job = (j['job'] as Map?)?.cast<String, dynamic>() ?? const {};
+      final progress =
+          (job['progress'] as Map?)?.cast<String, dynamic>() ??
+              const <String, dynamic>{};
+      if (mounted) {
+        setState(() {
+          _fillProgress = progress;
+        });
+      }
+      final status = (job['status'] ?? '').toString().toLowerCase();
+      if (status == 'success' || status == 'done') {
+        final result = (job['result'] as Map?)?.cast<String, dynamic>() ?? {};
+        if (result.isNotEmpty) return result;
+        final fill = (job['fill'] as Map?)?.cast<String, dynamic>() ?? {};
+        final items = (job['items'] as List?) ?? const [];
+        return {
+          'fill': fill,
+          'items': items,
+        };
+      }
+      if (status == 'failed') {
+        final message = (job['errorMessage'] ?? job['error'] ?? '추천 채우기 실패')
+            .toString()
+            .trim();
+        throw Exception(message.isEmpty ? '추천 채우기 실패' : message);
+      }
+    }
+    return null;
+  }
+
   Future<void> _runNow() async {
     setState(() {
       _loading = true;
       _error = null;
+      _fillStartedAt = DateTime.now();
+      _fillProgress = const {'stage': 'queued'};
     });
     try {
-      final json = await widget.api.postJson('/api/recommendations/fill', {
-        'targetCount': 6,
-      });
-      final list = (json['items'] as List?) ?? const [];
-      final fill = (json['fill'] as Map?)?.cast<String, dynamic>() ??
-          const <String, dynamic>{};
-      final removed =
-          int.tryParse((fill['removedCount'] ?? 0).toString()) ?? 0;
-      final count =
-          int.tryParse((fill['count'] ?? list.length).toString()) ??
-              list.length;
-      final cooldown =
-          int.tryParse((fill['cooldownDays'] ?? 7).toString()) ?? 7;
-      final diagnostics =
-          (fill['diagnostics'] as Map?)?.cast<String, dynamic>() ??
-              const <String, dynamic>{};
-      final hint = _diagnosticsHint(diagnostics);
+      Map<String, dynamic>? startJson;
+      try {
+        startJson = await widget.api.postJson('/api/recommendations/fill/start', {
+          'targetCount': 6,
+        });
+      } on ApiException catch (e) {
+        if (e.statusCode != 404) rethrow;
+      }
 
-      setState(() {
-        _items = list.map((e) => (e as Map).cast<String, dynamic>()).toList();
-        _selected.clear();
-        _showSavedOnly = false;
-        _lastRunSummary =
-            '마지막 채우기 ${_nowLabel()} · $count개 생성(이전 $removed개 교체)';
-      });
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              count > 0
-                  ? '추천 채우기 완료: 기존 $removed개 교체, 새 $count개 (재노출 제외 $cooldown일)'
-                  : '추천 채우기 완료: 새 0개 (재노출 제외 $cooldown일)${hint.isNotEmpty ? " - $hint" : ""}',
-            ),
-          ),
-        );
+      final job = (startJson?['job'] as Map?)?.cast<String, dynamic>() ?? {};
+      final jobId = (job['id'] ?? '').toString().trim();
+      if (jobId.isNotEmpty) {
+        setState(() {
+          _activeFillJobId = jobId;
+          _fillProgress =
+              (job['progress'] as Map?)?.cast<String, dynamic>() ??
+                  const {'stage': 'queued'};
+        });
+        final result = await _pollFillJob(jobId);
+        if (result == null) {
+          throw Exception('추천 채우기 진행시간이 길어져 타임아웃되었습니다. 다시 시도해 주세요.');
+        }
+        await _applyFillResponse(result);
+      } else {
+        // Fallback for older server runtimes without async fill job endpoint.
+        final json = await widget.api.postJson('/api/recommendations/fill', {
+          'targetCount': 6,
+        });
+        await _applyFillResponse(json);
       }
     } catch (e) {
-      setState(() => _error = e.toString());
+      setState(() {
+        _error = e.toString();
+        _activeFillJobId = null;
+      });
       await _reloadListQuietly();
     } finally {
       if (mounted) setState(() => _loading = false);
@@ -414,6 +546,70 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
                     icon: const Icon(Icons.cloud_upload_outlined, size: 18),
                     label: const Text('선택 업로드'),
                   ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 10),
+          ],
+          if (_fillProgress != null) ...[
+            AppCard(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(
+                        _loading ? Icons.sync : Icons.task_alt,
+                        size: 18,
+                        color: Theme.of(context).colorScheme.primary,
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          _loading ? '추천 채우기 진행 중' : '추천 채우기 상태',
+                          style: const TextStyle(fontWeight: FontWeight.w800),
+                        ),
+                      ),
+                      if ((_activeFillJobId ?? '').isNotEmpty)
+                        Text(
+                          '#${_activeFillJobId!.length > 8 ? _activeFillJobId!.substring(0, 8) : _activeFillJobId!}',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Theme.of(context)
+                                .colorScheme
+                                .onSurface
+                                .withValues(alpha: 0.65),
+                          ),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    _fillProgressMessage(_fillProgress!),
+                    style: TextStyle(
+                      color: Theme.of(context)
+                          .colorScheme
+                          .onSurface
+                          .withValues(alpha: 0.85),
+                    ),
+                  ),
+                  if (_fillElapsedLabel().isNotEmpty) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      '경과 시간: ${_fillElapsedLabel()}',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Theme.of(context)
+                            .colorScheme
+                            .onSurface
+                            .withValues(alpha: 0.6),
+                      ),
+                    ),
+                  ],
+                  if (_fillProgressRatio(_fillProgress!) != null) ...[
+                    const SizedBox(height: 10),
+                    LinearProgressIndicator(value: _fillProgressRatio(_fillProgress!)),
+                  ],
                 ],
               ),
             ),

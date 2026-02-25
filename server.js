@@ -562,6 +562,30 @@ app.get('/api/image-proxy', async (req, res) => {
 // --- Backward-compatible endpoints for Flutter /app runtime ---
 const legacyJobs = new Map();
 
+function initLegacyJob(kind, seedProgress = {}) {
+  const id = crypto.randomUUID();
+  const now = new Date().toISOString();
+  const job = {
+    id,
+    kind,
+    status: "running",
+    createdAt: now,
+    updatedAt: now,
+    progress: {
+      stage: "queued",
+      ...seedProgress,
+    },
+  };
+  legacyJobs.set(id, job);
+  return job;
+}
+
+function patchLegacyJob(job, patch = {}) {
+  if (!job || typeof job !== "object") return;
+  Object.assign(job, patch, { updatedAt: new Date().toISOString() });
+  legacyJobs.set(job.id, job);
+}
+
 app.get('/api/dashboard', authRequired, async (_req, res) => {
   const uploadHistory = loadUploadHistory().slice(0, 20);
   return res.json({
@@ -2193,6 +2217,86 @@ app.delete("/api/recommendations/saved", authRequired, async (req, res) => {
     });
     if (!removed?.ok) return res.status(400).json({ ok: false, error: removed?.error || "remove_failed" });
     return res.json({ ok: true, removed });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+app.post("/api/recommendations/fill/start", authRequired, async (req, res) => {
+  try {
+    const keywords = normalizeStringList(req.body?.keywords, 30);
+    const targetCount = Math.max(5, Math.min(100, Number(req.body?.targetCount || 20) || 20));
+    const cooldownDays = Math.max(
+      1,
+      Math.min(60, Number(req.body?.cooldownDays || req.user?.settings?.recommendationCooldownDays || 7) || 7),
+    );
+
+    const job = initLegacyJob("recommendations_fill", {
+      stage: "queued",
+      targetCount,
+    });
+
+    (async () => {
+      try {
+        patchLegacyJob(job, {
+          progress: {
+            stage: "start",
+            targetCount,
+            keywordsCount: keywords.length,
+          },
+        });
+        const fill = await refreshRecommendationsForUser({
+          userId: req.user.id,
+          settings: req.user.settings || {},
+          keywords,
+          targetCount,
+          cooldownDays,
+          onProgress: (progress) => {
+            patchLegacyJob(job, {
+              status: "running",
+              progress: {
+                stage: String(progress?.stage || "running"),
+                ...progress,
+              },
+            });
+          },
+        });
+
+        const items = await listRecommendations(req.user.id, {
+          limit: Math.max(40, targetCount),
+        });
+
+        patchLegacyJob(job, {
+          status: "success",
+          progress: {
+            stage: "done",
+            count: Number(fill?.count || items.length) || items.length,
+            removedCount: Number(fill?.removedCount || 0) || 0,
+            targetCount,
+          },
+          fill,
+          items,
+          result: { fill, items },
+        });
+      } catch (e) {
+        patchLegacyJob(job, {
+          status: "failed",
+          errorMessage: String(e?.message || e),
+          error: String(e?.stack || e?.message || e),
+        });
+      }
+    })();
+
+    return res.json({
+      ok: true,
+      job: {
+        id: job.id,
+        kind: job.kind,
+        status: job.status,
+        createdAt: job.createdAt,
+        progress: job.progress,
+      },
+    });
   } catch (e) {
     return res.status(500).json({ ok: false, error: String(e?.message || e) });
   }

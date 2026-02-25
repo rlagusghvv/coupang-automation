@@ -33,24 +33,6 @@
   <link rel="manifest" href="manifest.json">
 </head>
 <body>
-  <script>
-    // Detach stale root SW (/sw.js) and old flutter workers to avoid cached old UI.
-    (function () {
-      if (!('serviceWorker' in navigator)) return;
-      navigator.serviceWorker.getRegistrations().then(function (regs) {
-        return Promise.all(regs.map(function (r) {
-          var u = "";
-          try {
-            u = String((r.active && r.active.scriptURL) || (r.waiting && r.waiting.scriptURL) || (r.installing && r.installing.scriptURL) || "");
-          } catch (_) {}
-          if (u.includes("/sw.js") || u.includes("flutter_service_worker.js")) {
-            return r.unregister();
-          }
-          return false;
-        }));
-      }).catch(function () {});
-    })();
-  </script>
-  <script src="flutter_bootstrap.js?build=20260225_saved_hotfix_2" async></script>
+  <script src="flutter_bootstrap.js" async></script>
 </body>
 </html>
