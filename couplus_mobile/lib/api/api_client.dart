@@ -71,6 +71,15 @@ class ApiClient {
     return v;
   }
 
+  bool _isSameOriginWeb(String base) {
+    if (!kIsWeb) return true;
+    try {
+      return Uri.parse(base).origin == Uri.base.origin;
+    } catch (_) {
+      return false;
+    }
+  }
+
   Uri _uForBase(String base, String path, [Map<String, String>? query]) {
     final p = path.startsWith('/') ? path : '/$path';
     return Uri.parse(base).replace(path: p, queryParameters: query);
@@ -81,7 +90,14 @@ class ApiClient {
     _cookie = await _sessionStore.loadCookie();
     final savedBaseUrl = await _sessionStore.loadBaseUrl();
     if (savedBaseUrl != null && savedBaseUrl.trim().isNotEmpty) {
-      _baseUrl = _normalizeBase(savedBaseUrl);
+      final saved = _normalizeBase(savedBaseUrl);
+      if (!kIsWeb || _isSameOriginWeb(saved)) {
+        _baseUrl = saved;
+      } else {
+        // Web must stay same-origin to avoid CORS/preflight failures.
+        _baseUrl = Uri.base.origin;
+        await _sessionStore.saveBaseUrl(_baseUrl);
+      }
     }
     _loaded = true;
   }
@@ -103,6 +119,9 @@ class ApiClient {
   Future<void> setBaseUrl(String next) async {
     final v = _normalizeBase(next);
     if (v.isEmpty) return;
+    if (kIsWeb && !_isSameOriginWeb(v)) {
+      return;
+    }
     _baseUrl = v;
     await _sessionStore.saveBaseUrl(v);
   }
@@ -147,8 +166,13 @@ class ApiClient {
       if (seen.add(v)) out.add(v);
     }
 
+    if (kIsWeb) {
+      add(Uri.base.origin);
+      if (_isSameOriginWeb(_baseUrl)) add(_baseUrl);
+      return out;
+    }
+
     add(_baseUrl);
-    if (kIsWeb) add(Uri.base.origin);
     for (final b in _fallbackBaseUrls) {
       add(b);
     }
@@ -164,6 +188,7 @@ class ApiClient {
 
   Future<void> _rememberBaseIfChanged(String nextBase) async {
     final v = _normalizeBase(nextBase);
+    if (kIsWeb && !_isSameOriginWeb(v)) return;
     if (v == _baseUrl) return;
     _baseUrl = v;
     await _sessionStore.saveBaseUrl(v);

@@ -74,7 +74,7 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
     });
     try {
       final json = await widget.api.postJson('/api/recommendations/refresh', {
-        'targetCount': 20,
+        'targetCount': 6,
       });
       final list = (json['items'] as List?) ?? const [];
       final refresh = (json['refresh'] as Map?)?.cast<String, dynamic>() ??
@@ -193,7 +193,7 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
     });
     try {
       final json = await widget.api
-          .postJson('/api/recommendations/fill', {'targetCount': 20});
+          .postJson('/api/recommendations/fill', {'targetCount': 6});
 
       // New server response: returns items directly.
       final directItems = (json['items'] as List?) ?? const [];

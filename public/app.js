@@ -1065,7 +1065,7 @@ async function refreshRecommendationsReplacing() {
   setStatus("추천 새로고침 중... (기존 목록 교체)", "");
   try {
     const keywords = parseKeywords(recoKeywordsEl?.value);
-    const body = { targetCount: 20 };
+    const body = { targetCount: 6 };
     if (keywords.length) body.keywords = keywords;
 
     const res = await fetch("/api/recommendations/refresh", {
@@ -1114,7 +1114,7 @@ async function fillRecommendations() {
   setStatus("후보 생성 중...", "");
   try {
     const keywords = parseKeywords(recoKeywordsEl?.value);
-    const body = { targetCount: 20 };
+    const body = { targetCount: 6 };
     if (keywords.length) body.keywords = keywords;
 
     const res = await fetch("/api/recommendations/fill", {
