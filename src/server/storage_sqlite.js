@@ -10,6 +10,7 @@ const UPLOADED_PRODUCTS_TABLE = "uploaded_products";
 const RECOMMENDATIONS_TABLE = "recommendations";
 const RECOMMENDATIONS_STATE_TABLE = "recommendations_state";
 const RECOMMENDATIONS_SEEN_TABLE = "recommendations_seen";
+const RECOMMENDATIONS_SAVED_TABLE = "recommendations_saved";
 
 function ensureDir() {
   if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -209,6 +210,37 @@ export async function initDb() {
     db,
     `CREATE INDEX IF NOT EXISTS idx_recommendations_seen_user_last_seen
       ON ${RECOMMENDATIONS_SEEN_TABLE} (user_id, last_seen_at DESC)`,
+  );
+
+  await dbRun(
+    db,
+    `CREATE TABLE IF NOT EXISTS ${RECOMMENDATIONS_SAVED_TABLE} (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      source_url TEXT NOT NULL,
+      keyword TEXT NOT NULL DEFAULT '',
+      title TEXT NOT NULL DEFAULT '',
+      main_image_url TEXT NOT NULL DEFAULT '',
+      source_price REAL,
+      shipping_fee REAL,
+      final_price REAL,
+      profit REAL,
+      margin_rate REAL,
+      score REAL,
+      reason TEXT NOT NULL DEFAULT '',
+      payload_json TEXT NOT NULL DEFAULT '{}',
+      saved_at TEXT NOT NULL
+    )`,
+  );
+  await dbRun(
+    db,
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_recommendations_saved_user_source
+      ON ${RECOMMENDATIONS_SAVED_TABLE} (user_id, source_url)`,
+  );
+  await dbRun(
+    db,
+    `CREATE INDEX IF NOT EXISTS idx_recommendations_saved_user_saved_at
+      ON ${RECOMMENDATIONS_SAVED_TABLE} (user_id, saved_at DESC)`,
   );
 
   db.close();

@@ -17,8 +17,23 @@ class RecommendationsScreen extends StatefulWidget {
 class _RecommendationsScreenState extends State<RecommendationsScreen> {
   bool _loading = false;
   String? _error;
+  String? _lastRunSummary;
   List<Map<String, dynamic>> _items = const [];
+  List<Map<String, dynamic>> _savedItems = const [];
+  final Set<String> _savedUrls = <String>{};
+  bool _showSavedOnly = false;
   final Set<String> _selected = <String>{};
+
+  List<Map<String, dynamic>> get _visibleItems =>
+      _showSavedOnly ? _savedItems : _items;
+
+  String _nowLabel() {
+    final n = DateTime.now();
+    final hh = n.hour.toString().padLeft(2, '0');
+    final mm = n.minute.toString().padLeft(2, '0');
+    final ss = n.second.toString().padLeft(2, '0');
+    return '$hh:$mm:$ss';
+  }
 
   String _diagnosticsHint(Map<String, dynamic> diagnostics) {
     final hint = (diagnostics['hint'] ?? '').toString().trim();
@@ -54,12 +69,25 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
       _error = null;
     });
     try {
-      final json = await widget.api.getJson('/api/recommendations', query: {
+      final recoJson = await widget.api.getJson('/api/recommendations', query: {
         'limit': '50',
       });
-      final list = (json['items'] as List?) ?? const [];
-      setState(() => _items =
-          list.map((e) => (e as Map).cast<String, dynamic>()).toList());
+      final savedJson =
+          await widget.api.getJson('/api/recommendations/saved', query: {
+        'limit': '200',
+      });
+      final reco = (recoJson['items'] as List?) ?? const [];
+      final saved = (savedJson['items'] as List?) ?? const [];
+      setState(() {
+        _items = reco.map((e) => (e as Map).cast<String, dynamic>()).toList();
+        _savedItems =
+            saved.map((e) => (e as Map).cast<String, dynamic>()).toList();
+        _savedUrls
+          ..clear()
+          ..addAll(_savedItems
+              .map((e) => (e['sourceUrl'] ?? '').toString().trim())
+              .where((u) => u.isNotEmpty));
+      });
     } catch (e) {
       setState(() => _error = e.toString());
     } finally {
@@ -69,46 +97,181 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
 
   Future<void> _reloadListQuietly() async {
     try {
-      final json = await widget.api.getJson('/api/recommendations', query: {
+      final recoJson = await widget.api.getJson('/api/recommendations', query: {
         'limit': '50',
       });
-      final list = (json['items'] as List?) ?? const [];
+      final savedJson =
+          await widget.api.getJson('/api/recommendations/saved', query: {
+        'limit': '200',
+      });
+      final reco = (recoJson['items'] as List?) ?? const [];
+      final saved = (savedJson['items'] as List?) ?? const [];
       if (!mounted) return;
       setState(() {
-        _items = list.map((e) => (e as Map).cast<String, dynamic>()).toList();
+        _items = reco.map((e) => (e as Map).cast<String, dynamic>()).toList();
+        _savedItems =
+            saved.map((e) => (e as Map).cast<String, dynamic>()).toList();
+        _savedUrls
+          ..clear()
+          ..addAll(_savedItems
+              .map((e) => (e['sourceUrl'] ?? '').toString().trim())
+              .where((u) => u.isNotEmpty));
       });
     } catch (_) {
       // best-effort sync only
     }
   }
 
-  Future<void> _refreshReplacing() async {
+  Future<void> _toggleSave(Map<String, dynamic> item) async {
+    final url = (item['sourceUrl'] ?? '').toString().trim();
+    if (url.isEmpty) return;
+    final wasSaved = _savedUrls.contains(url);
+    setState(() {
+      if (wasSaved) {
+        _savedUrls.remove(url);
+      } else {
+        _savedUrls.add(url);
+      }
+    });
+    try {
+      if (wasSaved) {
+        await widget.api.deleteJson(
+          '/api/recommendations/saved?sourceUrl=${Uri.encodeComponent(url)}',
+        );
+      } else {
+        await widget.api.postJson('/api/recommendations/saved', {'item': item});
+      }
+      await _reloadListQuietly();
+    } catch (e) {
+      // rollback optimistic state
+      setState(() {
+        if (wasSaved) {
+          _savedUrls.add(url);
+        } else {
+          _savedUrls.remove(url);
+        }
+      });
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('저장 처리 실패: $e')),
+        );
+      }
+    }
+  }
+
+  Future<Map<String, dynamic>?> _editBulkTitleOverrides(
+    List<Map<String, dynamic>> targets,
+  ) async {
+    final controllers = <String, TextEditingController>{};
+    for (final item in targets) {
+      final url = (item['sourceUrl'] ?? '').toString().trim();
+      if (url.isEmpty || controllers.containsKey(url)) continue;
+      controllers[url] = TextEditingController(
+        text: (item['title'] ?? '').toString(),
+      );
+    }
+    if (controllers.isEmpty) return {};
+
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) {
+        return AlertDialog(
+          title: const Text('다중 업로드 상품명 수정'),
+          content: SizedBox(
+            width: 640,
+            child: ListView(
+              shrinkWrap: true,
+              children: targets.map((item) {
+                final url = (item['sourceUrl'] ?? '').toString().trim();
+                final c = controllers[url];
+                if (c == null) return const SizedBox.shrink();
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 10),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        (item['title'] ?? '(제목 없음)').toString(),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontSize: 12),
+                      ),
+                      const SizedBox(height: 4),
+                      TextField(
+                        controller: c,
+                        decoration: const InputDecoration(
+                          labelText: '업로드 상품명',
+                          isDense: true,
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              }).toList(),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: const Text('취소'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(ctx).pop(true),
+              child: const Text('업로드'),
+            ),
+          ],
+        );
+      },
+    );
+
+    final overrides = <String, dynamic>{};
+    if (ok == true) {
+      for (final entry in controllers.entries) {
+        final nextTitle = entry.value.text.trim();
+        if (nextTitle.isEmpty) continue;
+        overrides[entry.key] = {
+          'titleOverride': nextTitle,
+        };
+      }
+    }
+
+    for (final c in controllers.values) {
+      c.dispose();
+    }
+    if (ok != true) return null;
+    return overrides;
+  }
+
+  Future<void> _runNow() async {
     setState(() {
       _loading = true;
       _error = null;
     });
     try {
-      final json = await widget.api.postJson('/api/recommendations/refresh', {
+      final json = await widget.api.postJson('/api/recommendations/fill', {
         'targetCount': 6,
       });
       final list = (json['items'] as List?) ?? const [];
-      final refresh = (json['refresh'] as Map?)?.cast<String, dynamic>() ??
+      final fill = (json['fill'] as Map?)?.cast<String, dynamic>() ??
           const <String, dynamic>{};
       final removed =
-          int.tryParse((refresh['removedCount'] ?? 0).toString()) ?? 0;
+          int.tryParse((fill['removedCount'] ?? 0).toString()) ?? 0;
       final count =
-          int.tryParse((refresh['count'] ?? list.length).toString()) ??
+          int.tryParse((fill['count'] ?? list.length).toString()) ??
               list.length;
       final cooldown =
-          int.tryParse((refresh['cooldownDays'] ?? 7).toString()) ?? 7;
+          int.tryParse((fill['cooldownDays'] ?? 7).toString()) ?? 7;
       final diagnostics =
-          (refresh['diagnostics'] as Map?)?.cast<String, dynamic>() ??
+          (fill['diagnostics'] as Map?)?.cast<String, dynamic>() ??
               const <String, dynamic>{};
       final hint = _diagnosticsHint(diagnostics);
 
       setState(() {
         _items = list.map((e) => (e as Map).cast<String, dynamic>()).toList();
         _selected.clear();
+        _showSavedOnly = false;
+        _lastRunSummary =
+            '마지막 채우기 ${_nowLabel()} · $count개 생성(이전 $removed개 교체)';
       });
 
       if (mounted) {
@@ -116,8 +279,8 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
           SnackBar(
             content: Text(
               count > 0
-                  ? '추천 새로고침 완료: 기존 $removed개 교체, 새 $count개 (재노출 제외 $cooldown일)'
-                  : '추천 새로고침 완료: 새 0개 (재노출 제외 $cooldown일)${hint.isNotEmpty ? " - $hint" : ""}',
+                  ? '추천 채우기 완료: 기존 $removed개 교체, 새 $count개 (재노출 제외 $cooldown일)'
+                  : '추천 채우기 완료: 새 0개 (재노출 제외 $cooldown일)${hint.isNotEmpty ? " - $hint" : ""}',
             ),
           ),
         );
@@ -135,6 +298,16 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
   Future<void> _uploadSelected() async {
     final urls = _selected.toList();
     if (urls.isEmpty) return;
+    final byUrl = <String, Map<String, dynamic>>{};
+    for (final it in [..._items, ..._savedItems]) {
+      final u = (it['sourceUrl'] ?? '').toString().trim();
+      if (u.isEmpty) continue;
+      byUrl[u] = it;
+    }
+    final targets =
+        urls.map((u) => byUrl[u]).whereType<Map<String, dynamic>>().toList();
+    final overrides = await _editBulkTitleOverrides(targets);
+    if (overrides == null) return;
 
     setState(() {
       _loading = true;
@@ -145,6 +318,7 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
       final json = await widget.api.postJson('/api/upload/bulk', {
         'urls': urls,
         'force': '0',
+        if (overrides.isNotEmpty) 'overridesByUrl': overrides,
       });
 
       final summary =
@@ -202,102 +376,14 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
     }
   }
 
-  Future<void> _runNow() async {
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
-    try {
-      final json = await widget.api
-          .postJson('/api/recommendations/fill', {'targetCount': 6});
-
-      // New server response: returns items directly.
-      final directItems = (json['items'] as List?) ?? const [];
-      final fill =
-          (json['fill'] as Map?)?.cast<String, dynamic>() ??
-              const <String, dynamic>{};
-      final diagnostics =
-          (fill['diagnostics'] as Map?)?.cast<String, dynamic>() ??
-              const <String, dynamic>{};
-      final hint = _diagnosticsHint(diagnostics);
-      if (directItems.isNotEmpty) {
-        setState(() {
-          _items = directItems
-              .map((e) => (e as Map).cast<String, dynamic>())
-              .toList();
-          _selected.clear();
-          _error = null;
-        });
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('추천 후보를 생성했어요.')),
-          );
-        }
-        return;
-      }
-
-      if (hint.isNotEmpty) {
-        setState(() => _error = hint);
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(hint)),
-          );
-        }
-      }
-
-      // Legacy server response: job-based polling.
-      final job = (json['job'] as Map?)?.cast<String, dynamic>() ?? {};
-      final jobId = (job['id'] ?? '').toString();
-
-      if (jobId.isNotEmpty) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('추천 생성 시작했어요. 잠시만 기다려주세요…')),
-          );
-        }
-        for (var i = 0; i < 450; i += 1) {
-          await Future<void>.delayed(const Duration(seconds: 2));
-          final j = await widget.api.getJson('/api/jobs/$jobId');
-          final job = (j['job'] as Map?)?.cast<String, dynamic>() ?? {};
-          final status = (job['status'] ?? '').toString();
-          final progress =
-              (job['result']?['progress'] as Map?)?.cast<String, dynamic>() ??
-                  {};
-
-          if (progress.isNotEmpty && mounted) {
-            final stage = (progress['stage'] ?? '').toString();
-            final candidates = (progress['candidates'] ?? 0).toString();
-            final validated = (progress['validated'] ?? 0).toString();
-            final kept = (progress['kept'] ?? 0).toString();
-            final target = (progress['target'] ?? 0).toString();
-            setState(() {
-              _error =
-                  '진행중: $stage (후보 $candidates / 검증 $validated / 유지 $kept/$target)';
-            });
-          }
-
-          if (status == 'success') break;
-          if (status == 'failed') {
-            throw Exception(job['errorMessage'] ?? '추천 생성 실패');
-          }
-        }
-      }
-
-      await _refresh();
-    } catch (e) {
-      setState(() => _error = e.toString());
-    } finally {
-      if (mounted) setState(() => _loading = false);
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     final selectedCount = _selected.length;
+    final visibleItems = _visibleItems;
 
     return AppScaffold(
       title: selectedCount > 0 ? '추천 (선택 $selectedCount)' : '추천',
-      onRefresh: _refreshReplacing,
+      onRefresh: _runNow,
       actions: [
         if (selectedCount > 0)
           IconButton(
@@ -311,12 +397,8 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
           ),
         IconButton(
           onPressed: _loading ? null : _runNow,
-          icon: const Icon(Icons.play_arrow),
-          tooltip: '지금 추천 생성',
-        ),
-        IconButton(
-          onPressed: _loading ? null : _refreshReplacing,
-          icon: const Icon(Icons.refresh),
+          icon: const Icon(Icons.autorenew),
+          tooltip: '채우기(기존 목록 교체)',
         ),
       ],
       child: Column(
@@ -340,12 +422,29 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
           Row(
             children: [
               InfoChip(
-                label: _loading ? '불러오는 중…' : '총 ${_items.length}개',
+                label: _loading
+                    ? '불러오는 중…'
+                    : (_showSavedOnly ? '저장함 ${_savedItems.length}개' : '추천 ${_items.length}개'),
                 color: Theme.of(context).colorScheme.primary,
+              ),
+              const SizedBox(width: 8),
+              FilterChip(
+                label: Text('저장함 ${_savedItems.length}'),
+                selected: _showSavedOnly,
+                onSelected: _loading
+                    ? null
+                    : (v) {
+                        setState(() {
+                          _showSavedOnly = v;
+                          _selected.clear();
+                        });
+                      },
               ),
               const Spacer(),
               Text(
-                '기준: 순마진≥3,000원 / 마진율≥30% (검증 통과만 노출)',
+                _showSavedOnly
+                    ? '저장한 후보만 표시 중'
+                    : '채우기 시 기존 추천 목록은 교체됩니다',
                 style: TextStyle(
                   color: Theme.of(context)
                       .colorScheme
@@ -356,15 +455,30 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
               ),
             ],
           ),
+          if ((_lastRunSummary ?? '').isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Text(
+              _lastRunSummary ?? '',
+              style: TextStyle(
+                color: Theme.of(context)
+                    .colorScheme
+                    .onSurface
+                    .withValues(alpha: 0.65),
+                fontSize: 12,
+              ),
+            ),
+          ],
           if (_error != null) ...[
             const SizedBox(height: 12),
-            ErrorBanner(message: _error!, onRetry: _refreshReplacing),
+            ErrorBanner(message: _error!, onRetry: _runNow),
           ],
           const SizedBox(height: 12),
-          if (_items.isEmpty && !_loading)
+          if (visibleItems.isEmpty && !_loading)
             AppCard(
               child: Text(
-                '아직 추천이 없어요. 우측 상단 ▶︎ 버튼으로 지금 생성할 수 있어요. (매일 오전 9시에 자동 생성됩니다)',
+                _showSavedOnly
+                    ? '저장한 후보가 아직 없어요. 추천 카드에서 북마크 버튼으로 저장할 수 있어요.'
+                    : '아직 추천이 없어요. 우측 상단 새로고침 버튼으로 채우기(기존 목록 교체)를 실행하세요.',
                 style: TextStyle(
                   color: Theme.of(context)
                       .colorScheme
@@ -377,10 +491,10 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
             ListView.separated(
               shrinkWrap: true,
               physics: const NeverScrollableScrollPhysics(),
-              itemCount: _items.length,
+              itemCount: visibleItems.length,
               separatorBuilder: (_, __) => const SizedBox(height: 10),
               itemBuilder: (ctx, i) {
-                final it = _items[i];
+                final it = visibleItems[i];
                 final title = (it['title'] ?? '').toString();
                 final img = (it['mainImageUrl'] ?? '').toString();
                 final keyword = (it['keyword'] ?? '').toString();
@@ -396,6 +510,7 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
                     int.tryParse((qc['detailImageCount'] ?? 0).toString()) ?? 0;
 
                 final selected = url.isNotEmpty && _selected.contains(url);
+                final saved = url.isNotEmpty && _savedUrls.contains(url);
 
                 return AppCard(
                   onTap: url.isEmpty
@@ -533,6 +648,21 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
                                   label: const Text('미리보기'),
                                 ),
                                 const SizedBox(width: 8),
+                                IconButton(
+                                  onPressed: (url.isEmpty || _loading)
+                                      ? null
+                                      : () => _toggleSave(it),
+                                  tooltip: saved ? '저장 해제' : '저장',
+                                  icon: Icon(
+                                    saved
+                                        ? Icons.bookmark
+                                        : Icons.bookmark_border,
+                                    color: saved
+                                        ? Theme.of(context).colorScheme.primary
+                                        : null,
+                                  ),
+                                ),
+                                const SizedBox(width: 4),
                                 TextButton.icon(
                                   onPressed: url.isEmpty
                                       ? null

@@ -35,7 +35,9 @@ import { getSellerProduct } from "./src/coupang/api/getSellerProduct.js";
 import { getSellerProductHistories } from "./src/coupang/api/getSellerProductHistories.js";
 import {
   listRecommendations,
-  fillRecommendationsForUser,
+  listSavedRecommendations,
+  saveRecommendationForUser,
+  removeSavedRecommendationForUser,
   refreshRecommendationsForUser,
 } from "./src/server/recommendations.js";
 
@@ -2096,10 +2098,20 @@ app.post("/api/upload/bulk", authRequired, async (req, res) => {
       }
 
       const force = parseForceFlag(req.body?.force ?? req.query?.force);
+      const overridesByUrlRaw =
+        req.body?.overridesByUrl && typeof req.body.overridesByUrl === "object"
+          ? req.body.overridesByUrl
+          : {};
       const items = [];
 
       for (const url of urls) {
-        const outcome = await executeUploadForUrl({ url, user: req.user, force });
+        const o = overridesByUrlRaw?.[url];
+        const overrides = {
+          titleOverride: o?.titleOverride,
+          imagesOverride: Array.isArray(o?.imagesOverride) ? o.imagesOverride : undefined,
+          categoryOverrideCode: o?.categoryOverrideCode,
+        };
+        const outcome = await executeUploadForUrl({ url, user: req.user, force, overrides });
         appendUploadHistoryFromOutcome(url, outcome);
         items.push({
           url,
@@ -2136,18 +2148,59 @@ app.get("/api/recommendations", authRequired, async (req, res) => {
   }
 });
 
+app.get("/api/recommendations/saved", authRequired, async (req, res) => {
+  try {
+    const limit = Math.max(1, Math.min(500, Number(req.query?.limit || 200) || 200));
+    const items = await listSavedRecommendations(req.user.id, { limit });
+    return res.json({ ok: true, items });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+app.post("/api/recommendations/saved", authRequired, async (req, res) => {
+  try {
+    const item = req.body?.item && typeof req.body.item === "object" ? req.body.item : req.body || {};
+    const saved = await saveRecommendationForUser({
+      userId: req.user.id,
+      item,
+    });
+    if (!saved?.ok) return res.status(400).json({ ok: false, error: saved?.error || "save_failed" });
+    return res.json({ ok: true, saved });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+app.delete("/api/recommendations/saved", authRequired, async (req, res) => {
+  try {
+    const sourceUrl = String(req.query?.sourceUrl || "").trim();
+    const removed = await removeSavedRecommendationForUser({
+      userId: req.user.id,
+      sourceUrl,
+    });
+    if (!removed?.ok) return res.status(400).json({ ok: false, error: removed?.error || "remove_failed" });
+    return res.json({ ok: true, removed });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
 app.post("/api/recommendations/fill", authRequired, async (req, res) => {
   try {
     const keywords = normalizeStringList(req.body?.keywords, 30);
     const targetCount = Math.max(5, Math.min(100, Number(req.body?.targetCount || 20) || 20));
-    const maxAddPerRun = Math.max(1, Math.min(20, Number(req.body?.maxAddPerRun || 6) || 6));
-
-    const fill = await fillRecommendationsForUser({
+    const cooldownDays = Math.max(
+      1,
+      Math.min(60, Number(req.body?.cooldownDays || req.user?.settings?.recommendationCooldownDays || 7) || 7),
+    );
+    // Product decision: "fill" is now replace-mode.
+    const fill = await refreshRecommendationsForUser({
       userId: req.user.id,
       settings: req.user.settings || {},
       keywords,
       targetCount,
-      maxAddPerRun,
+      cooldownDays,
     });
 
     const items = await listRecommendations(req.user.id, {

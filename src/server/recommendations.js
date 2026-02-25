@@ -4,6 +4,7 @@ import { previewUploadFromUrl } from '../pipeline/previewUploadFromUrl.js';
 import { dbAll, dbRun, openDb } from './storage_sqlite_internal.js';
 
 const DEFAULT_RECOMMENDATION_COOLDOWN_DAYS = 7;
+const RECOMMENDATIONS_SAVED_TABLE = 'recommendations_saved';
 
 function dbGetOne(db, sql, params = []) {
   return dbAll(db, sql, params).then((rows) => (rows && rows[0]) || null);
@@ -404,7 +405,17 @@ export async function listRecommendations(userId, { limit = 50 } = {}) {
      LIMIT ?`,
     [userId, lim],
   );
+  const savedRows = await dbAll(
+    db,
+    `SELECT source_url
+     FROM ${RECOMMENDATIONS_SAVED_TABLE}
+     WHERE user_id = ?`,
+    [userId],
+  ).catch(() => []);
   db.close();
+  const savedSet = new Set(
+    savedRows.map((r) => String(r?.source_url || '').trim()).filter(Boolean),
+  );
   return rows.map((r) => {
     let payload = {};
     try { payload = JSON.parse(r.payload_json || '{}'); } catch {}
@@ -430,8 +441,175 @@ export async function listRecommendations(userId, { limit = 50 } = {}) {
       reason: r.reason,
       qc: { tier, eligibleUpload, detailImageCount },
       createdAt: r.created_at,
+      saved: savedSet.has(String(r.source_url || '').trim()),
     };
   });
+}
+
+function normalizeRecommendationItemInput(item = {}) {
+  const it = item && typeof item === 'object' ? item : {};
+  const sourceUrl = String(it.sourceUrl || '').trim();
+  const payload = it.payload && typeof it.payload === 'object' ? it.payload : {};
+  const qc = it.qc && typeof it.qc === 'object' ? it.qc : {};
+  const payloadJson = JSON.stringify({
+    ...(payload || {}),
+    ...(Object.keys(qc).length ? { qc } : {}),
+  });
+  return {
+    sourceUrl,
+    keyword: String(it.keyword || '').trim(),
+    title: String(it.title || '').trim(),
+    mainImageUrl: String(it.mainImageUrl || '').trim(),
+    sourcePrice: Number.isFinite(Number(it.sourcePrice)) ? Number(it.sourcePrice) : null,
+    shippingFee: Number.isFinite(Number(it.shippingFee)) ? Number(it.shippingFee) : null,
+    finalPrice: Number.isFinite(Number(it.finalPrice)) ? Number(it.finalPrice) : null,
+    profit: Number.isFinite(Number(it.profit)) ? Number(it.profit) : null,
+    marginRate: Number.isFinite(Number(it.marginRate)) ? Number(it.marginRate) : null,
+    score: Number.isFinite(Number(it.score)) ? Number(it.score) : null,
+    reason: String(it.reason || '').trim(),
+    payloadJson,
+  };
+}
+
+function mapSavedRowToItem(r) {
+  let payload = {};
+  try { payload = JSON.parse(r.payload_json || '{}'); } catch {}
+  const qc = payload?.qc || {};
+  return {
+    id: r.id,
+    sourceUrl: r.source_url,
+    keyword: r.keyword,
+    title: r.title,
+    mainImageUrl: r.main_image_url,
+    sourcePrice: r.source_price,
+    shippingFee: r.shipping_fee,
+    finalPrice: r.final_price,
+    profit: r.profit,
+    marginRate: r.margin_rate,
+    score: r.score,
+    reason: r.reason,
+    qc: {
+      tier: String(qc?.tier || '-'),
+      eligibleUpload: Boolean(qc?.eligibleUpload),
+      detailImageCount: Number(qc?.detailImageCount || 0),
+    },
+    saved: true,
+    savedAt: r.saved_at,
+  };
+}
+
+export async function listSavedRecommendations(userId, { limit = 200 } = {}) {
+  const db = openDb();
+  const lim = Math.max(1, Math.min(500, Number(limit) || 200));
+  const rows = await dbAll(
+    db,
+    `SELECT id, source_url, keyword, title, main_image_url, source_price, shipping_fee, final_price, profit, margin_rate, score, reason, payload_json, saved_at
+     FROM ${RECOMMENDATIONS_SAVED_TABLE}
+     WHERE user_id = ?
+     ORDER BY saved_at DESC
+     LIMIT ?`,
+    [userId, lim],
+  ).catch(() => []);
+  db.close();
+  return rows.map(mapSavedRowToItem);
+}
+
+export async function saveRecommendationForUser({ userId, item = {} } = {}) {
+  const now = nowIso();
+  const db = openDb();
+  try {
+    const normalized = normalizeRecommendationItemInput(item);
+    const sourceUrl = normalized.sourceUrl;
+    if (!sourceUrl) return { ok: false, error: 'missing_source_url' };
+
+    let source = normalized;
+    if (!source.title) {
+      const fromReco = await dbGetOne(
+        db,
+        `SELECT source_url, keyword, title, main_image_url, source_price, shipping_fee, final_price, profit, margin_rate, score, reason, payload_json
+         FROM recommendations
+         WHERE user_id = ? AND source_url = ?
+         LIMIT 1`,
+        [userId, sourceUrl],
+      );
+      if (fromReco) {
+        source = {
+          sourceUrl: String(fromReco.source_url || '').trim(),
+          keyword: String(fromReco.keyword || '').trim(),
+          title: String(fromReco.title || '').trim(),
+          mainImageUrl: String(fromReco.main_image_url || '').trim(),
+          sourcePrice: fromReco.source_price,
+          shippingFee: fromReco.shipping_fee,
+          finalPrice: fromReco.final_price,
+          profit: fromReco.profit,
+          marginRate: fromReco.margin_rate,
+          score: fromReco.score,
+          reason: String(fromReco.reason || '').trim(),
+          payloadJson: fromReco.payload_json || '{}',
+        };
+      }
+    }
+
+    const id = crypto.randomUUID();
+    await dbRun(
+      db,
+      `INSERT INTO ${RECOMMENDATIONS_SAVED_TABLE} (
+        id, user_id, source_url, keyword, title, main_image_url,
+        source_price, shipping_fee, final_price, profit, margin_rate, score,
+        reason, payload_json, saved_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(user_id, source_url) DO UPDATE SET
+        keyword=excluded.keyword,
+        title=excluded.title,
+        main_image_url=excluded.main_image_url,
+        source_price=excluded.source_price,
+        shipping_fee=excluded.shipping_fee,
+        final_price=excluded.final_price,
+        profit=excluded.profit,
+        margin_rate=excluded.margin_rate,
+        score=excluded.score,
+        reason=excluded.reason,
+        payload_json=excluded.payload_json,
+        saved_at=excluded.saved_at`,
+      [
+        id,
+        userId,
+        source.sourceUrl,
+        source.keyword || '',
+        source.title || '',
+        source.mainImageUrl || '',
+        source.sourcePrice ?? null,
+        source.shippingFee ?? null,
+        source.finalPrice ?? null,
+        source.profit ?? null,
+        source.marginRate ?? null,
+        source.score ?? null,
+        source.reason || '',
+        source.payloadJson || '{}',
+        now,
+      ],
+    );
+    return { ok: true, sourceUrl: source.sourceUrl };
+  } finally {
+    db.close();
+  }
+}
+
+export async function removeSavedRecommendationForUser({ userId, sourceUrl } = {}) {
+  const db = openDb();
+  try {
+    const target = String(sourceUrl || '').trim();
+    if (!target) return { ok: false, error: 'missing_source_url' };
+    await dbRun(
+      db,
+      `DELETE FROM ${RECOMMENDATIONS_SAVED_TABLE}
+       WHERE user_id = ? AND source_url = ?`,
+      [userId, target],
+    );
+    return { ok: true, sourceUrl: target };
+  } finally {
+    db.close();
+  }
 }
 
 function parseWon(text) {
@@ -532,8 +710,8 @@ async function fetchFastCandidatesFromList({ keyword, limit = 80, storageStatePa
       const page = await context.newPage();
 
       const listUrl = `https://domeggook.com/main/item/itemList.php?sw=${encodeURIComponent(q)}&sf=ttl`;
-      await page.goto(listUrl, { waitUntil: 'domcontentloaded', timeout: 60_000 });
-      await page.waitForTimeout(1800);
+      await page.goto(listUrl, { waitUntil: 'domcontentloaded', timeout: 12_000 });
+      await page.waitForTimeout(700);
 
       const rows = await page.evaluate(({ keyword }) => {
         const kwRaw = String(keyword || '').trim().toLowerCase();
@@ -596,13 +774,13 @@ async function fetchFastCandidatesFromList({ keyword, limit = 80, storageStatePa
     return [];
   });
   const out = [];
-  const maxFallbackFetch = Math.max(1, Math.min(8, Number(limit) || 8));
+  const maxFallbackFetch = Math.max(1, Math.min(4, Number(limit) || 4));
 
   for (const u of urls) {
     if (out.length >= maxFallbackFetch) break;
     try {
       const controller = new AbortController();
-      const t = setTimeout(() => controller.abort(), 4_000);
+      const t = setTimeout(() => controller.abort(), 3_000);
       const r = await fetch(u, {
         signal: controller.signal,
         headers: { 'User-Agent': 'Mozilla/5.0', 'Referer': 'https://domeggook.com/' },
@@ -670,15 +848,16 @@ async function generateRecommendationsBatch({
   topN = 20,
   excludeUrls = new Set(),
   onProgress = null,
-  maxRuntimeMs = 55_000,
-  previewTimeoutMs = 12_000,
+  maxRuntimeMs = 38_000,
+  previewTimeoutMs = 8_000,
 } = {}) {
   const seed = Array.isArray(keywords) && keywords.length > 0 ? keywords : defaultKeywordSet();
   const startedAt = Date.now();
   const keywordDiagnostics = [];
+  const keywordScanLimit = Math.max(1, Math.min(8, seed.length));
 
   const candidates = [];
-  for (const kw of seed.slice(0, 12)) {
+  for (const kw of seed.slice(0, keywordScanLimit)) {
     if (Date.now() - startedAt > Math.floor(maxRuntimeMs * 0.45)) break;
     let list = [];
     try {
@@ -754,7 +933,7 @@ async function generateRecommendationsBatch({
 
   const final = [];
   let validated = 0;
-  const maxValidate = Math.max(topN * 3, 18);
+  const maxValidate = Math.max(topN * 2, 12);
   for (const cand of scoredPool) {
     if (final.length >= topN) break;
     if (validated >= maxValidate) break;
@@ -826,14 +1005,14 @@ async function generateRecommendationsBatch({
   }
 
   const diagnostics = {
-    keywordsTried: Math.min(seed.length, 12),
+    keywordsTried: keywordScanLimit,
     collectedCandidates: candidates.length,
     uniqueCandidates: uniq.length,
     scoredCandidates: scoredPool.length,
     validated,
     kept: final.length,
     fallbackFilledCount,
-    keywordDiagnostics: keywordDiagnostics.slice(0, 12).map((d) => ({
+    keywordDiagnostics: keywordDiagnostics.slice(0, keywordScanLimit).map((d) => ({
       keyword: d.keyword,
       strategy: d.strategy || 'none',
       collected: Number(d.collected || 0),
