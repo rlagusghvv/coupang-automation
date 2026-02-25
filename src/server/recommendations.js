@@ -730,6 +730,17 @@ function normalizeCandidateImageUrl(rawUrl) {
   return '';
 }
 
+function parseCandidatePrice(raw) {
+  const n = Number(raw);
+  if (Number.isFinite(n) && n > 0) return n;
+  const text = String(raw == null ? '' : raw).trim();
+  if (!text) return null;
+  const normalized = text.replace(/[^\d.]/g, '');
+  const parsed = Number(normalized);
+  if (!Number.isFinite(parsed) || parsed <= 0) return null;
+  return parsed;
+}
+
 function clampNumber(value, min, max, fallback) {
   const n = Number(value);
   if (!Number.isFinite(n)) return fallback;
@@ -1088,14 +1099,20 @@ async function generateRecommendationsBatch({
   }
 
   const scoredPool = [];
+  const scoreRejectCounts = {};
   for (const c of uniq) {
     if (Date.now() - startedAt > Math.floor(maxRuntimeMs * 0.65)) break;
     if (containsBanKeyword(c.title, DEFAULT_BAN_KEYWORDS)) continue;
+    const candidatePrice = parseCandidatePrice(c.price);
+    if (!Number.isFinite(candidatePrice) || candidatePrice <= 0) {
+      scoreRejectCounts.bad_price = Number(scoreRejectCounts.bad_price || 0) + 1;
+      continue;
+    }
 
     const fakePreview = {
       ok: true,
       url: c.url,
-      draft: { title: c.title, price: c.price, shippingFee: null, imageUrl: '' },
+      draft: { title: c.title, price: candidatePrice, shippingFee: null, imageUrl: '' },
       computed: { contentImageCount: 1 },
     };
 
@@ -1105,7 +1122,11 @@ async function generateRecommendationsBatch({
       minMarginRate: thresholds.minMarginRate,
       banKeywords: DEFAULT_BAN_KEYWORDS,
     });
-    if (!s.ok) continue;
+    if (!s.ok) {
+      const reason = String(s.reason || 'unknown');
+      scoreRejectCounts[reason] = Number(scoreRejectCounts[reason] || 0) + 1;
+      continue;
+    }
 
     scoredPool.push({
       sourceUrl: c.url,
@@ -1122,26 +1143,35 @@ async function generateRecommendationsBatch({
   if (scoredPool.length < Math.max(8, Math.floor(topN * 1.2))) {
     const relaxedMinProfit = Math.max(1000, Math.floor(thresholds.minProfit * 0.6));
     const relaxedMinMarginRate = Math.max(0.12, Number((thresholds.minMarginRate * 0.7).toFixed(3)));
+    const relaxedBanKeywords = scoredPool.length === 0 ? [] : DEFAULT_BAN_KEYWORDS;
     const existing = new Set(scoredPool.map((x) => String(x?.sourceUrl || '').trim()));
     for (const c of uniq) {
       if (Date.now() - startedAt > Math.floor(maxRuntimeMs * 0.75)) break;
       const u = String(c?.url || '').trim();
       if (!u || existing.has(u)) continue;
-      if (containsBanKeyword(c.title, DEFAULT_BAN_KEYWORDS)) continue;
+      const candidatePrice = parseCandidatePrice(c.price);
+      if (!Number.isFinite(candidatePrice) || candidatePrice <= 0) {
+        scoreRejectCounts.bad_price = Number(scoreRejectCounts.bad_price || 0) + 1;
+        continue;
+      }
 
       const fakePreview = {
         ok: true,
         url: c.url,
-        draft: { title: c.title, price: c.price, shippingFee: null, imageUrl: '' },
+        draft: { title: c.title, price: candidatePrice, shippingFee: null, imageUrl: '' },
         computed: { contentImageCount: 1 },
       };
       const s = scoreRecommendation({
         preview: fakePreview,
         minProfit: relaxedMinProfit,
         minMarginRate: relaxedMinMarginRate,
-        banKeywords: DEFAULT_BAN_KEYWORDS,
+        banKeywords: relaxedBanKeywords,
       });
-      if (!s.ok) continue;
+      if (!s.ok) {
+        const reason = String(s.reason || 'unknown');
+        scoreRejectCounts[reason] = Number(scoreRejectCounts[reason] || 0) + 1;
+        continue;
+      }
 
       existing.add(u);
       scoredPool.push({
@@ -1282,6 +1312,7 @@ async function generateRecommendationsBatch({
     collectedCandidates: candidates.length,
     uniqueCandidates: uniq.length,
     scoredCandidates: scoredPool.length,
+    scoreRejectCounts,
     thresholds,
     policy,
     validated,
@@ -1305,6 +1336,12 @@ async function generateRecommendationsBatch({
   if (final.length === 0) {
     if (qcRejected > 0) {
       diagnostics.hint = `QC 통과 상품을 찾지 못했습니다. 검증 ${validated}건 중 QC 탈락 ${qcRejected}건입니다.`;
+    } else if (Number(diagnostics.scoredCandidates || 0) === 0) {
+      const topReject = Object.entries(scoreRejectCounts)
+        .sort((a, b) => Number(b?.[1] || 0) - Number(a?.[1] || 0))[0];
+      if (topReject && Number(topReject[1] || 0) > 0) {
+        diagnostics.hint = `추천 점수 필터에서 모두 제외되었습니다 (${topReject[0]} ${topReject[1]}건).`;
+      }
     } else if (diagnostics.openApiKeyMissing && !diagnostics.hasDomeggookSessionPath) {
       diagnostics.hint = '도매꾹 OpenAPI 키가 없고 세션 파일 경로도 비어 있어 후보 수집을 시작하지 못했습니다.';
     } else {
