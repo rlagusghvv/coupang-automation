@@ -1331,8 +1331,11 @@ async function generateRecommendationsBatch({
     1,
     Math.min(
       seed.length,
-      policy.requireQcPass ? 16 : 8,
-      Math.max(8, Math.ceil(Number(topN || 20) * 1.5)),
+      policy.requireQcPass ? 18 : 10,
+      Math.max(
+        policy.requireQcPass ? 10 : 8,
+        Math.ceil(Number(topN || 20) * (policy.requireQcPass ? 2 : 1.5)),
+      ),
     ),
   );
 
@@ -1343,7 +1346,7 @@ async function generateRecommendationsBatch({
     try {
       const result = await fetchFastCandidatesFromList({
         keyword: kw,
-        limit: policy.requireQcPass ? 60 : 40,
+        limit: policy.requireQcPass ? 80 : 40,
         storageStatePath: String(normalizedSettings?.domeggookStorageStatePath || ''),
       });
       list = Array.isArray(result?.items) ? result.items : [];
@@ -1367,12 +1370,12 @@ async function generateRecommendationsBatch({
     for (const it of list) {
       if (excludeUrls.has(it.url)) continue;
       candidates.push({ keyword: kw, ...it });
-      if (candidates.length >= 1200) break;
+      if (candidates.length >= 1800) break;
     }
     if (typeof onProgress === 'function') {
       try { onProgress({ stage: 'collect', keyword: kw, candidates: candidates.length }); } catch {}
     }
-    if (candidates.length >= 1200) break;
+    if (candidates.length >= 1800) break;
   }
 
   const uniq = [];
@@ -1387,6 +1390,7 @@ async function generateRecommendationsBatch({
   const scoredPool = [];
   const scoreRejectCounts = {};
   const strictRejectCounts = {};
+  const scoringPasses = [];
   for (const c of uniq) {
     if (Date.now() - startedAt > Math.floor(maxRuntimeMs * 0.65)) break;
     if (containsBanKeyword(c.title, DEFAULT_BAN_KEYWORDS)) continue;
@@ -1425,9 +1429,16 @@ async function generateRecommendationsBatch({
 
     if (scoredPool.length >= 500) break;
   }
+  scoringPasses.push({
+    name: 'default',
+    minProfit: thresholds.minProfit,
+    minMarginRate: thresholds.minMarginRate,
+    added: scoredPool.length,
+  });
 
   // If strict thresholds produce too small a pool, relax once to avoid empty lists.
   if (scoredPool.length < Math.max(8, Math.floor(topN * 1.2))) {
+    const beforeRelaxed = scoredPool.length;
     const relaxedMinProfit = Math.max(1000, Math.floor(thresholds.minProfit * 0.6));
     const relaxedMinMarginRate = Math.max(0.12, Number((thresholds.minMarginRate * 0.7).toFixed(3)));
     const shouldRelaxBanKeywords = scoredPool.length < Math.max(4, Math.ceil(Number(topN || 20) * 0.6));
@@ -1480,6 +1491,77 @@ async function generateRecommendationsBatch({
       });
       if (scoredPool.length >= 500) break;
     }
+    scoringPasses.push({
+      name: 'relaxed',
+      minProfit: relaxedMinProfit,
+      minMarginRate: relaxedMinMarginRate,
+      added: Math.max(0, scoredPool.length - beforeRelaxed),
+      banRelaxed: shouldRelaxBanKeywords,
+    });
+  }
+
+  // Rescue pass: recommendation list quality remains guarded by QC,
+  // so we can relax score thresholds once more to avoid underfilling.
+  if (scoredPool.length < Math.max(12, topN * 2)) {
+    const beforeRescue = scoredPool.length;
+    const rescueMinProfit = Math.max(500, Math.floor(thresholds.minProfit * 0.3));
+    const rescueMinMarginRate = Math.max(0.09, Number((thresholds.minMarginRate * 0.45).toFixed(3)));
+    const rescueBanKeywords = DEFAULT_BAN_KEYWORDS.filter((kw) =>
+      !RELAXABLE_RECO_BAN_KEYWORDS.has(String(kw || '').toLowerCase()),
+    );
+    const existing = new Set(scoredPool.map((x) => String(x?.sourceUrl || '').trim()));
+    for (const c of uniq) {
+      if (Date.now() - startedAt > Math.floor(maxRuntimeMs * 0.83)) break;
+      const u = String(c?.url || '').trim();
+      if (!u || existing.has(u)) continue;
+      const candidatePrice = parseCandidatePrice(c.price);
+      if (!Number.isFinite(candidatePrice) || candidatePrice <= 0) {
+        scoreRejectCounts.bad_price = Number(scoreRejectCounts.bad_price || 0) + 1;
+        continue;
+      }
+
+      const fakePreview = {
+        ok: true,
+        url: c.url,
+        draft: { title: c.title, price: candidatePrice, shippingFee: null, imageUrl: '' },
+        computed: { contentImageCount: 1 },
+      };
+      const s = scoreRecommendation({
+        preview: fakePreview,
+        minProfit: rescueMinProfit,
+        minMarginRate: rescueMinMarginRate,
+        banKeywords: rescueBanKeywords,
+      });
+      if (!s.ok) {
+        const reason = String(s.reason || 'unknown');
+        scoreRejectCounts[reason] = Number(scoreRejectCounts[reason] || 0) + 1;
+        continue;
+      }
+
+      existing.add(u);
+      scoredPool.push({
+        sourceUrl: c.url,
+        keyword: c.keyword,
+        ...s,
+        mainImageUrl: normalizeCandidateImageUrl(c.imageUrl || s.mainImageUrl),
+        payload: {
+          fast: true,
+          rescueThreshold: true,
+          thresholds: {
+            minProfit: rescueMinProfit,
+            minMarginRate: rescueMinMarginRate,
+          },
+        },
+      });
+      if (scoredPool.length >= 700) break;
+    }
+    scoringPasses.push({
+      name: 'rescue',
+      minProfit: rescueMinProfit,
+      minMarginRate: rescueMinMarginRate,
+      added: Math.max(0, scoredPool.length - beforeRescue),
+      banRelaxed: true,
+    });
   }
 
   scoredPool.sort((a, b) => (Number(b.score) || 0) - (Number(a.score) || 0));
@@ -1668,6 +1750,7 @@ async function generateRecommendationsBatch({
     scoredCandidates: scoredPool.length,
     scoreRejectCounts,
     strictRejectCounts,
+    scoringPasses,
     thresholds,
     policy,
     validated,
