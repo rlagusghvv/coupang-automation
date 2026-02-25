@@ -561,6 +561,7 @@ app.get('/api/image-proxy', async (req, res) => {
 
 // --- Backward-compatible endpoints for Flutter /app runtime ---
 const legacyJobs = new Map();
+const recommendationRunByUser = new Map();
 
 function initLegacyJob(kind, seedProgress = {}) {
   const id = crypto.randomUUID();
@@ -584,6 +585,131 @@ function patchLegacyJob(job, patch = {}) {
   if (!job || typeof job !== "object") return;
   Object.assign(job, patch, { updatedAt: new Date().toISOString() });
   legacyJobs.set(job.id, job);
+}
+
+function compactLegacyJob(job) {
+  if (!job || typeof job !== "object") return null;
+  return {
+    id: job.id,
+    kind: job.kind,
+    status: job.status,
+    createdAt: job.createdAt,
+    updatedAt: job.updatedAt,
+    progress: job.progress && typeof job.progress === "object" ? job.progress : {},
+    errorMessage: job.errorMessage || null,
+  };
+}
+
+function parseRecommendationRunRequest(req) {
+  const userSettings = req?.user?.settings || {};
+  const keywords = normalizeStringList(req.body?.keywords, 30);
+  const targetCount = Math.max(5, Math.min(100, Number(req.body?.targetCount || 20) || 20));
+  const cooldownDays = Math.max(
+    1,
+    Math.min(60, Number(req.body?.cooldownDays || userSettings?.recommendationCooldownDays || 7) || 7),
+  );
+  return { keywords, targetCount, cooldownDays };
+}
+
+function getRunningRecommendationJobForUser(userId) {
+  const uid = String(userId || "").trim();
+  if (!uid) return null;
+  const jobId = recommendationRunByUser.get(uid);
+  if (!jobId) return null;
+  const job = legacyJobs.get(jobId);
+  if (!job) {
+    recommendationRunByUser.delete(uid);
+    return null;
+  }
+  const status = String(job.status || "").toLowerCase();
+  if (status === "running" || status === "queued") return job;
+  recommendationRunByUser.delete(uid);
+  return null;
+}
+
+function startRecommendationRefreshJob({
+  userId,
+  settings = {},
+  keywords = [],
+  targetCount = 20,
+  cooldownDays = 7,
+  kind = "recommendations_fill",
+} = {}) {
+  const uid = String(userId || "").trim();
+  if (!uid) throw new Error("user_id_required");
+
+  const running = getRunningRecommendationJobForUser(uid);
+  if (running) {
+    return { job: running, reused: true };
+  }
+
+  const job = initLegacyJob(kind, {
+    stage: "queued",
+    targetCount,
+    cooldownDays,
+  });
+  recommendationRunByUser.set(uid, job.id);
+
+  (async () => {
+    try {
+      patchLegacyJob(job, {
+        status: "running",
+        progress: {
+          stage: "start",
+          targetCount,
+          cooldownDays,
+          keywordsCount: Array.isArray(keywords) ? keywords.length : 0,
+        },
+      });
+
+      const fill = await refreshRecommendationsForUser({
+        userId: uid,
+        settings,
+        keywords,
+        targetCount,
+        cooldownDays,
+        onProgress: (progress) => {
+          patchLegacyJob(job, {
+            status: "running",
+            progress: {
+              stage: String(progress?.stage || "running"),
+              ...progress,
+            },
+          });
+        },
+      });
+
+      const items = await listRecommendations(uid, {
+        limit: Math.max(40, targetCount),
+      });
+
+      patchLegacyJob(job, {
+        status: "success",
+        progress: {
+          stage: "done",
+          count: Number(fill?.count || items.length) || items.length,
+          removedCount: Number(fill?.removedCount || 0) || 0,
+          targetCount,
+          cooldownDays,
+        },
+        fill,
+        items,
+        result: { fill, items },
+      });
+    } catch (e) {
+      patchLegacyJob(job, {
+        status: "failed",
+        errorMessage: String(e?.message || e),
+        error: String(e?.stack || e?.message || e),
+      });
+    } finally {
+      if (recommendationRunByUser.get(uid) === job.id) {
+        recommendationRunByUser.delete(uid);
+      }
+    }
+  })();
+
+  return { job, reused: false };
 }
 
 app.get('/api/dashboard', authRequired, async (_req, res) => {
@@ -782,6 +908,49 @@ function extractMainImageFromSellerData(data) {
   return normalizeImageUrlForClient(raw);
 }
 
+function extractProductIdFromHistoryItems(historyItems = []) {
+  const rows = Array.isArray(historyItems) ? historyItems : [];
+  for (const row of rows) {
+    const pid = pickFirstNonEmpty(
+      row?.productId,
+      row?.displayProductId,
+      row?.targetProductId,
+      row?.item?.productId,
+      row?.item?.displayProductId,
+      row?.after?.productId,
+      row?.after?.displayProductId,
+      row?.before?.productId,
+      row?.before?.displayProductId,
+    );
+    if (pid) return pid;
+
+    const text = JSON.stringify(row || {});
+    const m = text.match(/\/vp\/products\/(\d+)/i);
+    if (m?.[1]) return String(m[1]).trim();
+  }
+  return "";
+}
+
+function extractProductUrlFromHistoryItems(historyItems = []) {
+  const rows = Array.isArray(historyItems) ? historyItems : [];
+  for (const row of rows) {
+    const url = pickFirstNonEmpty(
+      row?.productUrl,
+      row?.displayProductUrl,
+      row?.url,
+      row?.targetUrl,
+      row?.after?.productUrl,
+      row?.after?.displayProductUrl,
+      row?.item?.productUrl,
+    );
+    if (url) return String(url).trim();
+    const text = JSON.stringify(row || {});
+    const m = text.match(/https?:\/\/www\.coupang\.com\/vp\/products\/\d+[^\s"]*/i);
+    if (m?.[0]) return String(m[0]).trim();
+  }
+  return "";
+}
+
 function extractSellerStatusSnapshot({
   sellerProductId,
   responseBody,
@@ -797,7 +966,7 @@ function extractSellerStatusSnapshot({
   );
   const productIdRaw = data?.productId ?? data?.displayProductId ?? data?.displayProductCode ?? null;
   const vendorItemIdRaw = data?.vendorItemId ?? data?.itemId ?? null;
-  const productId = productIdRaw == null ? null : String(productIdRaw).trim() || null;
+  const productIdFromBody = productIdRaw == null ? "" : String(productIdRaw).trim();
   const vendorItemId = vendorItemIdRaw == null ? null : String(vendorItemIdRaw).trim() || null;
   const approved = isApprovedStatus(statusName);
   const deleted = isDeletedStatusName(statusName);
@@ -827,9 +996,13 @@ function extractSellerStatusSnapshot({
       ? histObj
       : [];
   const lastHistory = historyItems[0] || null;
+  const historyProductId = extractProductIdFromHistoryItems(historyItems);
+  const productId = pickFirstNonEmpty(productIdFromBody, historyProductId) || null;
+  const historyProductUrl = extractProductUrlFromHistoryItems(historyItems);
   const productUrl = pickFirstNonEmpty(
     data?.productUrl,
     data?.displayProductUrl,
+    historyProductUrl,
     buildCoupangProductUrl(productId),
   );
 
@@ -862,6 +1035,7 @@ function inferCatalogStatus(currentStatus, snapshot = null, fallback = "confirme
   }
   if (snapshot.deleted) return "deleted_remote";
   if (snapshot.detailEmpty) return "deployed_invalid";
+  if (snapshot.approved && !String(snapshot.productId || "").trim()) return "deployed_invalid";
   if (snapshot.approved) return "deployed";
   if (current === "deploy_failed" || current === "deployed_invalid") return current;
   return "confirmed";
@@ -970,10 +1144,13 @@ function applyLiveSnapshotToMeta(meta, live, { fallbackTitle = "", fallbackImage
     nextMeta.categoryOverride = liveCategoryCode;
   }
 
+  const validationErrors = [];
+  if (live.detailEmpty) validationErrors.push("detail_empty");
+  if (!String(liveProductId || "").trim()) validationErrors.push("product_id_missing");
   nextMeta.validation = {
-    ok: !live.detailEmpty,
+    ok: validationErrors.length === 0,
     checkedAt: new Date().toISOString(),
-    errors: live.detailEmpty ? ["detail_empty"] : [],
+    errors: validationErrors,
   };
   nextMeta.remoteDeleted = false;
   return nextMeta;
@@ -2055,15 +2232,53 @@ async function executeUploadForUrl({ url, user, force = false, overrides = {} })
       imageFingerprint,
     });
     if (duplicate?.duplicate) {
-      return {
-        ok: true,
-        skipped: true,
-        skipReason: duplicate.reason,
-        reason: duplicate.reason,
-        duplicate: duplicate.row,
-        preview: preview.preview,
-        url: c.url,
-      };
+      const dupRow = duplicate?.row && typeof duplicate.row === "object" ? duplicate.row : null;
+      const dupSpid = String(dupRow?.sellerProductId || "").trim();
+      let allowFreshUpload = false;
+      if (dupSpid) {
+        try {
+          const live = await fetchSellerStatusLive({
+            sellerProductId: dupSpid,
+            settings: settings || {},
+            includeHistory: true,
+          });
+          allowFreshUpload = isRemoteDeleted(live);
+          if (allowFreshUpload) {
+            // Duplicate row points to a remotely deleted product.
+            // Mark local row as deleted and continue to upload a fresh product.
+            try {
+              if (dupRow?.id != null && String(user?.id || "").trim()) {
+                const nextMeta = dupRow?.meta && typeof dupRow.meta === "object" ? { ...dupRow.meta } : {};
+                nextMeta.remoteDeleted = true;
+                nextMeta.remoteDeletedAt = new Date().toISOString();
+                nextMeta.lastRemoteError = live;
+                await updateUploadedProductById({
+                  userId: user.id,
+                  id: dupRow.id,
+                  patch: {
+                    status: "deleted_remote",
+                    metaReplace: nextMeta,
+                  },
+                });
+              }
+            } catch {}
+          }
+        } catch {
+          allowFreshUpload = false;
+        }
+      }
+
+      if (!allowFreshUpload) {
+        return {
+          ok: true,
+          skipped: true,
+          skipReason: duplicate.reason,
+          reason: duplicate.reason,
+          duplicate: duplicate.row,
+          preview: preview.preview,
+          url: c.url,
+        };
+      }
     }
   }
 
@@ -2311,78 +2526,20 @@ app.delete("/api/recommendations/saved", authRequired, async (req, res) => {
 
 app.post("/api/recommendations/fill/start", authRequired, async (req, res) => {
   try {
-    const keywords = normalizeStringList(req.body?.keywords, 30);
-    const targetCount = Math.max(5, Math.min(100, Number(req.body?.targetCount || 20) || 20));
-    const cooldownDays = Math.max(
-      1,
-      Math.min(60, Number(req.body?.cooldownDays || req.user?.settings?.recommendationCooldownDays || 7) || 7),
-    );
-
-    const job = initLegacyJob("recommendations_fill", {
-      stage: "queued",
-      targetCount,
+    const params = parseRecommendationRunRequest(req);
+    const started = startRecommendationRefreshJob({
+      userId: req.user.id,
+      settings: req.user.settings || {},
+      keywords: params.keywords,
+      targetCount: params.targetCount,
+      cooldownDays: params.cooldownDays,
+      kind: "recommendations_fill",
     });
-
-    (async () => {
-      try {
-        patchLegacyJob(job, {
-          progress: {
-            stage: "start",
-            targetCount,
-            keywordsCount: keywords.length,
-          },
-        });
-        const fill = await refreshRecommendationsForUser({
-          userId: req.user.id,
-          settings: req.user.settings || {},
-          keywords,
-          targetCount,
-          cooldownDays,
-          onProgress: (progress) => {
-            patchLegacyJob(job, {
-              status: "running",
-              progress: {
-                stage: String(progress?.stage || "running"),
-                ...progress,
-              },
-            });
-          },
-        });
-
-        const items = await listRecommendations(req.user.id, {
-          limit: Math.max(40, targetCount),
-        });
-
-        patchLegacyJob(job, {
-          status: "success",
-          progress: {
-            stage: "done",
-            count: Number(fill?.count || items.length) || items.length,
-            removedCount: Number(fill?.removedCount || 0) || 0,
-            targetCount,
-          },
-          fill,
-          items,
-          result: { fill, items },
-        });
-      } catch (e) {
-        patchLegacyJob(job, {
-          status: "failed",
-          errorMessage: String(e?.message || e),
-          error: String(e?.stack || e?.message || e),
-        });
-      }
-    })();
 
     return res.json({
       ok: true,
-      job: {
-        id: job.id,
-        kind: job.kind,
-        status: job.status,
-        createdAt: job.createdAt,
-        progress: job.progress,
-      },
+      reused: Boolean(started.reused),
+      job: compactLegacyJob(started.job),
     });
   } catch (e) {
     return res.status(500).json({ ok: false, error: String(e?.message || e) });
@@ -2422,29 +2579,46 @@ app.post("/api/recommendations/fill", authRequired, async (req, res) => {
 
 app.post("/api/recommendations/refresh", authRequired, async (req, res) => {
   try {
-    const keywords = normalizeStringList(req.body?.keywords, 30);
-    const targetCount = Math.max(5, Math.min(100, Number(req.body?.targetCount || 20) || 20));
-    const cooldownDays = Math.max(
-      1,
-      Math.min(60, Number(req.body?.cooldownDays || req.user?.settings?.recommendationCooldownDays || 7) || 7),
-    );
-
-    const refresh = await refreshRecommendationsForUser({
+    const params = parseRecommendationRunRequest(req);
+    const started = startRecommendationRefreshJob({
       userId: req.user.id,
       settings: req.user.settings || {},
-      keywords,
-      targetCount,
-      cooldownDays,
+      keywords: params.keywords,
+      targetCount: params.targetCount,
+      cooldownDays: params.cooldownDays,
+      kind: "recommendations_refresh",
     });
 
     const items = await listRecommendations(req.user.id, {
-      limit: Math.max(40, targetCount),
+      limit: Math.max(40, params.targetCount),
     });
+
+    const job = started.job;
+    const status = String(job?.status || "").toLowerCase();
+    const finished = status === "success" || status === "done";
+    const fillResult = job?.result?.fill && typeof job.result.fill === "object"
+      ? job.result.fill
+      : {};
+    const resultItems = Array.isArray(job?.result?.items) ? job.result.items : [];
+    const refresh = finished
+      ? fillResult
+      : {
+          pending: true,
+          jobId: job?.id || null,
+          reused: Boolean(started.reused),
+          targetCount: params.targetCount,
+          cooldownDays: params.cooldownDays,
+          count: items.length,
+          removedCount: 0,
+        };
 
     return res.json({
       ok: true,
+      pending: !finished,
+      reused: Boolean(started.reused),
+      job: compactLegacyJob(job),
       refresh,
-      items,
+      items: finished && resultItems.length > 0 ? resultItems : items,
     });
   } catch (e) {
     return res.status(500).json({ ok: false, error: String(e?.message || e) });
