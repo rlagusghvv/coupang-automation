@@ -90,13 +90,37 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
             int.tryParse((progress['validated'] ?? 0).toString()) ?? 0;
         final kept = int.tryParse((progress['kept'] ?? 0).toString()) ?? 0;
         final target = int.tryParse((progress['target'] ?? 0).toString()) ?? 0;
-        return '품질 검증 중: 검증 $validated건 · 유지 $kept/$target';
+        final qcRejected =
+            int.tryParse((progress['qcRejected'] ?? 0).toString()) ?? 0;
+        return qcRejected > 0
+            ? '품질 검증 중: 검증 $validated건 · 통과 $kept/$target · 탈락 $qcRejected건'
+            : '품질 검증 중: 검증 $validated건 · 통과 $kept/$target';
       case 'rate_limited':
         return '도매꾹 요청 제한 감지(429) - 잠시 후 자동 재시도 권장';
+      case 'done_empty':
+        final hint = (progress['hint'] ?? '').toString().trim();
+        final validated =
+            int.tryParse((progress['validated'] ?? 0).toString()) ?? 0;
+        final qcRejected =
+            int.tryParse((progress['qcRejected'] ?? 0).toString()) ?? 0;
+        final scoredCandidates =
+            int.tryParse((progress['scoredCandidates'] ?? 0).toString()) ?? 0;
+        if (hint.isNotEmpty) return '완료(0개): $hint';
+        if (validated > 0 || qcRejected > 0) {
+          return '완료(0개): 검증 $validated건 · QC 탈락 $qcRejected건';
+        }
+        if (scoredCandidates == 0) {
+          return '완료(0개): 점수 조건 통과 후보가 없습니다';
+        }
+        return '완료(0개): 조건 통과 항목 없음';
       case 'done':
         final count = int.tryParse((progress['count'] ?? 0).toString()) ?? 0;
         final removed =
             int.tryParse((progress['removedCount'] ?? 0).toString()) ?? 0;
+        if (count <= 0) {
+          final hint = (progress['hint'] ?? '').toString().trim();
+          return hint.isNotEmpty ? '완료(0개): $hint' : '완료(0개): 조건 통과 항목 없음';
+        }
         return '완료: 기존 $removed개 교체, 새 $count개';
       default:
         return '추천 채우기 진행 중...';
@@ -377,11 +401,17 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
       _items = list.map((e) => (e as Map).cast<String, dynamic>()).toList();
       _selected.clear();
       _showSavedOnly = false;
-      _lastRunSummary = '마지막 채우기 ${_nowLabel()} · $count개 생성(이전 $removed개 교체)';
+      _lastRunSummary = count > 0
+          ? '마지막 채우기 ${_nowLabel()} · $count개 생성(이전 $removed개 교체)'
+          : '마지막 채우기 ${_nowLabel()} · 결과 0개${hint.isNotEmpty ? " ($hint)" : ""}';
       _fillProgress = {
-        'stage': 'done',
+        'stage': count > 0 ? 'done' : 'done_empty',
         'count': count,
         'removedCount': removed,
+        'hint': hint,
+        'validated': diagnostics['validated'] ?? 0,
+        'qcRejected': diagnostics['qcRejected'] ?? 0,
+        'scoredCandidates': diagnostics['scoredCandidates'] ?? 0,
       };
       _activeFillJobId = null;
     });
@@ -580,6 +610,14 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
   Widget build(BuildContext context) {
     final selectedCount = _selected.length;
     final visibleItems = _visibleItems;
+    final fillStage = (_fillProgress?['stage'] ?? '').toString();
+    final fillCount =
+        int.tryParse((_fillProgress?['count'] ?? 0).toString()) ?? 0;
+    final fillDone = fillStage == 'done' || fillStage == 'done_empty';
+    final fillEmptyDone =
+        fillStage == 'done_empty' || (fillStage == 'done' && fillCount <= 0);
+    final fillRunning =
+        _loading || ((_activeFillJobId ?? '').isNotEmpty && !fillDone);
 
     return AppScaffold(
       title: selectedCount > 0 ? '추천 (선택 $selectedCount)' : '추천',
@@ -627,14 +665,22 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
                   Row(
                     children: [
                       Icon(
-                        _loading ? Icons.sync : Icons.task_alt,
+                        fillRunning
+                            ? Icons.sync
+                            : (fillEmptyDone
+                                ? Icons.warning_amber_rounded
+                                : Icons.task_alt),
                         size: 18,
-                        color: Theme.of(context).colorScheme.primary,
+                        color: fillEmptyDone
+                            ? Theme.of(context).colorScheme.error
+                            : Theme.of(context).colorScheme.primary,
                       ),
                       const SizedBox(width: 8),
                       Expanded(
                         child: Text(
-                          _loading ? '추천 채우기 진행 중' : '추천 채우기 상태',
+                          fillRunning
+                              ? '추천 채우기 진행 중'
+                              : (fillEmptyDone ? '추천 채우기 결과 없음' : '추천 채우기 상태'),
                           style: const TextStyle(fontWeight: FontWeight.w800),
                         ),
                       ),

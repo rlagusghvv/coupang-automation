@@ -682,15 +682,31 @@ function startRecommendationRefreshJob({
       const items = await listRecommendations(uid, {
         limit: Math.max(40, targetCount),
       });
+      const finalCount = Number(fill?.count || items.length) || items.length;
+      const removedCount = Number(fill?.removedCount || 0) || 0;
+      const diagnostics =
+        fill?.diagnostics && typeof fill.diagnostics === "object"
+          ? fill.diagnostics
+          : {};
+      const hint = String(diagnostics?.hint || "").trim();
+      const validated = Number(diagnostics?.validated || 0) || 0;
+      const qcRejected = Number(diagnostics?.qcRejected || 0) || 0;
+      const scoredCandidates =
+        Number(diagnostics?.scoredCandidates || 0) || 0;
+      const progressStage = finalCount > 0 ? "done" : "done_empty";
 
       patchLegacyJob(job, {
         status: "success",
         progress: {
-          stage: "done",
-          count: Number(fill?.count || items.length) || items.length,
-          removedCount: Number(fill?.removedCount || 0) || 0,
+          stage: progressStage,
+          count: finalCount,
+          removedCount,
           targetCount,
           cooldownDays,
+          hint,
+          validated,
+          qcRejected,
+          scoredCandidates,
         },
         fill,
         items,
