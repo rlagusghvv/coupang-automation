@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 
 import { previewUploadFromUrl } from '../pipeline/previewUploadFromUrl.js';
+import { evaluateQcGate } from '../pipeline/qcGate.js';
 import { dbAll, dbRun, openDb } from './storage_sqlite_internal.js';
 
 const DEFAULT_RECOMMENDATION_COOLDOWN_DAYS = 7;
@@ -396,6 +397,7 @@ async function listUploadedSourceUrls(db, userId, limit = 5000) {
 export async function listRecommendations(userId, { limit = 50 } = {}) {
   const db = openDb();
   const lim = Math.max(1, Math.min(200, Number(limit) || 50));
+  const queryLimit = Math.max(lim, Math.min(800, lim * 4));
   const rows = await dbAll(
     db,
     `SELECT id, source_url, keyword, title, main_image_url, source_price, shipping_fee, final_price, profit, margin_rate, score, reason, payload_json, created_at
@@ -403,7 +405,7 @@ export async function listRecommendations(userId, { limit = 50 } = {}) {
      WHERE user_id = ?
      ORDER BY score DESC
      LIMIT ?`,
-    [userId, lim],
+    [userId, queryLimit],
   );
   const savedRows = await dbAll(
     db,
@@ -416,19 +418,26 @@ export async function listRecommendations(userId, { limit = 50 } = {}) {
   const savedSet = new Set(
     savedRows.map((r) => String(r?.source_url || '').trim()).filter(Boolean),
   );
-  return rows.map((r) => {
+  const mapped = rows.map((r) => {
     let payload = {};
     try { payload = JSON.parse(r.payload_json || '{}'); } catch {}
 
     const qc = payload?.qc || null;
     const prev = payload?.preview || null;
-    const previewImages = Array.isArray(prev?.computed?.images)
+    const previewImagesRaw = Array.isArray(prev?.computed?.images)
       ? prev.computed.images
+      : (Array.isArray(prev?.contentImagesFiltered) ? prev.contentImagesFiltered : []);
+    const previewImages = previewImagesRaw
         .map((u) => String(u || '').trim())
         .filter(Boolean)
-        .slice(0, 30)
-      : [];
-    const detailImageCount = Number(qc?.detailImageCount ?? prev?.computed?.contentImageCount ?? 0) || 0;
+        .slice(0, 30);
+    const detailImageCount = Number(
+      qc?.detailImageCount ??
+      prev?.computed?.contentImageCount ??
+      prev?.imageCountFiltered ??
+      previewImages.length ??
+      0
+    ) || 0;
     const tier = String(qc?.tier || (detailImageCount >= 3 ? 'A' : (detailImageCount >= 1 ? 'B' : 'C')));
     const eligibleUpload = Boolean(qc?.eligibleUpload ?? (tier === 'A'));
     const sourcePrice = Number.isFinite(Number(r.source_price))
@@ -458,6 +467,7 @@ export async function listRecommendations(userId, { limit = 50 } = {}) {
       saved: savedSet.has(String(r.source_url || '').trim()),
     };
   });
+  return mapped.filter((item) => Boolean(item?.qc?.eligibleUpload)).slice(0, lim);
 }
 
 function normalizeRecommendationItemInput(item = {}) {
@@ -512,13 +522,20 @@ function mapSavedRowToItem(r) {
   try { payload = JSON.parse(r.payload_json || '{}'); } catch {}
   const qc = payload?.qc || {};
   const prev = payload?.preview || {};
-  const previewImages = Array.isArray(prev?.computed?.images)
+  const previewImagesRaw = Array.isArray(prev?.computed?.images)
     ? prev.computed.images
-      .map((u) => String(u || '').trim())
-      .filter(Boolean)
-      .slice(0, 30)
-    : [];
-  const detailImageCount = Number(qc?.detailImageCount ?? prev?.computed?.contentImageCount ?? 0) || 0;
+    : (Array.isArray(prev?.contentImagesFiltered) ? prev.contentImagesFiltered : []);
+  const previewImages = previewImagesRaw
+    .map((u) => String(u || '').trim())
+    .filter(Boolean)
+    .slice(0, 30);
+  const detailImageCount = Number(
+    qc?.detailImageCount ??
+    prev?.computed?.contentImageCount ??
+    prev?.imageCountFiltered ??
+    previewImages.length ??
+    0
+  ) || 0;
   const sourcePrice = Number.isFinite(Number(r.source_price))
     ? Number(r.source_price)
     : (Number.isFinite(Number(prev?.draft?.price)) ? Number(prev?.draft?.price) : null);
@@ -717,6 +734,27 @@ function clampNumber(value, min, max, fallback) {
   const n = Number(value);
   if (!Number.isFinite(n)) return fallback;
   return Math.max(min, Math.min(max, n));
+}
+
+function parseBoolean(value, fallback = false) {
+  if (value == null) return fallback;
+  if (typeof value === 'boolean') return value;
+  const text = String(value).trim().toLowerCase();
+  if (!text) return fallback;
+  if (['1', 'true', 'yes', 'y', 'on'].includes(text)) return true;
+  if (['0', 'false', 'no', 'n', 'off'].includes(text)) return false;
+  return fallback;
+}
+
+function resolveRecommendationPolicy(settings = {}) {
+  return {
+    // User request default: only QC-passed items should be recommended.
+    requireQcPass: parseBoolean(settings?.recommendationRequireQcPass, true),
+    // User request default: avoid repeating the same items by keeping recent-seen exclusion strict.
+    allowRelaxedExclusion: parseBoolean(settings?.recommendationAllowRelaxedExclusion, false),
+    // Keep this off by default; quick fallback often brings low-quality items.
+    allowQuickFallback: parseBoolean(settings?.recommendationAllowQuickFallback, false),
+  };
 }
 
 function resolveRecommendationThresholds(settings = {}) {
@@ -951,20 +989,30 @@ async function fetchFastCandidatesFromList({ keyword, limit = 80, storageStatePa
 
 function strictValidatePreview(preview, banKeywords = DEFAULT_BAN_KEYWORDS) {
   if (!preview?.ok) return { ok: false, reason: 'preview_failed' };
-  const title = String(preview?.draft?.title || '');
+  const draft = preview?.draft && typeof preview.draft === 'object' ? preview.draft : {};
+  const qcPreview = preview?.preview && typeof preview.preview === 'object' ? preview.preview : {};
+  const title = String(draft?.title || '');
   if (!title) return { ok: false, reason: 'no_title' };
   if (containsBanKeyword(title, banKeywords)) return { ok: false, reason: 'banned_keyword' };
 
-  // Previously we required at least 1 detail image. In practice, many wholesale pages
-  // have missing/blocked detail images even when the product is valid. For preview-first
-  // workflows, allow 0 detail images as long as we have a main image.
-  const contentImageCount = Number(preview?.computed?.contentImageCount) || 0;
-  const images = Array.isArray(preview?.computed?.images) ? preview.computed.images : [];
-  const hasMain = Boolean(preview?.draft?.imageUrl);
-  const hasAnyImage = images.length > 0 || hasMain;
+  const previewImages = Array.isArray(qcPreview?.contentImagesFiltered)
+    ? qcPreview.contentImagesFiltered.map((u) => String(u || '').trim()).filter(Boolean)
+    : [];
+  const contentImageCount = Number(qcPreview?.imageCountFiltered ?? previewImages.length ?? 0) || 0;
+  const hasMain = Boolean(draft?.imageUrl);
+  const hasAnyImage = previewImages.length > 0 || hasMain;
 
   if (!hasAnyImage) return { ok: false, reason: 'no_images', contentImageCount };
-  return { ok: true, contentImageCount };
+  return {
+    ok: true,
+    contentImageCount,
+    previewImages: previewImages.slice(0, 30),
+    qcPreview,
+    mainImageUrl: String(draft?.imageUrl || '').trim(),
+    title: String(draft?.title || '').trim(),
+    sourcePrice: Number(draft?.price),
+    shippingFee: draft?.shippingFee,
+  };
 }
 
 async function generateRecommendationsBatch({
@@ -980,7 +1028,9 @@ async function generateRecommendationsBatch({
   const startedAt = Date.now();
   const keywordDiagnostics = [];
   const keywordScanLimit = Math.max(1, Math.min(8, seed.length));
-  const thresholds = resolveRecommendationThresholds(settings || {});
+  const normalizedSettings = settings || {};
+  const thresholds = resolveRecommendationThresholds(normalizedSettings);
+  const policy = resolveRecommendationPolicy(normalizedSettings);
 
   const candidates = [];
   for (const kw of seed.slice(0, keywordScanLimit)) {
@@ -990,7 +1040,7 @@ async function generateRecommendationsBatch({
       const result = await fetchFastCandidatesFromList({
         keyword: kw,
         limit: 40,
-        storageStatePath: String(settings?.domeggookStorageStatePath || ''),
+        storageStatePath: String(normalizedSettings?.domeggookStorageStatePath || ''),
       });
       list = Array.isArray(result?.items) ? result.items : [];
       if (result?.diagnostics) keywordDiagnostics.push(result.diagnostics);
@@ -1109,7 +1159,8 @@ async function generateRecommendationsBatch({
 
   const final = [];
   let validated = 0;
-  const maxValidate = Math.max(topN * 2, 12);
+  let qcRejected = 0;
+  const maxValidate = Math.max(topN * (policy.requireQcPass ? 6 : 2), 12);
   for (const cand of scoredPool) {
     if (final.length >= topN) break;
     if (validated >= maxValidate) break;
@@ -1118,7 +1169,7 @@ async function generateRecommendationsBatch({
 
     const prev = await withTimeout(
       previewUploadFromUrl(cand.sourceUrl, {
-        ...(settings || {}),
+        ...normalizedSettings,
         maxContentImages: 30,
       }),
       previewTimeoutMs,
@@ -1133,15 +1184,21 @@ async function generateRecommendationsBatch({
     const v = strictValidatePreview(prev, DEFAULT_BAN_KEYWORDS);
     if (!v.ok) continue;
 
-    const detailCount = Number(prev?.computed?.contentImageCount) || 0;
+    const qcGate = evaluateQcGate(v.qcPreview || {}, normalizedSettings);
+    if (policy.requireQcPass && !qcGate.ok) {
+      qcRejected += 1;
+      continue;
+    }
+
+    const detailCount = Number(v.contentImageCount || 0) || 0;
     const tier = detailCount >= 3 ? 'A' : (detailCount >= 1 ? 'B' : 'C');
-    const eligibleUpload = tier === 'A';
+    const eligibleUpload = Boolean(qcGate.ok);
 
     // Prefer fields from the real preview (more accurate than list-scraped/fake preview).
-    const prevTitle = String(prev?.draft?.title || '').trim();
-    const prevMainImageUrl = String(prev?.draft?.imageUrl || '').trim();
-    const prevPrice = Number(prev?.draft?.price);
-    const prevShip = prev?.draft?.shippingFee;
+    const prevTitle = String(v.title || '').trim();
+    const prevMainImageUrl = String(v.mainImageUrl || '').trim();
+    const prevPrice = Number(v.sourcePrice);
+    const prevShip = v.shippingFee;
 
     final.push({
       ...cand,
@@ -1151,8 +1208,25 @@ async function generateRecommendationsBatch({
       shippingFee: (prevShip == null ? cand.shippingFee : prevShip),
       payload: {
         ...cand.payload,
-        preview: { url: prev.url, draft: prev.draft, computed: prev.computed },
-        qc: { detailImageCount: detailCount, tier, eligibleUpload },
+        preview: {
+          url: prev?.url || cand.sourceUrl,
+          draft: prev?.draft || null,
+          computed: {
+            images: v.previewImages || [],
+            contentImageCount: detailCount,
+            imageCountRaw: Number(v.qcPreview?.imageCountRaw || 0) || 0,
+            imageCountFiltered: Number(v.qcPreview?.imageCountFiltered || detailCount) || detailCount,
+            imageCountRejected: Number(v.qcPreview?.imageCountRejected || 0) || 0,
+          },
+        },
+        qc: {
+          ok: Boolean(qcGate.ok),
+          reasons: Array.isArray(qcGate.reasons) ? qcGate.reasons : [],
+          metrics: qcGate.metrics && typeof qcGate.metrics === 'object' ? qcGate.metrics : {},
+          detailImageCount: detailCount,
+          tier,
+          eligibleUpload,
+        },
       },
     });
   }
@@ -1160,7 +1234,7 @@ async function generateRecommendationsBatch({
   // Keep UX stable: if strict preview validation yielded too few items,
   // backfill with scored candidates so the list is not almost empty.
   let fallbackFilledCount = 0;
-  if (final.length < topN) {
+  if (policy.allowQuickFallback && final.length < topN) {
     const chosen = new Set(final.map((x) => String(x?.sourceUrl || '')));
     for (const cand of scoredPool) {
       if (final.length >= topN) break;
@@ -1172,7 +1246,14 @@ async function generateRecommendationsBatch({
         ...cand,
         payload: {
           ...cand.payload,
-          qc: { detailImageCount: 0, tier: 'C', eligibleUpload: false },
+          qc: {
+            ok: false,
+            reasons: ['quick_fallback'],
+            metrics: {},
+            detailImageCount: 0,
+            tier: 'C',
+            eligibleUpload: false,
+          },
           quickFallback: true,
         },
       });
@@ -1186,8 +1267,10 @@ async function generateRecommendationsBatch({
     uniqueCandidates: uniq.length,
     scoredCandidates: scoredPool.length,
     thresholds,
+    policy,
     validated,
     kept: final.length,
+    qcRejected,
     fallbackFilledCount,
     keywordDiagnostics: keywordDiagnostics.slice(0, keywordScanLimit).map((d) => ({
       keyword: d.keyword,
@@ -1200,7 +1283,7 @@ async function generateRecommendationsBatch({
         String(e || '').includes('domeggook_openapi_key_missing')
       )
     ),
-    hasDomeggookSessionPath: Boolean(String(settings?.domeggookStorageStatePath || '').trim()),
+    hasDomeggookSessionPath: Boolean(String(normalizedSettings?.domeggookStorageStatePath || '').trim()),
     hint: '',
   };
   if (final.length === 0) {
@@ -1279,6 +1362,7 @@ export async function refreshRecommendationsForUser({
   cooldownDays,
   onProgress = null,
 } = {}) {
+  const policy = resolveRecommendationPolicy(settings || {});
   const seed = Array.isArray(keywords) && keywords.length > 0 ? keywords : defaultKeywordSet();
   const target = Math.max(5, Math.min(100, Number(targetCount) || 20));
   const cooldown = normalizeCooldownDays(
@@ -1333,7 +1417,7 @@ export async function refreshRecommendationsForUser({
   // If too few items are found, retry without "recent seen" restriction.
   // Keep uploaded products excluded to avoid duplicate uploads.
   const tooFew = batch.items.length < Math.max(2, Math.floor(target * 0.5));
-  if (tooFew && recentSeenUrls.length > 0) {
+  if (policy.allowRelaxedExclusion && tooFew && recentSeenUrls.length > 0) {
     const uploadedOnlyExclude = new Set(uploadedUrls);
     if (typeof onProgress === 'function') {
       try {
@@ -1364,6 +1448,7 @@ export async function refreshRecommendationsForUser({
     ...batch.diagnostics,
     initialExcludedCount,
     finalExcludedCount,
+    relaxedExclusionAllowed: Boolean(policy.allowRelaxedExclusion),
     relaxedExclusionApplied: usedRelaxedExclusion,
   };
 
