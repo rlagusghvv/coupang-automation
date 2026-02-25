@@ -1021,16 +1021,23 @@ async function generateRecommendationsBatch({
   topN = 20,
   excludeUrls = new Set(),
   onProgress = null,
-  maxRuntimeMs = 38_000,
-  previewTimeoutMs = 8_000,
+  maxRuntimeMs = 110_000,
+  previewTimeoutMs = 12_000,
 } = {}) {
   const seed = Array.isArray(keywords) && keywords.length > 0 ? keywords : defaultKeywordSet();
   const startedAt = Date.now();
   const keywordDiagnostics = [];
-  const keywordScanLimit = Math.max(1, Math.min(8, seed.length));
   const normalizedSettings = settings || {};
   const thresholds = resolveRecommendationThresholds(normalizedSettings);
   const policy = resolveRecommendationPolicy(normalizedSettings);
+  const keywordScanLimit = Math.max(
+    1,
+    Math.min(
+      seed.length,
+      policy.requireQcPass ? 16 : 8,
+      Math.max(8, Math.ceil(Number(topN || 20) * 1.5)),
+    ),
+  );
 
   const candidates = [];
   for (const kw of seed.slice(0, keywordScanLimit)) {
@@ -1039,7 +1046,7 @@ async function generateRecommendationsBatch({
     try {
       const result = await fetchFastCandidatesFromList({
         keyword: kw,
-        limit: 40,
+        limit: policy.requireQcPass ? 60 : 40,
         storageStatePath: String(normalizedSettings?.domeggookStorageStatePath || ''),
       });
       list = Array.isArray(result?.items) ? result.items : [];
@@ -1160,7 +1167,8 @@ async function generateRecommendationsBatch({
   const final = [];
   let validated = 0;
   let qcRejected = 0;
-  const maxValidate = Math.max(topN * (policy.requireQcPass ? 6 : 2), 12);
+  let maxValidate = Math.max(topN * (policy.requireQcPass ? 12 : 2), 24);
+  maxValidate = Math.min(maxValidate, policy.requireQcPass ? 220 : 80);
   for (const cand of scoredPool) {
     if (final.length >= topN) break;
     if (validated >= maxValidate) break;
@@ -1177,16 +1185,21 @@ async function generateRecommendationsBatch({
     ).catch(() => null);
 
     validated += 1;
-    if (typeof onProgress === 'function' && validated % 3 === 0) {
-      try { onProgress({ stage: 'validate', validated, kept: final.length, target: topN }); } catch {}
-    }
 
     const v = strictValidatePreview(prev, DEFAULT_BAN_KEYWORDS);
-    if (!v.ok) continue;
+    if (!v.ok) {
+      if (typeof onProgress === 'function' && validated % 3 === 0) {
+        try { onProgress({ stage: 'validate', validated, kept: final.length, qcRejected, target: topN }); } catch {}
+      }
+      continue;
+    }
 
     const qcGate = evaluateQcGate(v.qcPreview || {}, normalizedSettings);
     if (policy.requireQcPass && !qcGate.ok) {
       qcRejected += 1;
+      if (typeof onProgress === 'function' && validated % 3 === 0) {
+        try { onProgress({ stage: 'validate', validated, kept: final.length, qcRejected, target: topN }); } catch {}
+      }
       continue;
     }
 
@@ -1229,6 +1242,9 @@ async function generateRecommendationsBatch({
         },
       },
     });
+    if (typeof onProgress === 'function' && validated % 3 === 0) {
+      try { onProgress({ stage: 'validate', validated, kept: final.length, qcRejected, target: topN }); } catch {}
+    }
   }
 
   // Keep UX stable: if strict preview validation yielded too few items,
@@ -1287,7 +1303,9 @@ async function generateRecommendationsBatch({
     hint: '',
   };
   if (final.length === 0) {
-    if (diagnostics.openApiKeyMissing && !diagnostics.hasDomeggookSessionPath) {
+    if (qcRejected > 0) {
+      diagnostics.hint = `QC 통과 상품을 찾지 못했습니다. 검증 ${validated}건 중 QC 탈락 ${qcRejected}건입니다.`;
+    } else if (diagnostics.openApiKeyMissing && !diagnostics.hasDomeggookSessionPath) {
       diagnostics.hint = '도매꾹 OpenAPI 키가 없고 세션 파일 경로도 비어 있어 후보 수집을 시작하지 못했습니다.';
     } else {
       diagnostics.hint = detectRecommendationHint(keywordDiagnostics);
