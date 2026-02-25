@@ -1013,7 +1013,10 @@ async function fetchFastCandidatesFromList({ keyword, limit = 80, storageStatePa
 }
 
 function strictValidatePreview(preview, banKeywords = DEFAULT_BAN_KEYWORDS) {
-  if (!preview?.ok) return { ok: false, reason: 'preview_failed' };
+  if (!preview?.ok) {
+    const reason = String(preview?.reason || preview?.error || 'preview_failed').trim();
+    return { ok: false, reason: reason || 'preview_failed' };
+  }
   const draft = preview?.draft && typeof preview.draft === 'object' ? preview.draft : {};
   const qcPreview = preview?.preview && typeof preview.preview === 'object' ? preview.preview : {};
   const title = String(draft?.title || '');
@@ -1215,6 +1218,8 @@ async function generateRecommendationsBatch({
   const final = [];
   let validated = 0;
   let qcRejected = 0;
+  let previewRetryRecovered = 0;
+  let previewRetryFailed = 0;
   let maxValidate = Math.max(topN * (policy.requireQcPass ? 12 : 2), 24);
   maxValidate = Math.min(maxValidate, policy.requireQcPass ? 220 : 80);
   for (const cand of scoredPool) {
@@ -1223,14 +1228,31 @@ async function generateRecommendationsBatch({
     if (Date.now() - startedAt > Math.floor(maxRuntimeMs * 0.92)) break;
     if (excludeUrls.has(cand.sourceUrl)) continue;
 
-    const prev = await withTimeout(
-      previewUploadFromUrl(cand.sourceUrl, {
-        ...normalizedSettings,
-        maxContentImages: 30,
-      }),
-      previewTimeoutMs,
-      'preview_timeout',
-    ).catch(() => null);
+    const requestPreview = async (timeoutMs) =>
+      withTimeout(
+        previewUploadFromUrl(cand.sourceUrl, {
+          ...normalizedSettings,
+          maxContentImages: 30,
+        }),
+        timeoutMs,
+        'preview_timeout',
+      ).catch((error) => ({
+        ok: false,
+        reason: normalizeErrorMessage(error),
+      }));
+
+    let prev = await requestPreview(previewTimeoutMs);
+    if (!prev?.ok) {
+      const retryTimeoutMs = Math.max(previewTimeoutMs + 6000, Math.floor(previewTimeoutMs * 1.8));
+      const retry = await requestPreview(retryTimeoutMs);
+      if (retry?.ok) {
+        prev = retry;
+        previewRetryRecovered += 1;
+      } else {
+        prev = retry || prev;
+        previewRetryFailed += 1;
+      }
+    }
 
     validated += 1;
 
@@ -1339,6 +1361,8 @@ async function generateRecommendationsBatch({
     validated,
     kept: final.length,
     qcRejected,
+    previewRetryRecovered,
+    previewRetryFailed,
     fallbackFilledCount,
     keywordDiagnostics: keywordDiagnostics.slice(0, keywordScanLimit).map((d) => ({
       keyword: d.keyword,
@@ -1361,7 +1385,12 @@ async function generateRecommendationsBatch({
       const topStrictReject = Object.entries(strictRejectCounts)
         .sort((a, b) => Number(b?.[1] || 0) - Number(a?.[1] || 0))[0];
       if (topStrictReject && Number(topStrictReject[1] || 0) > 0) {
-        diagnostics.hint = `품질 검증 단계에서 제외되었습니다 (${topStrictReject[0]} ${topStrictReject[1]}건).`;
+        const reason = String(topStrictReject[0] || '').toLowerCase();
+        if (reason.includes('preview')) {
+          diagnostics.hint = `상품 페이지 파싱 실패가 많습니다 (${topStrictReject[0]} ${topStrictReject[1]}건).`;
+        } else {
+          diagnostics.hint = `품질 검증 단계에서 제외되었습니다 (${topStrictReject[0]} ${topStrictReject[1]}건).`;
+        }
       }
     } else if (Number(diagnostics.scoredCandidates || 0) === 0) {
       const topReject = Object.entries(scoreRejectCounts)
