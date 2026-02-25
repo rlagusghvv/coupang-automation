@@ -439,7 +439,7 @@ export async function listRecommendations(userId, { limit = 50 } = {}) {
       0
     ) || 0;
     const tier = String(qc?.tier || (detailImageCount >= 3 ? 'A' : (detailImageCount >= 1 ? 'B' : 'C')));
-    const eligibleUpload = Boolean(qc?.eligibleUpload ?? (tier === 'A'));
+    const eligibleUpload = Boolean(qc?.eligibleUpload === true || qc?.ok === true);
     const sourcePrice = Number.isFinite(Number(r.source_price))
       ? Number(r.source_price)
       : (Number.isFinite(Number(prev?.draft?.price)) ? Number(prev?.draft?.price) : null);
