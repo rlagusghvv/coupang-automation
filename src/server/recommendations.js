@@ -422,9 +422,21 @@ export async function listRecommendations(userId, { limit = 50 } = {}) {
 
     const qc = payload?.qc || null;
     const prev = payload?.preview || null;
+    const previewImages = Array.isArray(prev?.computed?.images)
+      ? prev.computed.images
+        .map((u) => String(u || '').trim())
+        .filter(Boolean)
+        .slice(0, 30)
+      : [];
     const detailImageCount = Number(qc?.detailImageCount ?? prev?.computed?.contentImageCount ?? 0) || 0;
     const tier = String(qc?.tier || (detailImageCount >= 3 ? 'A' : (detailImageCount >= 1 ? 'B' : 'C')));
     const eligibleUpload = Boolean(qc?.eligibleUpload ?? (tier === 'A'));
+    const sourcePrice = Number.isFinite(Number(r.source_price))
+      ? Number(r.source_price)
+      : (Number.isFinite(Number(prev?.draft?.price)) ? Number(prev?.draft?.price) : null);
+    const shippingFee = Number.isFinite(Number(r.shipping_fee))
+      ? Number(r.shipping_fee)
+      : (Number.isFinite(Number(prev?.draft?.shippingFee)) ? Number(prev?.draft?.shippingFee) : null);
 
     return {
       id: r.id,
@@ -432,13 +444,15 @@ export async function listRecommendations(userId, { limit = 50 } = {}) {
       keyword: r.keyword,
       title: r.title,
       mainImageUrl: r.main_image_url,
-      sourcePrice: r.source_price,
-      shippingFee: r.shipping_fee,
+      sourcePrice,
+      shippingFee,
       finalPrice: r.final_price,
       profit: r.profit,
       marginRate: r.margin_rate,
       score: r.score,
       reason: r.reason,
+      contentImageCount: detailImageCount,
+      previewImages,
       qc: { tier, eligibleUpload, detailImageCount },
       createdAt: r.created_at,
       saved: savedSet.has(String(r.source_url || '').trim()),
@@ -451,9 +465,31 @@ function normalizeRecommendationItemInput(item = {}) {
   const sourceUrl = String(it.sourceUrl || '').trim();
   const payload = it.payload && typeof it.payload === 'object' ? it.payload : {};
   const qc = it.qc && typeof it.qc === 'object' ? it.qc : {};
-  const payloadJson = JSON.stringify({
+  const previewImages = Array.isArray(it.previewImages)
+    ? it.previewImages.map((u) => String(u || '').trim()).filter(Boolean).slice(0, 30)
+    : [];
+  const contentImageCount = Number(it.contentImageCount ?? qc?.detailImageCount ?? 0) || 0;
+  const mergedPayload = {
     ...(payload || {}),
     ...(Object.keys(qc).length ? { qc } : {}),
+  };
+  if (
+    (!mergedPayload.preview || typeof mergedPayload.preview !== 'object') &&
+    (previewImages.length > 0 || contentImageCount > 0)
+  ) {
+    mergedPayload.preview = {
+      draft: {
+        price: Number.isFinite(Number(it.sourcePrice)) ? Number(it.sourcePrice) : null,
+        shippingFee: Number.isFinite(Number(it.shippingFee)) ? Number(it.shippingFee) : null,
+      },
+      computed: {
+        images: previewImages,
+        contentImageCount,
+      },
+    };
+  }
+  const payloadJson = JSON.stringify({
+    ...mergedPayload,
   });
   return {
     sourceUrl,
@@ -475,23 +511,39 @@ function mapSavedRowToItem(r) {
   let payload = {};
   try { payload = JSON.parse(r.payload_json || '{}'); } catch {}
   const qc = payload?.qc || {};
+  const prev = payload?.preview || {};
+  const previewImages = Array.isArray(prev?.computed?.images)
+    ? prev.computed.images
+      .map((u) => String(u || '').trim())
+      .filter(Boolean)
+      .slice(0, 30)
+    : [];
+  const detailImageCount = Number(qc?.detailImageCount ?? prev?.computed?.contentImageCount ?? 0) || 0;
+  const sourcePrice = Number.isFinite(Number(r.source_price))
+    ? Number(r.source_price)
+    : (Number.isFinite(Number(prev?.draft?.price)) ? Number(prev?.draft?.price) : null);
+  const shippingFee = Number.isFinite(Number(r.shipping_fee))
+    ? Number(r.shipping_fee)
+    : (Number.isFinite(Number(prev?.draft?.shippingFee)) ? Number(prev?.draft?.shippingFee) : null);
   return {
     id: r.id,
     sourceUrl: r.source_url,
     keyword: r.keyword,
     title: r.title,
     mainImageUrl: r.main_image_url,
-    sourcePrice: r.source_price,
-    shippingFee: r.shipping_fee,
+    sourcePrice,
+    shippingFee,
     finalPrice: r.final_price,
     profit: r.profit,
     marginRate: r.margin_rate,
     score: r.score,
     reason: r.reason,
+    contentImageCount: detailImageCount,
+    previewImages,
     qc: {
       tier: String(qc?.tier || '-'),
       eligibleUpload: Boolean(qc?.eligibleUpload),
-      detailImageCount: Number(qc?.detailImageCount || 0),
+      detailImageCount,
     },
     saved: true,
     savedAt: r.saved_at,

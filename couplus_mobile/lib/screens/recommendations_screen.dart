@@ -132,6 +132,49 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
     return '$hh:$mm:$ss';
   }
 
+  String _comma(int n) {
+    final text = n.toString();
+    return text.replaceAllMapped(
+      RegExp(r'\B(?=(\d{3})+(?!\d))'),
+      (_) => ',',
+    );
+  }
+
+  String _won(dynamic value) {
+    final n = num.tryParse((value ?? '').toString());
+    if (n == null) return '-';
+    return '${_comma(n.round())}원';
+  }
+
+  String _humanizeSkipReason(String raw) {
+    final key = raw.trim();
+    switch (key) {
+      case 'qc_gate_failed':
+        return 'QC 기준 미달';
+      case 'duplicate_url':
+        return '중복 URL';
+      case 'duplicate_title':
+        return '중복 제목';
+      case 'duplicate_fingerprint':
+        return '중복 이미지';
+      case 'preview_failed':
+        return '미리보기 실패';
+      case 'no_images':
+        return '이미지 없음';
+      default:
+        return key.isEmpty ? '-' : key;
+    }
+  }
+
+  List<String> _previewImagesOf(Map<String, dynamic> item) {
+    final raw = (item['previewImages'] as List?) ?? const [];
+    return raw
+        .map((e) => e.toString().trim())
+        .where((s) => s.isNotEmpty)
+        .take(6)
+        .toList();
+  }
+
   @override
   void initState() {
     super.initState();
@@ -487,9 +530,10 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
           successIds.add(sellerProductId);
         }
         if (row['skipped'] == true || row['ok'] == false) {
-          final reason = (row['skipReason'] ?? row['error'] ?? 'unknown')
+          final reasonRaw = (row['skipReason'] ?? row['error'] ?? 'unknown')
               .toString()
               .trim();
+          final reason = _humanizeSkipReason(reasonRaw);
           if (reason.isEmpty) continue;
           reasonCounts[reason] = (reasonCounts[reason] ?? 0) + 1;
         }
@@ -697,9 +741,11 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
                             (row['statusName'] ?? '').toString().trim();
                         final productUrl =
                             (row['productUrl'] ?? '').toString().trim();
-                        final reason = (row['skipReason'] ?? row['error'] ?? '')
-                            .toString()
-                            .trim();
+                        final reasonRaw =
+                            (row['skipReason'] ?? row['error'] ?? '')
+                                .toString()
+                                .trim();
+                        final reason = _humanizeSkipReason(reasonRaw);
                         final statusText =
                             ok && !skipped ? '성공' : (skipped ? '스킵' : '실패');
                         final statusColor = ok && !skipped
@@ -857,16 +903,22 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
                 final title = (it['title'] ?? '').toString();
                 final img = (it['mainImageUrl'] ?? '').toString();
                 final keyword = (it['keyword'] ?? '').toString();
+                final sourcePrice = it['sourcePrice'];
+                final shippingFee = it['shippingFee'];
                 final profit = (it['profit'] ?? 0);
                 final marginRate = (it['marginRate'] ?? 0);
                 final finalPrice = (it['finalPrice'] ?? 0);
                 final reason = (it['reason'] ?? '').toString();
                 final url = (it['sourceUrl'] ?? '').toString();
+                final previewImages = _previewImagesOf(it);
                 final qc = (it['qc'] as Map?)?.cast<String, dynamic>() ??
                     const <String, dynamic>{};
                 final qcTier = (qc['tier'] ?? '-').toString();
-                final detailImageCount =
-                    int.tryParse((qc['detailImageCount'] ?? 0).toString()) ?? 0;
+                final eligibleUpload = qc['eligibleUpload'] == true;
+                final detailImageCount = int.tryParse(
+                        (it['contentImageCount'] ?? qc['detailImageCount'] ?? 0)
+                            .toString()) ??
+                    0;
 
                 final selected = url.isNotEmpty && _selected.contains(url);
                 final saved = url.isNotEmpty && _savedUrls.contains(url);
@@ -884,6 +936,7 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
                                 thumbUrl: img,
                                 qcTier: qcTier,
                                 detailImageCount: detailImageCount,
+                                seed: it,
                               ),
                             ),
                           );
@@ -966,11 +1019,30 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
                                         Theme.of(context).colorScheme.outline,
                                   ),
                                 InfoChip(
-                                  label: '권장가 ${(finalPrice as num).round()}',
+                                  label: eligibleUpload ? '업로드 가능' : 'QC 검토',
+                                  color: eligibleUpload
+                                      ? const Color(0xFF2F9E44)
+                                      : Colors.orange,
+                                ),
+                                InfoChip(
+                                  label: '권장가 ${_won(finalPrice)}',
                                   color: Theme.of(context).colorScheme.primary,
                                 ),
                                 InfoChip(
-                                  label: '순마진 ${(profit as num).round()}',
+                                  label: '원가 ${_won(sourcePrice)}',
+                                  color:
+                                      Theme.of(context).colorScheme.secondary,
+                                ),
+                                if (num.tryParse(
+                                        (shippingFee ?? '').toString()) !=
+                                    null)
+                                  InfoChip(
+                                    label: '배송비 ${_won(shippingFee)}',
+                                    color:
+                                        Theme.of(context).colorScheme.outline,
+                                  ),
+                                InfoChip(
+                                  label: '순마진 ${_won(profit)}',
                                   color: const Color(0xFF2F9E44),
                                 ),
                                 InfoChip(
@@ -978,8 +1050,53 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
                                       '마진 ${(((marginRate as num)) * 100).round()}%',
                                   color: const Color(0xFF2F9E44),
                                 ),
+                                if (detailImageCount > 0)
+                                  InfoChip(
+                                    label: '상세 $detailImageCount장',
+                                    color:
+                                        Theme.of(context).colorScheme.tertiary,
+                                  ),
                               ],
                             ),
+                            if (previewImages.isNotEmpty) ...[
+                              const SizedBox(height: 8),
+                              SizedBox(
+                                height: 44,
+                                child: ListView.separated(
+                                  scrollDirection: Axis.horizontal,
+                                  itemCount: previewImages.length,
+                                  separatorBuilder: (_, __) =>
+                                      const SizedBox(width: 6),
+                                  itemBuilder: (ctx, pi) {
+                                    final pu = previewImages[pi];
+                                    return ClipRRect(
+                                      borderRadius: BorderRadius.circular(8),
+                                      child: Image.network(
+                                        widget.api.proxyImageUrl(pu),
+                                        width: 44,
+                                        height: 44,
+                                        fit: BoxFit.cover,
+                                        errorBuilder: (_, __, ___) => Container(
+                                          width: 44,
+                                          height: 44,
+                                          color: Theme.of(context)
+                                              .colorScheme
+                                              .surfaceContainerHighest,
+                                          child: Icon(
+                                            Icons.broken_image_outlined,
+                                            size: 16,
+                                            color: Theme.of(context)
+                                                .colorScheme
+                                                .onSurface
+                                                .withValues(alpha: 0.5),
+                                          ),
+                                        ),
+                                      ),
+                                    );
+                                  },
+                                ),
+                              ),
+                            ],
                             const SizedBox(height: 8),
                             Row(
                               children: [
@@ -998,6 +1115,7 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
                                                 qcTier: qcTier,
                                                 detailImageCount:
                                                     detailImageCount,
+                                                seed: it,
                                               ),
                                             ),
                                           );
