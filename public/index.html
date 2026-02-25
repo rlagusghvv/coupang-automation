@@ -291,6 +291,14 @@
                   <details class="settings-cat">
                     <summary>도매꾹 / 도매매 세션</summary>
                     <div class="grid">
+                      <div class="field sensitive" data-sensitive-id="domeggookOpenApiKey">
+                        <label>도매꾹 OpenAPI Key</label>
+                        <div class="sensitive-locked" data-sensitive="domeggookOpenApiKey">
+                          <input class="mask-input" type="password" value="••••••••" readonly />
+                          <button class="mini-btn" type="button" data-action="unlock" data-target="domeggookOpenApiKey">Reveal/Edit</button>
+                        </div>
+                        <input id="domeggookOpenApiKey" class="sensitive-input hidden" type="password" placeholder="domeggook openapi key" autocomplete="off" />
+                      </div>
                       <div>
                         <label>도매꾹 세션 파일 경로</label>
                         <input id="domeggookStorageStatePath" type="text" placeholder="/Users/.../storageState.domeggook.json" />

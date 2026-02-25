@@ -20,6 +20,28 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
   List<Map<String, dynamic>> _items = const [];
   final Set<String> _selected = <String>{};
 
+  String _diagnosticsHint(Map<String, dynamic> diagnostics) {
+    final hint = (diagnostics['hint'] ?? '').toString().trim();
+    if (hint.isNotEmpty) return hint;
+
+    final keywordDiagnostics = (diagnostics['keywordDiagnostics'] as List?) ?? const [];
+    for (final raw in keywordDiagnostics) {
+      if (raw is! Map) continue;
+      final errors = (raw['errors'] as List?) ?? const [];
+      for (final e in errors) {
+        final text = e.toString().trim();
+        if (text.isNotEmpty) return '후보 수집 오류: $text';
+      }
+    }
+
+    final collected =
+        int.tryParse((diagnostics['collectedCandidates'] ?? 0).toString()) ?? 0;
+    if (collected == 0) {
+      return '후보가 0개입니다. 키워드/네트워크 상태를 확인해 주세요.';
+    }
+    return '';
+  }
+
   @override
   void initState() {
     super.initState();
@@ -64,6 +86,10 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
               list.length;
       final cooldown =
           int.tryParse((refresh['cooldownDays'] ?? 7).toString()) ?? 7;
+      final diagnostics =
+          (refresh['diagnostics'] as Map?)?.cast<String, dynamic>() ??
+              const <String, dynamic>{};
+      final hint = _diagnosticsHint(diagnostics);
 
       setState(() {
         _items = list.map((e) => (e as Map).cast<String, dynamic>()).toList();
@@ -74,7 +100,9 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              '추천 새로고침 완료: 기존 $removed개 교체, 새 $count개 (재노출 제외 $cooldown일)',
+              count > 0
+                  ? '추천 새로고침 완료: 기존 $removed개 교체, 새 $count개 (재노출 제외 $cooldown일)'
+                  : '추천 새로고침 완료: 새 0개 (재노출 제외 $cooldown일)${hint.isNotEmpty ? " - $hint" : ""}',
             ),
           ),
         );
@@ -169,6 +197,13 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
 
       // New server response: returns items directly.
       final directItems = (json['items'] as List?) ?? const [];
+      final fill =
+          (json['fill'] as Map?)?.cast<String, dynamic>() ??
+              const <String, dynamic>{};
+      final diagnostics =
+          (fill['diagnostics'] as Map?)?.cast<String, dynamic>() ??
+              const <String, dynamic>{};
+      final hint = _diagnosticsHint(diagnostics);
       if (directItems.isNotEmpty) {
         setState(() {
           _items = directItems
@@ -183,6 +218,15 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
           );
         }
         return;
+      }
+
+      if (hint.isNotEmpty) {
+        setState(() => _error = hint);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(hint)),
+          );
+        }
       }
 
       // Legacy server response: job-based polling.

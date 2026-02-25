@@ -443,16 +443,50 @@ function parseWon(text) {
   return Number.isFinite(n) ? n : null;
 }
 
-async function fetchFastCandidatesFromList({ keyword, limit = 80, storageStatePath = '' }) {
+function normalizeErrorMessage(error) {
+  const parts = [];
+  const msg = String(error?.message || error || '').trim();
+  const causeCode = String(error?.cause?.code || '').trim();
+  const causeMsg = String(error?.cause?.message || '').trim();
+  if (causeCode) parts.push(causeCode);
+  if (causeMsg && !parts.includes(causeMsg)) parts.push(causeMsg);
+  if (msg && !parts.includes(msg)) parts.push(msg);
+  return parts.filter(Boolean).join(' | ') || 'unknown_error';
+}
+
+function detectRecommendationHint(keywordDiagnostics = []) {
+  const rows = Array.isArray(keywordDiagnostics) ? keywordDiagnostics : [];
+  const flatErrors = rows
+    .flatMap((r) => Array.isArray(r?.errors) ? r.errors : [])
+    .map((e) => String(e || '').toLowerCase());
+
+  if (flatErrors.some((e) => e.includes('rate_limited') || e.includes('429'))) {
+    return '도매꾹 요청 제한(429) 가능성이 있습니다. 잠시 후 다시 시도하세요.';
+  }
+  if (flatErrors.some((e) => e.includes('enotfound') || e.includes('eai_again') || e.includes('getaddrinfo'))) {
+    return '도매꾹 DNS/네트워크 연결 문제로 후보 수집에 실패했습니다.';
+  }
+  if (flatErrors.some((e) => e.includes('fetch failed') || e.includes('etimedout') || e.includes('econnreset'))) {
+    return '도매꾹 네트워크 연결 또는 차단 이슈로 후보 수집에 실패했습니다.';
+  }
+  if (rows.length > 0 && rows.every((r) => Number(r?.collected || 0) === 0)) {
+    return '키워드 결과가 없거나 수집이 차단되어 추천 후보를 만들지 못했습니다.';
+  }
+  return '';
+}
+
+async function fetchFastCandidatesFromList({ keyword, limit = 80, storageStatePath = '', openApiKey = '' }) {
   // v2: Prefer Domeggook OpenAPI if available.
   // Fallback: Playwright list scraping (legacy).
   const q = String(keyword || '').trim();
-  if (!q) return [];
+  if (!q) return { items: [], diagnostics: { keyword: '', strategy: 'none', collected: 0, errors: ['empty_keyword'] } };
+  const diagnostics = { keyword: q, strategy: 'none', collected: 0, errors: [] };
 
   // 0) Try OpenAPI (best-effort). If docs/endpoint mismatch, it will throw.
   try {
     const { domeggookOpenApiGetItemList } = await import('../utils/domeggook_openapi.js');
     const r = await domeggookOpenApiGetItemList({
+      apiKey: String(openApiKey || '').trim(),
       keyword: q,
       market: 'dome',
       page: 1,
@@ -478,10 +512,14 @@ async function fetchFastCandidatesFromList({ keyword, limit = 80, storageStatePa
         out.push({ url: finalUrl.replace(/^http:\/\//, 'https://'), title: title.slice(0, 80), price });
         if (out.length >= limit) break;
       }
-      if (out.length) return out;
+      if (out.length) {
+        diagnostics.strategy = 'openapi';
+        diagnostics.collected = out.length;
+        return { items: out, diagnostics };
+      }
     }
-  } catch {
-    // ignore and fallback
+  } catch (e) {
+    diagnostics.errors.push(`openapi: ${normalizeErrorMessage(e)}`);
   }
 
   // 1) Playwright list-page extraction (legacy)
@@ -491,66 +529,74 @@ async function fetchFastCandidatesFromList({ keyword, limit = 80, storageStatePa
 
     const hasState = storageStatePath && fs.existsSync(storageStatePath);
     const browser = await chromium.launch();
-    const context = hasState ? await browser.newContext({ storageState: storageStatePath }) : await browser.newContext();
-    const page = await context.newPage();
+    try {
+      const context = hasState ? await browser.newContext({ storageState: storageStatePath }) : await browser.newContext();
+      const page = await context.newPage();
 
-    const listUrl = `https://domeggook.com/main/item/itemList.php?sw=${encodeURIComponent(q)}&sf=ttl`;
-    await page.goto(listUrl, { waitUntil: 'domcontentloaded', timeout: 60_000 });
-    await page.waitForTimeout(1800);
+      const listUrl = `https://domeggook.com/main/item/itemList.php?sw=${encodeURIComponent(q)}&sf=ttl`;
+      await page.goto(listUrl, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+      await page.waitForTimeout(1800);
 
-    const rows = await page.evaluate(({ keyword }) => {
-      const kwRaw = String(keyword || '').trim().toLowerCase();
-      const kw = kwRaw.replace(/\s+/g, '');
+      const rows = await page.evaluate(({ keyword }) => {
+        const kwRaw = String(keyword || '').trim().toLowerCase();
+        const kw = kwRaw.replace(/\s+/g, '');
 
-      const parseWon = (s) => {
-        const m = String(s || '').match(/(\d[\d,]{2,})\s*원/);
-        if (!m) return null;
-        const n = Number(String(m[1]).replace(/,/g, ''));
-        return Number.isFinite(n) ? n : null;
-      };
+        const parseWon = (s) => {
+          const m = String(s || '').match(/(\d[\d,]{2,})\s*원/);
+          if (!m) return null;
+          const n = Number(String(m[1]).replace(/,/g, ''));
+          return Number.isFinite(n) ? n : null;
+        };
 
-      const out = [];
-      const seen = new Set();
-      const anchors = [...document.querySelectorAll('a[href^="/"]')];
+        const out = [];
+        const seen = new Set();
+        const anchors = [...document.querySelectorAll('a[href^="/"]')];
 
-      for (const a of anchors) {
-        const href = a.getAttribute('href') || '';
-        const m = href.match(/^\/(\d{6,})(?:\?|$)/);
-        if (!m) continue;
-        const id = m[1];
-        if (seen.has(id)) continue;
+        for (const a of anchors) {
+          const href = a.getAttribute('href') || '';
+          const m = href.match(/^\/(\d{6,})(?:\?|$)/);
+          if (!m) continue;
+          const id = m[1];
+          if (seen.has(id)) continue;
 
-        const card = a.closest('li, article, div, td') || a.parentElement;
-        const text = (card?.innerText || a.innerText || '').replace(/\s+/g, ' ').trim();
-        const price = parseWon(text);
-        if (!price) continue;
+          const card = a.closest('li, article, div, td') || a.parentElement;
+          const text = (card?.innerText || a.innerText || '').replace(/\s+/g, ' ').trim();
+          const price = parseWon(text);
+          if (!price) continue;
 
-        const title = text.replace(/\d[\d,]{2,}\s*원/g, '').trim();
-        if (!title) continue;
+          const title = text.replace(/\d[\d,]{2,}\s*원/g, '').trim();
+          if (!title) continue;
 
-        const hay = (title + ' ' + text).toLowerCase();
-        const hayNorm = hay.replace(/\s+/g, '');
-        if (kw && !hayNorm.includes(kw)) continue;
+          const hay = (title + ' ' + text).toLowerCase();
+          const hayNorm = hay.replace(/\s+/g, '');
+          if (kw && !hayNorm.includes(kw)) continue;
 
-        seen.add(id);
-        out.push({ url: `https://domeggook.com/${id}`, title: title.slice(0, 80), price });
-        if (out.length >= 120) break;
+          seen.add(id);
+          out.push({ url: `https://domeggook.com/${id}`, title: title.slice(0, 80), price });
+          if (out.length >= 120) break;
+        }
+
+        return out;
+      }, { keyword: q });
+
+      if (rows && rows.length) {
+        const items = rows.slice(0, Math.max(1, Math.min(200, Number(limit) || 80)));
+        diagnostics.strategy = 'playwright';
+        diagnostics.collected = items.length;
+        return { items, diagnostics };
       }
-
-      return out;
-    }, { keyword: q });
-
-    await browser.close();
-
-    if (rows && rows.length) {
-      return rows.slice(0, Math.max(1, Math.min(200, Number(limit) || 80)));
+    } finally {
+      await browser.close().catch(() => {});
     }
-  } catch {
-    // ignore and fallback
+  } catch (e) {
+    diagnostics.errors.push(`playwright: ${normalizeErrorMessage(e)}`);
   }
 
   // 2) Fallback: get URLs then fetch each item HTML (may hit 429)
-  const urls = await fetchDomeggookUrlsByKeyword({ keyword: q, limit, storageStatePath }).catch(() => []);
+  const urls = await fetchDomeggookUrlsByKeyword({ keyword: q, limit, storageStatePath }).catch((e) => {
+    diagnostics.errors.push(`url_seed: ${normalizeErrorMessage(e)}`);
+    return [];
+  });
   const out = [];
 
   for (const u of urls) {
@@ -589,12 +635,15 @@ async function fetchFastCandidatesFromList({ keyword, limit = 80, storageStatePa
       if (out.length >= limit) break;
     } catch (e) {
       if (String(e?.message || e).includes('rate_limited')) throw e;
+      if (diagnostics.errors.length < 8) diagnostics.errors.push(`item_fetch: ${normalizeErrorMessage(e)}`);
     }
 
     await new Promise((r) => setTimeout(r, 180));
   }
 
-  return out;
+  diagnostics.strategy = out.length ? 'url_fallback' : diagnostics.strategy;
+  diagnostics.collected = out.length;
+  return { items: out, diagnostics };
 }
 
 function strictValidatePreview(preview, banKeywords = DEFAULT_BAN_KEYWORDS) {
@@ -618,17 +667,21 @@ function strictValidatePreview(preview, banKeywords = DEFAULT_BAN_KEYWORDS) {
 async function generateRecommendationsBatch({ settings, keywords, topN = 20, excludeUrls = new Set(), onProgress = null }) {
   const seed = Array.isArray(keywords) && keywords.length > 0 ? keywords : defaultKeywordSet();
   const startedAt = Date.now();
+  const keywordDiagnostics = [];
 
   const candidates = [];
   for (const kw of seed.slice(0, 12)) {
     if (Date.now() - startedAt > 6 * 60_000) break;
     let list = [];
     try {
-      list = await fetchFastCandidatesFromList({
+      const result = await fetchFastCandidatesFromList({
         keyword: kw,
         limit: 40,
         storageStatePath: String(settings?.domeggookStorageStatePath || ''),
+        openApiKey: String(settings?.domeggookOpenApiKey || ''),
       });
+      list = Array.isArray(result?.items) ? result.items : [];
+      if (result?.diagnostics) keywordDiagnostics.push(result.diagnostics);
     } catch (e) {
       if (String(e?.message || e).includes('rate_limited')) {
         if (typeof onProgress === 'function') {
@@ -636,6 +689,12 @@ async function generateRecommendationsBatch({ settings, keywords, topN = 20, exc
         }
         throw e;
       }
+      keywordDiagnostics.push({
+        keyword: kw,
+        strategy: 'error',
+        collected: 0,
+        errors: [normalizeErrorMessage(e)],
+      });
       list = [];
     }
 
@@ -734,13 +793,42 @@ async function generateRecommendationsBatch({ settings, keywords, topN = 20, exc
     });
   }
 
-  return { ok: true, items: final, validated };
+  const diagnostics = {
+    keywordsTried: Math.min(seed.length, 12),
+    collectedCandidates: candidates.length,
+    uniqueCandidates: uniq.length,
+    scoredCandidates: scoredPool.length,
+    validated,
+    kept: final.length,
+    keywordDiagnostics: keywordDiagnostics.slice(0, 12).map((d) => ({
+      keyword: d.keyword,
+      strategy: d.strategy || 'none',
+      collected: Number(d.collected || 0),
+      errors: (Array.isArray(d.errors) ? d.errors : []).slice(0, 2),
+    })),
+    openApiKeyMissing: keywordDiagnostics.some((d) =>
+      (Array.isArray(d?.errors) ? d.errors : []).some((e) =>
+        String(e || '').includes('domeggook_openapi_key_missing')
+      )
+    ),
+    hasDomeggookSessionPath: Boolean(String(settings?.domeggookStorageStatePath || '').trim()),
+    hint: '',
+  };
+  if (final.length === 0) {
+    if (diagnostics.openApiKeyMissing && !diagnostics.hasDomeggookSessionPath) {
+      diagnostics.hint = '도매꾹 OpenAPI 키가 없고 세션 파일 경로도 비어 있어 후보 수집을 시작하지 못했습니다.';
+    } else {
+      diagnostics.hint = detectRecommendationHint(keywordDiagnostics);
+    }
+  }
+
+  return { ok: true, items: final, validated, diagnostics };
 }
 
 export async function generateRecommendationsForUser({ userId, settings, keywords, topN = 20, onProgress = null }) {
   const batch = await generateRecommendationsBatch({ settings, keywords, topN, excludeUrls: new Set(), onProgress });
   await replaceRecommendationsForUser({ userId, items: batch.items });
-  return { ok: true, count: batch.items.length };
+  return { ok: true, count: batch.items.length, diagnostics: batch.diagnostics };
 }
 
 export async function fillRecommendationsForUser({ userId, settings, keywords, targetCount = 20, maxAddPerRun = 6, onProgress = null }) {
@@ -762,7 +850,24 @@ export async function fillRecommendationsForUser({ userId, settings, keywords, t
   }
 
   const need = Math.max(0, Number(targetCount) - exclude.size);
-  if (need <= 0) return { ok: true, inserted: 0, count: exclude.size, keyword: kw };
+  if (need <= 0) {
+    return {
+      ok: true,
+      inserted: 0,
+      count: exclude.size,
+      keyword: kw,
+      diagnostics: {
+        keywordsTried: 1,
+        collectedCandidates: 0,
+        uniqueCandidates: 0,
+        scoredCandidates: 0,
+        validated: 0,
+        kept: exclude.size,
+        keywordDiagnostics: [],
+        hint: '',
+      },
+    };
+  }
 
   const batch = await generateRecommendationsBatch({
     settings,
@@ -773,7 +878,7 @@ export async function fillRecommendationsForUser({ userId, settings, keywords, t
   });
 
   const up = await upsertRecommendationsForUser({ userId, items: batch.items, maxKeep: Math.max(60, Number(targetCount) || 20) });
-  return { ok: true, ...up, keyword: kw };
+  return { ok: true, ...up, keyword: kw, diagnostics: batch.diagnostics };
 }
 
 
@@ -841,6 +946,7 @@ export async function refreshRecommendationsForUser({
     markedCount,
     cooldownDays: cooldown,
     excludedCount: excludeUrls.size,
+    diagnostics: batch.diagnostics,
   };
 }
 

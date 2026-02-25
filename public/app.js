@@ -45,6 +45,7 @@ const settingsEls = {
   coupangDeliveryCompanyCode: $("deliveryCode"),
   imageProxyBase: $("proxyBase"),
   allowedIps: $("allowedIps"),
+  domeggookOpenApiKey: $("domeggookOpenApiKey"),
   domeggookStorageStatePath: $("domeggookStorageStatePath"),
   domemeId: $("domemeId"),
   domemePw: $("domemePw"),
@@ -561,6 +562,9 @@ async function loadSettings() {
   settingsEls.coupangDeliveryCompanyCode.value = s.coupangDeliveryCompanyCode || "";
   settingsEls.imageProxyBase.value = s.imageProxyBase || "";
   settingsEls.allowedIps.value = s.allowedIps || "";
+  if (settingsEls.domeggookOpenApiKey) {
+    settingsEls.domeggookOpenApiKey.value = s.domeggookOpenApiKey || "";
+  }
   if (settingsEls.domeggookStorageStatePath) {
     settingsEls.domeggookStorageStatePath.value = s.domeggookStorageStatePath || "";
   }
@@ -696,6 +700,7 @@ async function saveSettings() {
     coupangDeliveryCompanyCode: settingsEls.coupangDeliveryCompanyCode.value.trim(),
     imageProxyBase: settingsEls.imageProxyBase.value.trim(),
     allowedIps: settingsEls.allowedIps.value.trim(),
+    domeggookOpenApiKey: settingsEls.domeggookOpenApiKey?.value?.trim?.() || "",
     domeggookStorageStatePath: settingsEls.domeggookStorageStatePath?.value?.trim?.() || "",
     domemeId: settingsEls.domemeId.value.trim(),
     domemePw: settingsEls.domemePw.value,
@@ -1040,6 +1045,26 @@ async function loadRecommendations() {
   }
 }
 
+function formatRecoDiagnosticsHint(diagnostics) {
+  if (!diagnostics || typeof diagnostics !== "object") return "";
+  const hint = String(diagnostics.hint || "").trim();
+  if (hint) return hint;
+
+  const keywordDiagnostics = Array.isArray(diagnostics.keywordDiagnostics)
+    ? diagnostics.keywordDiagnostics
+    : [];
+  const firstError = keywordDiagnostics
+    .flatMap((d) => (Array.isArray(d?.errors) ? d.errors : []))
+    .map((e) => String(e || "").trim())
+    .find(Boolean);
+
+  if (firstError) return `후보 수집 오류: ${firstError}`;
+  if (Number(diagnostics.collectedCandidates || 0) === 0) {
+    return "후보가 0개입니다. 키워드/네트워크 상태를 확인하세요.";
+  }
+  return "";
+}
+
 async function refreshRecommendationsReplacing() {
   if (recoRefreshBtn) recoRefreshBtn.disabled = true;
   setStatus("추천 새로고침 중... (기존 목록 교체)", "");
@@ -1064,10 +1089,22 @@ async function refreshRecommendationsReplacing() {
     const removed = Number(refresh.removedCount || 0);
     const count = Number(refresh.count || 0);
     const cooldown = Number(refresh.cooldownDays || 7);
-    setStatus(
-      `추천 새로고침 완료 (이전 ${removed}개 교체, 새 ${count}개 / 재노출 제외 ${cooldown}일)`,
-      "ok",
-    );
+    const diagnostics = refresh.diagnostics || {};
+    const hint = formatRecoDiagnosticsHint(diagnostics);
+    if (count <= 0) {
+      setStatus(
+        `추천 새로고침 완료 (이전 ${removed}개 교체, 새 0개 / 재노출 제외 ${cooldown}일)${
+          hint ? ` - ${hint}` : ""
+        }`,
+        "bad",
+      );
+      if (Object.keys(diagnostics).length) log({ recommendationDiagnostics: diagnostics });
+    } else {
+      setStatus(
+        `추천 새로고침 완료 (이전 ${removed}개 교체, 새 ${count}개 / 재노출 제외 ${cooldown}일)`,
+        "ok",
+      );
+    }
     renderRecoList(json.items || []);
   } catch (e) {
     setStatus("추천 새로고침 에러", "bad");
@@ -1097,7 +1134,16 @@ async function fillRecommendations() {
       return;
     }
 
-    setStatus("후보 생성 요청 완료(잠시 후 목록 확인)", "ok");
+    const fill = json.fill || {};
+    const count = Number(fill.count || (json.items || []).length || 0);
+    const diagnostics = fill.diagnostics || {};
+    const hint = formatRecoDiagnosticsHint(diagnostics);
+    if (count <= 0) {
+      setStatus(`후보 생성 완료: 현재 0개${hint ? ` - ${hint}` : ""}`, "bad");
+      if (Object.keys(diagnostics).length) log({ recommendationDiagnostics: diagnostics });
+    } else {
+      setStatus("후보 생성 요청 완료(잠시 후 목록 확인)", "ok");
+    }
 
     // poll the list a few times
     for (let i = 0; i < 6; i += 1) {
