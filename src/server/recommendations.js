@@ -821,6 +821,56 @@ function extractPriceFromHtml(html = '') {
   return parseCandidatePrice(m[1]);
 }
 
+function normalizePathForDetailMatch(urlObj) {
+  if (!urlObj) return '';
+  try {
+    return decodeURIComponent(String(urlObj.pathname || '')).toLowerCase();
+  } catch {
+    return String(urlObj.pathname || '').toLowerCase();
+  }
+}
+
+function isLikelyDetailAssetUrl(rawUrl = '') {
+  const s = String(rawUrl || '').trim();
+  if (!s) return false;
+  let u = null;
+  try {
+    u = new URL(s);
+  } catch {
+    return false;
+  }
+  const host = String(u.hostname || '').toLowerCase();
+  const path = normalizePathForDetailMatch(u);
+  const query = String(u.search || '').toLowerCase();
+  const target = `${path}${query}`;
+
+  const isThumb =
+    /(?:^|[\/_-])stt_\d+\./i.test(target) ||
+    /(?:^|[\/_-])thumb(?:nail)?([\/_\-.]|$)/i.test(target);
+  const blocked =
+    isThumb ||
+    /\/image\/common\//i.test(path) ||
+    /\/image\/item\//i.test(path) ||
+    /\/image\/event\//i.test(path) ||
+    /\/(?:sns|social)\//i.test(path) ||
+    /\/icons?\//i.test(path) ||
+    /\/banners?\//i.test(path) ||
+    /\/logos?\//i.test(path) ||
+    /\/(?:button|btn)\//i.test(path) ||
+    /\/share\//i.test(path) ||
+    /logo|icon|banner|sns|facebook|twitter|kakao|naver|share|sprite/i.test(target);
+
+  const allowedByPath =
+    /\/upload\/item\//i.test(path) ||
+    /\/upload\/editor\//i.test(path) ||
+    /\/editor\//i.test(path) ||
+    /\/contents?\//i.test(path) ||
+    /\/attach(?:ment)?\//i.test(path);
+
+  const allowedByHost = /(?:^|\.)esmplus\.com$/i.test(host) && !isThumb;
+  return (allowedByPath || allowedByHost) && !blocked;
+}
+
 function isPreviewTimeoutReason(reason) {
   const text = String(reason || '').toLowerCase();
   if (!text) return false;
@@ -866,13 +916,75 @@ async function buildHtmlPreviewFallback({
     url,
   ) || normalizeImageUrlWithBase(seedImageUrl, url);
 
-  const imageCandidates = extractImageUrls(html)
-    .map((raw) => normalizeImageUrlWithBase(raw, url))
-    .filter(Boolean)
-    .slice(0, 120);
+  const detailHtmlBlocks = [];
+  const contentsBufferMatch = String(html).match(
+    /<textarea[^>]*id=["']contentsBuffer["'][^>]*>([\s\S]*?)<\/textarea>/i,
+  );
+  if (contentsBufferMatch && contentsBufferMatch[1]) {
+    detailHtmlBlocks.push(String(contentsBufferMatch[1]));
+  }
 
-  if (mainImageUrl && !imageCandidates.includes(mainImageUrl)) {
-    imageCandidates.unshift(mainImageUrl);
+  const detailIframeMatch = String(html).match(
+    /<(?:iframe|a)[^>]+(?:src|href)=["']([^"']*ai\.esmplus\.com[^"']*)["']/i,
+  );
+  if (detailIframeMatch && detailIframeMatch[1]) {
+    const detailUrl = normalizeImageUrlWithBase(detailIframeMatch[1], url);
+    if (detailUrl) {
+      const detailController = new AbortController();
+      const detailTimeout = setTimeout(
+        () => detailController.abort(),
+        Math.max(3000, Math.min(7000, Math.floor((Number(timeoutMs) || 12000) * 0.7))),
+      );
+      try {
+        const detailRes = await fetch(detailUrl, {
+          signal: detailController.signal,
+          headers: {
+            'User-Agent': 'Mozilla/5.0',
+            Referer: url,
+          },
+        });
+        if (detailRes.ok) {
+          const detailHtml = await detailRes.text();
+          if (detailHtml) detailHtmlBlocks.push(detailHtml);
+        }
+      } catch {} finally {
+        clearTimeout(detailTimeout);
+      }
+    }
+  }
+
+  const rawImages = [];
+  const pushImages = (rawHtml, cap = 120) => {
+    if (!rawHtml) return;
+    const list = extractImageUrls(String(rawHtml || '')).slice(0, cap);
+    for (const item of list) rawImages.push(item);
+  };
+
+  for (const block of detailHtmlBlocks) {
+    pushImages(block, 200);
+    if (rawImages.length >= 200) break;
+  }
+  if (rawImages.length < 8) {
+    pushImages(html, 200);
+  }
+
+  const normalizedAll = Array.from(
+    new Set(
+      rawImages
+        .map((raw) => normalizeImageUrlWithBase(raw, url))
+        .filter(Boolean),
+    ),
+  );
+
+  const preferredImages = normalizedAll.filter((u) => isLikelyDetailAssetUrl(u));
+  const uploadItemImages = normalizedAll.filter((u) => /\/upload\/item\//i.test(u));
+  let imageCandidates =
+    preferredImages.length >= 2
+      ? preferredImages
+      : (uploadItemImages.length >= 2 ? uploadItemImages : normalizedAll);
+  imageCandidates = imageCandidates.slice(0, 120);
+  if (imageCandidates.length === 0 && mainImageUrl) {
+    imageCandidates = [mainImageUrl];
   }
 
   const analyzed = analyzeSameProductImages({
