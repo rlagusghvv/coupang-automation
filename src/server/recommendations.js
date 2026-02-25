@@ -756,6 +756,26 @@ function parseCandidatePrice(raw) {
   return parsed;
 }
 
+function buildQcMetricSnapshot(metrics = {}) {
+  const m = metrics && typeof metrics === 'object' ? metrics : {};
+  const pick = (k, fallback = 0) => {
+    const n = Number(m[k]);
+    return Number.isFinite(n) ? n : fallback;
+  };
+  return {
+    imageCountRaw: pick('imageCountRaw'),
+    imageCountFiltered: pick('imageCountFiltered'),
+    imageCountRejected: pick('imageCountRejected'),
+    tokenMatchRate: pick('tokenMatchRate'),
+    rejectedRate: pick('rejectedRate'),
+    exactHostMatchRate: pick('exactHostMatchRate'),
+    pathAllowRateRaw: pick('pathAllowRateRaw'),
+    pathBlockedRateRaw: pick('pathBlockedRateRaw'),
+    suspiciousPathRateRaw: pick('suspiciousPathRateRaw'),
+    mainImageTokenCount: pick('mainImageTokenCount'),
+  };
+}
+
 function normalizeImageUrlWithBase(rawUrl, baseUrl = '') {
   const s = String(rawUrl || '').trim();
   if (!s) return '';
@@ -1360,6 +1380,9 @@ async function generateRecommendationsBatch({
   let previewFallbackRecovered = 0;
   let previewFallbackFailed = 0;
   let previewTimeoutFallbackUsed = 0;
+  const qcReasonCounts = {};
+  const qcRejectedSamples = [];
+  const maxQcRejectedSamples = 3;
   let maxValidate = Math.max(topN * (policy.requireQcPass ? 12 : 2), 24);
   maxValidate = Math.min(maxValidate, policy.requireQcPass ? 220 : 80);
   for (const cand of scoredPool) {
@@ -1431,6 +1454,21 @@ async function generateRecommendationsBatch({
     const qcGate = evaluateQcGate(v.qcPreview || {}, normalizedSettings);
     if (policy.requireQcPass && !qcGate.ok) {
       qcRejected += 1;
+      const reasons = Array.isArray(qcGate?.reasons)
+        ? qcGate.reasons.map((r) => String(r || '').trim()).filter(Boolean)
+        : [];
+      if (reasons.length === 0) reasons.push('unknown_qc_reject');
+      for (const r of reasons) {
+        qcReasonCounts[r] = Number(qcReasonCounts[r] || 0) + 1;
+      }
+      if (qcRejectedSamples.length < maxQcRejectedSamples) {
+        qcRejectedSamples.push({
+          sourceUrl: cand.sourceUrl,
+          title: String(v.title || cand.title || '').trim(),
+          reasons: reasons.slice(0, 4),
+          metrics: buildQcMetricSnapshot(qcGate?.metrics || {}),
+        });
+      }
       if (typeof onProgress === 'function' && validated % 3 === 0) {
         try { onProgress({ stage: 'validate', validated, kept: final.length, qcRejected, target: topN }); } catch {}
       }
@@ -1523,6 +1561,8 @@ async function generateRecommendationsBatch({
     validated,
     kept: final.length,
     qcRejected,
+    qcReasonCounts,
+    qcRejectedSamples,
     previewRetryRecovered,
     previewRetryFailed,
     previewFallbackRecovered,
@@ -1545,7 +1585,12 @@ async function generateRecommendationsBatch({
   };
   if (final.length === 0) {
     if (qcRejected > 0) {
-      diagnostics.hint = `QC 통과 상품을 찾지 못했습니다. 검증 ${validated}건 중 QC 탈락 ${qcRejected}건입니다.`;
+      const topQcReason = Object.entries(qcReasonCounts)
+        .sort((a, b) => Number(b?.[1] || 0) - Number(a?.[1] || 0))[0];
+      const topReasonText = topQcReason && Number(topQcReason[1] || 0) > 0
+        ? ` (주요 사유: ${topQcReason[0]} ${topQcReason[1]}건)`
+        : '';
+      diagnostics.hint = `QC 통과 상품을 찾지 못했습니다. 검증 ${validated}건 중 QC 탈락 ${qcRejected}건입니다.${topReasonText}`;
     } else if (validated > 0) {
       const topStrictReject = Object.entries(strictRejectCounts)
         .sort((a, b) => Number(b?.[1] || 0) - Number(a?.[1] || 0))[0];
