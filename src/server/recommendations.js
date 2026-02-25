@@ -1,7 +1,8 @@
 import crypto from 'node:crypto';
 
-import { previewUploadFromUrl } from '../pipeline/previewUploadFromUrl.js';
+import { analyzeSameProductImages, previewUploadFromUrl } from '../pipeline/previewUploadFromUrl.js';
 import { evaluateQcGate } from '../pipeline/qcGate.js';
+import { extractImageUrls } from '../utils/contentImages.js';
 import { dbAll, dbRun, openDb } from './storage_sqlite_internal.js';
 
 const DEFAULT_RECOMMENDATION_COOLDOWN_DAYS = 7;
@@ -755,6 +756,142 @@ function parseCandidatePrice(raw) {
   return parsed;
 }
 
+function normalizeImageUrlWithBase(rawUrl, baseUrl = '') {
+  const s = String(rawUrl || '').trim();
+  if (!s) return '';
+  if (s.startsWith('data:')) return '';
+  if (s.startsWith('//')) return `https:${s}`;
+  try {
+    if (baseUrl) {
+      const abs = new URL(s, baseUrl).toString();
+      if (/^https?:\/\//i.test(abs)) return abs.replace(/^http:\/\//i, 'https://');
+    }
+  } catch {}
+  return normalizeCandidateImageUrl(s);
+}
+
+function extractMetaContent(html, key) {
+  const k = String(key || '').trim();
+  if (!k) return '';
+  const escaped = k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const patterns = [
+    new RegExp(`<meta[^>]+property=["']${escaped}["'][^>]+content=["']([^"']+)["']`, 'i'),
+    new RegExp(`<meta[^>]+content=["']([^"']+)["'][^>]+property=["']${escaped}["']`, 'i'),
+    new RegExp(`<meta[^>]+name=["']${escaped}["'][^>]+content=["']([^"']+)["']`, 'i'),
+    new RegExp(`<meta[^>]+content=["']([^"']+)["'][^>]+name=["']${escaped}["']`, 'i'),
+  ];
+  for (const re of patterns) {
+    const m = String(html || '').match(re);
+    if (m && m[1]) return String(m[1] || '').trim();
+  }
+  return '';
+}
+
+function extractTitleFromHtml(html = '') {
+  const og = extractMetaContent(html, 'og:title');
+  if (og) return og;
+  const m = String(html || '').match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+  if (!m || !m[1]) return '';
+  return String(m[1]).replace(/\s+/g, ' ').trim();
+}
+
+function extractPriceFromHtml(html = '') {
+  const m = String(html || '').match(/(\d[\d,]{2,})\s*원/i);
+  if (!m || !m[1]) return null;
+  return parseCandidatePrice(m[1]);
+}
+
+function isPreviewTimeoutReason(reason) {
+  const text = String(reason || '').toLowerCase();
+  if (!text) return false;
+  return (
+    text.includes('preview_timeout') ||
+    text.includes('timed out') ||
+    text.includes('timeout')
+  );
+}
+
+async function buildHtmlPreviewFallback({
+  sourceUrl,
+  seedTitle = '',
+  seedPrice = null,
+  seedImageUrl = '',
+  timeoutMs = 12_000,
+} = {}) {
+  const url = String(sourceUrl || '').trim();
+  if (!url) return { ok: false, reason: 'fallback_missing_url' };
+
+  const controller = new AbortController();
+  const t = setTimeout(() => controller.abort(), Math.max(3000, Number(timeoutMs) || 12_000));
+  let html = '';
+  try {
+    const r = await fetch(url, {
+      signal: controller.signal,
+      headers: {
+        'User-Agent': 'Mozilla/5.0',
+        Referer: 'https://domeggook.com/',
+      },
+    });
+    if (!r.ok) return { ok: false, reason: `fallback_http_${r.status}` };
+    html = await r.text();
+  } catch (error) {
+    return { ok: false, reason: normalizeErrorMessage(error) };
+  } finally {
+    clearTimeout(t);
+  }
+
+  const title = extractTitleFromHtml(html) || String(seedTitle || '').trim();
+  const mainImageUrl = normalizeImageUrlWithBase(
+    extractMetaContent(html, 'og:image') || '',
+    url,
+  ) || normalizeImageUrlWithBase(seedImageUrl, url);
+
+  const imageCandidates = extractImageUrls(html)
+    .map((raw) => normalizeImageUrlWithBase(raw, url))
+    .filter(Boolean)
+    .slice(0, 120);
+
+  if (mainImageUrl && !imageCandidates.includes(mainImageUrl)) {
+    imageCandidates.unshift(mainImageUrl);
+  }
+
+  const analyzed = analyzeSameProductImages({
+    sourceUrl: url,
+    mainImageUrl: mainImageUrl || imageCandidates[0] || '',
+    contentImageUrls: imageCandidates,
+    strict: true,
+  });
+
+  const price = parseCandidatePrice(extractPriceFromHtml(html)) ?? parseCandidatePrice(seedPrice);
+  const draft = {
+    sourceUrl: url,
+    title,
+    price,
+    shippingFee: null,
+    imageUrl: mainImageUrl || '',
+    contentText: '',
+    categoryText: '',
+    options: [],
+  };
+
+  return {
+    ok: Boolean(title && draft.imageUrl),
+    skipped: false,
+    url,
+    reason: title && draft.imageUrl ? '' : 'fallback_missing_title_or_image',
+    draft,
+    preview: {
+      sourceUrl: url,
+      title,
+      mainImageUrl: draft.imageUrl,
+      contentImagesRaw: imageCandidates,
+      contentImagesFiltered: analyzed?.filteredImageUrls || [],
+      contentImagesRejected: analyzed?.rejectedImages || [],
+      ...((analyzed && analyzed.metrics) || {}),
+    },
+  };
+}
+
 function clampNumber(value, min, max, fallback) {
   const n = Number(value);
   if (!Number.isFinite(n)) return fallback;
@@ -1220,6 +1357,8 @@ async function generateRecommendationsBatch({
   let qcRejected = 0;
   let previewRetryRecovered = 0;
   let previewRetryFailed = 0;
+  let previewFallbackRecovered = 0;
+  let previewFallbackFailed = 0;
   let maxValidate = Math.max(topN * (policy.requireQcPass ? 12 : 2), 24);
   maxValidate = Math.min(maxValidate, policy.requireQcPass ? 220 : 80);
   for (const cand of scoredPool) {
@@ -1251,6 +1390,23 @@ async function generateRecommendationsBatch({
       } else {
         prev = retry || prev;
         previewRetryFailed += 1;
+      }
+    }
+
+    if (!prev?.ok && isPreviewTimeoutReason(prev?.reason || prev?.error)) {
+      const fallback = await buildHtmlPreviewFallback({
+        sourceUrl: cand.sourceUrl,
+        seedTitle: cand.title,
+        seedPrice: cand.sourcePrice,
+        seedImageUrl: cand.mainImageUrl,
+        timeoutMs: Math.max(6000, Math.floor(previewTimeoutMs * 0.9)),
+      });
+      if (fallback?.ok) {
+        prev = fallback;
+        previewFallbackRecovered += 1;
+      } else {
+        previewFallbackFailed += 1;
+        prev = fallback || prev;
       }
     }
 
@@ -1363,6 +1519,8 @@ async function generateRecommendationsBatch({
     qcRejected,
     previewRetryRecovered,
     previewRetryFailed,
+    previewFallbackRecovered,
+    previewFallbackFailed,
     fallbackFilledCount,
     keywordDiagnostics: keywordDiagnostics.slice(0, keywordScanLimit).map((d) => ({
       keyword: d.keyword,
