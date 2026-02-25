@@ -1187,7 +1187,7 @@ async function generateRecommendationsBatch({
   excludeUrls = new Set(),
   onProgress = null,
   maxRuntimeMs = 110_000,
-  previewTimeoutMs = 12_000,
+  previewTimeoutMs = 9_000,
 } = {}) {
   const seed = Array.isArray(keywords) && keywords.length > 0 ? keywords : defaultKeywordSet();
   const startedAt = Date.now();
@@ -1359,6 +1359,7 @@ async function generateRecommendationsBatch({
   let previewRetryFailed = 0;
   let previewFallbackRecovered = 0;
   let previewFallbackFailed = 0;
+  let previewTimeoutFallbackUsed = 0;
   let maxValidate = Math.max(topN * (policy.requireQcPass ? 12 : 2), 24);
   maxValidate = Math.min(maxValidate, policy.requireQcPass ? 220 : 80);
   for (const cand of scoredPool) {
@@ -1381,8 +1382,12 @@ async function generateRecommendationsBatch({
       }));
 
     let prev = await requestPreview(previewTimeoutMs);
-    if (!prev?.ok) {
-      const retryTimeoutMs = Math.max(previewTimeoutMs + 6000, Math.floor(previewTimeoutMs * 1.8));
+    const firstPreviewTimedOut = isPreviewTimeoutReason(prev?.reason || prev?.error);
+
+    // Timeout candidates are expensive; go straight to HTML fallback.
+    // Retry is only used for non-timeout failures.
+    if (!prev?.ok && !firstPreviewTimedOut) {
+      const retryTimeoutMs = Math.max(previewTimeoutMs + 4000, Math.floor(previewTimeoutMs * 1.5));
       const retry = await requestPreview(retryTimeoutMs);
       if (retry?.ok) {
         prev = retry;
@@ -1394,6 +1399,7 @@ async function generateRecommendationsBatch({
     }
 
     if (!prev?.ok && isPreviewTimeoutReason(prev?.reason || prev?.error)) {
+      previewTimeoutFallbackUsed += 1;
       const fallback = await buildHtmlPreviewFallback({
         sourceUrl: cand.sourceUrl,
         seedTitle: cand.title,
@@ -1521,6 +1527,7 @@ async function generateRecommendationsBatch({
     previewRetryFailed,
     previewFallbackRecovered,
     previewFallbackFailed,
+    previewTimeoutFallbackUsed,
     fallbackFilledCount,
     keywordDiagnostics: keywordDiagnostics.slice(0, keywordScanLimit).map((d) => ({
       keyword: d.keyword,
