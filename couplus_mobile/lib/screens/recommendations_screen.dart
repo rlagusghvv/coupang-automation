@@ -18,6 +18,9 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
   bool _loading = false;
   String? _error;
   String? _lastRunSummary;
+  String? _lastUploadSummary;
+  DateTime? _lastUploadAt;
+  List<Map<String, dynamic>> _lastUploadRows = const [];
   String? _activeFillJobId;
   Map<String, dynamic>? _fillProgress;
   DateTime? _fillStartedAt;
@@ -117,6 +120,15 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
     final sec = DateTime.now().difference(started).inSeconds;
     if (sec <= 0) return '';
     return '${sec}s';
+  }
+
+  String _uploadAtLabel() {
+    final at = _lastUploadAt;
+    if (at == null) return '';
+    final hh = at.hour.toString().padLeft(2, '0');
+    final mm = at.minute.toString().padLeft(2, '0');
+    final ss = at.second.toString().padLeft(2, '0');
+    return '$hh:$mm:$ss';
   }
 
   @override
@@ -464,10 +476,15 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
       final uploaded = asInt(summary['uploaded']);
       final skipped = asInt(summary['skipped']);
       final failed = asInt(summary['failed']);
+      final successIds = <String>{};
 
       final reasonCounts = <String, int>{};
       for (final raw in items) {
         final row = (raw as Map).cast<String, dynamic>();
+        final sellerProductId = (row['sellerProductId'] ?? '').toString().trim();
+        if (sellerProductId.isNotEmpty) {
+          successIds.add(sellerProductId);
+        }
         if (row['skipped'] == true || row['ok'] == false) {
           final reason = (row['skipReason'] ?? row['error'] ?? 'unknown')
               .toString()
@@ -486,10 +503,16 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
 
       setState(() {
         _selected.clear();
-        _error = failed > 0 || skipped > 0
-            ? '다중 업로드 완료: 성공 $uploaded / 스킵 $skipped / 실패 $failed'
-                '${reasonText.isNotEmpty ? ' ($reasonText)' : ''}'
-            : null;
+        _lastUploadAt = DateTime.now();
+        _lastUploadSummary =
+            '다중 업로드 완료: 성공 $uploaded / 스킵 $skipped / 실패 $failed'
+            '${successIds.isNotEmpty ? ' / 등록ID ${successIds.length}건' : ''}'
+            '${reasonText.isNotEmpty ? ' ($reasonText)' : ''}';
+        _lastUploadRows = items
+            .map((raw) => (raw as Map).cast<String, dynamic>())
+            .take(12)
+            .toList();
+        _error = null;
       });
 
       if (mounted) {
@@ -609,6 +632,119 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
                   if (_fillProgressRatio(_fillProgress!) != null) ...[
                     const SizedBox(height: 10),
                     LinearProgressIndicator(value: _fillProgressRatio(_fillProgress!)),
+                  ],
+                ],
+              ),
+            ),
+            const SizedBox(height: 10),
+          ],
+          if ((_lastUploadSummary ?? '').isNotEmpty) ...[
+            AppCard(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(
+                        Icons.cloud_done_outlined,
+                        size: 18,
+                        color: Theme.of(context).colorScheme.primary,
+                      ),
+                      const SizedBox(width: 8),
+                      const Expanded(
+                        child: Text(
+                          '마지막 업로드 결과',
+                          style: TextStyle(fontWeight: FontWeight.w800),
+                        ),
+                      ),
+                      if (_uploadAtLabel().isNotEmpty)
+                        Text(
+                          _uploadAtLabel(),
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Theme.of(context)
+                                .colorScheme
+                                .onSurface
+                                .withValues(alpha: 0.65),
+                          ),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    _lastUploadSummary ?? '',
+                    style: TextStyle(
+                      color: Theme.of(context)
+                          .colorScheme
+                          .onSurface
+                          .withValues(alpha: 0.85),
+                    ),
+                  ),
+                  if (_lastUploadRows.isNotEmpty) ...[
+                    const SizedBox(height: 10),
+                    Column(
+                      children: _lastUploadRows.map((row) {
+                        final ok = row['ok'] == true;
+                        final skipped = row['skipped'] == true;
+                        final url = (row['url'] ?? '').toString().trim();
+                        final sellerProductId =
+                            (row['sellerProductId'] ?? '').toString().trim();
+                        final reason = (row['skipReason'] ?? row['error'] ?? '')
+                            .toString()
+                            .trim();
+                        final statusText =
+                            ok && !skipped ? '성공' : (skipped ? '스킵' : '실패');
+                        final statusColor = ok && !skipped
+                            ? const Color(0xFF2F9E44)
+                            : (skipped
+                                ? Theme.of(context).colorScheme.tertiary
+                                : Theme.of(context).colorScheme.error);
+                        return Padding(
+                          padding: const EdgeInsets.only(bottom: 6),
+                          child: Row(
+                            children: [
+                              Icon(
+                                ok && !skipped
+                                    ? Icons.check_circle_outline
+                                    : (skipped
+                                        ? Icons.remove_circle_outline
+                                        : Icons.error_outline),
+                                size: 16,
+                                color: statusColor,
+                              ),
+                              const SizedBox(width: 6),
+                              Text(
+                                statusText,
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w700,
+                                  color: statusColor,
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  sellerProductId.isNotEmpty
+                                      ? '상품ID $sellerProductId'
+                                      : (reason.isNotEmpty
+                                          ? reason
+                                          : (url.isNotEmpty ? url : '-')),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: Theme.of(context)
+                                        .colorScheme
+                                        .onSurface
+                                        .withValues(alpha: 0.75),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        );
+                      }).toList(),
+                    ),
                   ],
                 ],
               ),

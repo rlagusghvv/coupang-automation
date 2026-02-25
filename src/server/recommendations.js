@@ -661,6 +661,30 @@ function normalizeCandidateImageUrl(rawUrl) {
   return '';
 }
 
+function clampNumber(value, min, max, fallback) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(min, Math.min(max, n));
+}
+
+function resolveRecommendationThresholds(settings = {}) {
+  const minProfit = Math.floor(
+    clampNumber(
+      settings?.recommendationMinProfit ?? settings?.minProfit,
+      1000,
+      20000,
+      2500,
+    ),
+  );
+  const minMarginRate = clampNumber(
+    settings?.recommendationMinMarginRate ?? settings?.minMarginRate,
+    0.12,
+    0.9,
+    0.25,
+  );
+  return { minProfit, minMarginRate };
+}
+
 async function fetchFastCandidatesFromList({ keyword, limit = 80, storageStatePath = '' }) {
   // v2: Prefer Domeggook OpenAPI if available.
   // Fallback: Playwright list scraping (legacy).
@@ -904,6 +928,7 @@ async function generateRecommendationsBatch({
   const startedAt = Date.now();
   const keywordDiagnostics = [];
   const keywordScanLimit = Math.max(1, Math.min(8, seed.length));
+  const thresholds = resolveRecommendationThresholds(settings || {});
 
   const candidates = [];
   for (const kw of seed.slice(0, keywordScanLimit)) {
@@ -965,7 +990,12 @@ async function generateRecommendationsBatch({
       computed: { contentImageCount: 1 },
     };
 
-    const s = scoreRecommendation({ preview: fakePreview, minProfit: 3000, minMarginRate: 0.30, banKeywords: DEFAULT_BAN_KEYWORDS });
+    const s = scoreRecommendation({
+      preview: fakePreview,
+      minProfit: thresholds.minProfit,
+      minMarginRate: thresholds.minMarginRate,
+      banKeywords: DEFAULT_BAN_KEYWORDS,
+    });
     if (!s.ok) continue;
 
     scoredPool.push({
@@ -977,6 +1007,50 @@ async function generateRecommendationsBatch({
     });
 
     if (scoredPool.length >= 500) break;
+  }
+
+  // If strict thresholds produce too small a pool, relax once to avoid empty lists.
+  if (scoredPool.length < Math.max(8, Math.floor(topN * 1.2))) {
+    const relaxedMinProfit = Math.max(1000, Math.floor(thresholds.minProfit * 0.6));
+    const relaxedMinMarginRate = Math.max(0.12, Number((thresholds.minMarginRate * 0.7).toFixed(3)));
+    const existing = new Set(scoredPool.map((x) => String(x?.sourceUrl || '').trim()));
+    for (const c of uniq) {
+      if (Date.now() - startedAt > Math.floor(maxRuntimeMs * 0.75)) break;
+      const u = String(c?.url || '').trim();
+      if (!u || existing.has(u)) continue;
+      if (containsBanKeyword(c.title, DEFAULT_BAN_KEYWORDS)) continue;
+
+      const fakePreview = {
+        ok: true,
+        url: c.url,
+        draft: { title: c.title, price: c.price, shippingFee: null, imageUrl: '' },
+        computed: { contentImageCount: 1 },
+      };
+      const s = scoreRecommendation({
+        preview: fakePreview,
+        minProfit: relaxedMinProfit,
+        minMarginRate: relaxedMinMarginRate,
+        banKeywords: DEFAULT_BAN_KEYWORDS,
+      });
+      if (!s.ok) continue;
+
+      existing.add(u);
+      scoredPool.push({
+        sourceUrl: c.url,
+        keyword: c.keyword,
+        ...s,
+        mainImageUrl: normalizeCandidateImageUrl(c.imageUrl || s.mainImageUrl),
+        payload: {
+          fast: true,
+          relaxedThreshold: true,
+          thresholds: {
+            minProfit: relaxedMinProfit,
+            minMarginRate: relaxedMinMarginRate,
+          },
+        },
+      });
+      if (scoredPool.length >= 500) break;
+    }
   }
 
   scoredPool.sort((a, b) => (Number(b.score) || 0) - (Number(a.score) || 0));
@@ -1059,6 +1133,7 @@ async function generateRecommendationsBatch({
     collectedCandidates: candidates.length,
     uniqueCandidates: uniq.length,
     scoredCandidates: scoredPool.length,
+    thresholds,
     validated,
     kept: final.length,
     fallbackFilledCount,
@@ -1191,7 +1266,11 @@ export async function refreshRecommendationsForUser({
     } catch {}
   }
 
-  const batch = await generateRecommendationsBatch({
+  const initialExcludedCount = excludeUrls.size;
+  let finalExcludedCount = excludeUrls.size;
+  let usedRelaxedExclusion = false;
+
+  let batch = await generateRecommendationsBatch({
     settings,
     keywords: seed,
     topN: target,
@@ -1199,7 +1278,42 @@ export async function refreshRecommendationsForUser({
     onProgress,
   });
 
+  // If too few items are found, retry without "recent seen" restriction.
+  // Keep uploaded products excluded to avoid duplicate uploads.
+  const tooFew = batch.items.length < Math.max(2, Math.floor(target * 0.5));
+  if (tooFew && recentSeenUrls.length > 0) {
+    const uploadedOnlyExclude = new Set(uploadedUrls);
+    if (typeof onProgress === 'function') {
+      try {
+        onProgress({
+          stage: 'relax_exclude',
+          beforeExcluded: excludeUrls.size,
+          afterExcluded: uploadedOnlyExclude.size,
+        });
+      } catch {}
+    }
+    const retryBatch = await generateRecommendationsBatch({
+      settings,
+      keywords: seed,
+      topN: target,
+      excludeUrls: uploadedOnlyExclude,
+      onProgress,
+    });
+    if (retryBatch.items.length > batch.items.length) {
+      batch = retryBatch;
+      usedRelaxedExclusion = true;
+      finalExcludedCount = uploadedOnlyExclude.size;
+    }
+  }
+
   await replaceRecommendationsForUser({ userId, items: batch.items });
+
+  const diagnostics = {
+    ...batch.diagnostics,
+    initialExcludedCount,
+    finalExcludedCount,
+    relaxedExclusionApplied: usedRelaxedExclusion,
+  };
 
   return {
     ok: true,
@@ -1207,8 +1321,8 @@ export async function refreshRecommendationsForUser({
     removedCount: existingUrls.length,
     markedCount,
     cooldownDays: cooldown,
-    excludedCount: excludeUrls.size,
-    diagnostics: batch.diagnostics,
+    excludedCount: finalExcludedCount,
+    diagnostics,
   };
 }
 
