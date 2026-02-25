@@ -45,7 +45,8 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
     final hint = (diagnostics['hint'] ?? '').toString().trim();
     if (hint.isNotEmpty) return hint;
 
-    final keywordDiagnostics = (diagnostics['keywordDiagnostics'] as List?) ?? const [];
+    final keywordDiagnostics =
+        (diagnostics['keywordDiagnostics'] as List?) ?? const [];
     for (final raw in keywordDiagnostics) {
       if (raw is! Map) continue;
       final errors = (raw['errors'] as List?) ?? const [];
@@ -359,9 +360,8 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
       await Future<void>.delayed(const Duration(seconds: 1));
       final j = await widget.api.getJson('/api/jobs/$jobId');
       final job = (j['job'] as Map?)?.cast<String, dynamic>() ?? const {};
-      final progress =
-          (job['progress'] as Map?)?.cast<String, dynamic>() ??
-              const <String, dynamic>{};
+      final progress = (job['progress'] as Map?)?.cast<String, dynamic>() ??
+          const <String, dynamic>{};
       if (mounted) {
         setState(() {
           _fillProgress = progress;
@@ -398,7 +398,8 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
     try {
       Map<String, dynamic>? startJson;
       try {
-        startJson = await widget.api.postJson('/api/recommendations/fill/start', {
+        startJson =
+            await widget.api.postJson('/api/recommendations/fill/start', {
           'targetCount': 6,
         });
       } on ApiException catch (e) {
@@ -410,9 +411,8 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
       if (jobId.isNotEmpty) {
         setState(() {
           _activeFillJobId = jobId;
-          _fillProgress =
-              (job['progress'] as Map?)?.cast<String, dynamic>() ??
-                  const {'stage': 'queued'};
+          _fillProgress = (job['progress'] as Map?)?.cast<String, dynamic>() ??
+              const {'stage': 'queued'};
         });
         final result = await _pollFillJob(jobId);
         if (result == null) {
@@ -481,7 +481,8 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
       final reasonCounts = <String, int>{};
       for (final raw in items) {
         final row = (raw as Map).cast<String, dynamic>();
-        final sellerProductId = (row['sellerProductId'] ?? '').toString().trim();
+        final sellerProductId =
+            (row['sellerProductId'] ?? '').toString().trim();
         if (sellerProductId.isNotEmpty) {
           successIds.add(sellerProductId);
         }
@@ -631,7 +632,8 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
                   ],
                   if (_fillProgressRatio(_fillProgress!) != null) ...[
                     const SizedBox(height: 10),
-                    LinearProgressIndicator(value: _fillProgressRatio(_fillProgress!)),
+                    LinearProgressIndicator(
+                        value: _fillProgressRatio(_fillProgress!)),
                   ],
                 ],
               ),
@@ -689,6 +691,12 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
                         final url = (row['url'] ?? '').toString().trim();
                         final sellerProductId =
                             (row['sellerProductId'] ?? '').toString().trim();
+                        final productId =
+                            (row['productId'] ?? '').toString().trim();
+                        final statusName =
+                            (row['statusName'] ?? '').toString().trim();
+                        final productUrl =
+                            (row['productUrl'] ?? '').toString().trim();
                         final reason = (row['skipReason'] ?? row['error'] ?? '')
                             .toString()
                             .trim();
@@ -724,8 +732,11 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
                               const SizedBox(width: 8),
                               Expanded(
                                 child: Text(
-                                  sellerProductId.isNotEmpty
-                                      ? '상품ID $sellerProductId'
+                                  (sellerProductId.isNotEmpty ||
+                                          productId.isNotEmpty)
+                                      ? 'SPID ${sellerProductId.isEmpty ? '-' : sellerProductId}'
+                                          '${productId.isNotEmpty ? ' / PID $productId' : ''}'
+                                          '${statusName.isNotEmpty ? ' / $statusName' : ''}'
                                       : (reason.isNotEmpty
                                           ? reason
                                           : (url.isNotEmpty ? url : '-')),
@@ -740,6 +751,22 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
                                   ),
                                 ),
                               ),
+                              if (productUrl.isNotEmpty) ...[
+                                const SizedBox(width: 4),
+                                IconButton(
+                                  tooltip: '쿠팡 상품 열기',
+                                  icon: const Icon(Icons.open_in_new, size: 18),
+                                  onPressed: () async {
+                                    final uri = Uri.tryParse(productUrl);
+                                    if (uri != null) {
+                                      await launchUrl(
+                                        uri,
+                                        mode: LaunchMode.externalApplication,
+                                      );
+                                    }
+                                  },
+                                ),
+                              ],
                             ],
                           ),
                         );
@@ -756,7 +783,9 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
               InfoChip(
                 label: _loading
                     ? '불러오는 중…'
-                    : (_showSavedOnly ? '저장함 ${_savedItems.length}개' : '추천 ${_items.length}개'),
+                    : (_showSavedOnly
+                        ? '저장함 ${_savedItems.length}개'
+                        : '추천 ${_items.length}개'),
                 color: Theme.of(context).colorScheme.primary,
               ),
               const SizedBox(width: 8),
@@ -774,9 +803,7 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
               ),
               const Spacer(),
               Text(
-                _showSavedOnly
-                    ? '저장한 후보만 표시 중'
-                    : '채우기 시 기존 추천 목록은 교체됩니다',
+                _showSavedOnly ? '저장한 후보만 표시 중' : '채우기 시 기존 추천 목록은 교체됩니다',
                 style: TextStyle(
                   color: Theme.of(context)
                       .colorScheme

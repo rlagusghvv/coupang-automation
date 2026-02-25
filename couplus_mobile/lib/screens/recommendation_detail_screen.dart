@@ -90,20 +90,28 @@ class _RecommendationDetailScreenState
       final result = (json['result'] as Map?)?.cast<String, dynamic>() ?? {};
       final create = (result['create'] as Map?)?.cast<String, dynamic>() ?? {};
       final sellerProductId = (create['sellerProductId'] ?? '').toString();
+      final followUp =
+          (result['followUp'] as Map?)?.cast<String, dynamic>() ?? {};
+      final productId = (followUp['productId'] ?? '').toString().trim();
+      var productUrl = (followUp['productUrl'] ?? '').toString().trim();
+      if (productUrl.isEmpty && productId.isNotEmpty) {
+        productUrl =
+            'https://www.coupang.com/vp/products/$productId?failRedirectApp=true';
+      }
 
       if (!mounted) return;
 
-      if (sellerProductId.isNotEmpty) {
-        final productUrl =
-            'https://www.coupang.com/vp/products/$sellerProductId';
+      if (sellerProductId.isNotEmpty || productUrl.isNotEmpty) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('업로드 완료!')),
         );
-        final u = Uri.tryParse(productUrl);
-        if (u != null) {
-          // best-effort open
-          await launchUrl(u, mode: LaunchMode.externalApplication)
-              .catchError((_) => false);
+        if (productUrl.isNotEmpty) {
+          final u = Uri.tryParse(productUrl);
+          if (u != null) {
+            // best-effort open
+            await launchUrl(u, mode: LaunchMode.externalApplication)
+                .catchError((_) => false);
+          }
         }
       } else {
         ScaffoldMessenger.of(context).showSnackBar(

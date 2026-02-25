@@ -51,8 +51,26 @@ class ApiClient {
   String get baseUrl => _baseUrl;
 
   String proxyImageUrl(String rawUrl) {
-    final u = rawUrl.trim();
-    if (!u.startsWith('http')) return u;
+    var u = rawUrl.trim();
+    if (u.isEmpty) return u;
+
+    final parsed = Uri.tryParse(u);
+    if (parsed != null && parsed.hasScheme) {
+      final scheme = parsed.scheme.toLowerCase();
+      if (scheme != 'http' && scheme != 'https') {
+        return u;
+      }
+    }
+
+    if (u.startsWith('vendor_inventory/')) {
+      u = 'https://image.coupangcdn.com/image/$u';
+    } else if (u.startsWith('/vendor_inventory/')) {
+      u = 'https://image.coupangcdn.com/image$u';
+    } else if (!(u.startsWith('http://') || u.startsWith('https://'))) {
+      final rel = u.startsWith('/') ? u : '/$u';
+      u = '$baseUrl$rel';
+    }
+
     // Proxy some CDNs to avoid loading failures on some platforms (hotlink/CORS/etc).
     if (u.contains('domeggook.com') || u.contains('coupangcdn.com')) {
       return '$baseUrl/api/image-proxy?url=${Uri.encodeComponent(u)}';

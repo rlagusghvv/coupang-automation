@@ -373,6 +373,12 @@ export function normalizeTitleForDedupe(rawTitle) {
     .trim();
 }
 
+function buildCoupangProductUrl(productIdRaw) {
+  const productId = String(productIdRaw || "").trim();
+  if (!productId) return "";
+  return `https://www.coupang.com/vp/products/${productId}`;
+}
+
 function normalizeRow(row) {
   if (!row) return null;
   let meta = {};
@@ -381,6 +387,11 @@ function normalizeRow(row) {
   } catch {
     meta = {};
   }
+  const followUp = meta?.followUp && typeof meta.followUp === "object" ? meta.followUp : {};
+  const productId = String(meta?.productId || followUp?.productId || "").trim();
+  const productUrl = String(
+    meta?.productUrl || followUp?.productUrl || buildCoupangProductUrl(productId),
+  ).trim();
   return {
     id: row.id,
     userId: row.user_id,
@@ -391,6 +402,8 @@ function normalizeRow(row) {
     imageUrl: row.image_url,
     imageFingerprint: row.image_fingerprint,
     sellerProductId: row.seller_product_id,
+    productId: productId || null,
+    productUrl: productUrl || null,
     status: row.status,
     meta,
     createdAt: row.created_at,

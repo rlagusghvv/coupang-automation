@@ -193,11 +193,40 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
     }
   }
 
+  String _resolveCoupangProductUrl({
+    required String sourceUrl,
+    required String rawProductUrl,
+    required String productId,
+  }) {
+    final direct = rawProductUrl.trim();
+    if (direct.startsWith('http://') || direct.startsWith('https://')) {
+      return direct;
+    }
+
+    final source = sourceUrl.trim();
+    if (source.contains('/vp/products/')) {
+      return source;
+    }
+
+    final pid = productId.trim();
+    if (pid.isEmpty) return '';
+    return 'https://www.coupang.com/vp/products/$pid?failRedirectApp=true';
+  }
+
   @override
   Widget build(BuildContext context) {
     final p = _product;
     final sourceUrl = (p?['sourceUrl'] ?? '').toString();
     final sellerProductId = (p?['sellerProductId'] ?? '').toString();
+    final followUp = (p?['followUp'] as Map?)?.cast<String, dynamic>() ?? {};
+    final productId =
+        (p?['productId'] ?? followUp['productId'] ?? '').toString();
+    final productUrl = _resolveCoupangProductUrl(
+      sourceUrl: sourceUrl,
+      rawProductUrl:
+          (p?['productUrl'] ?? followUp['productUrl'] ?? '').toString(),
+      productId: productId,
+    );
     final status = (p?['status'] ?? '').toString();
     final validation = (p?['validation'] as Map?)?.cast<String, dynamic>();
 
@@ -262,12 +291,20 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                     k: 'SellerProductId',
                     value: sellerProductId,
                   ),
-                if (sellerProductId.isNotEmpty)
+                if (productId.trim().isNotEmpty)
+                  CopyableSingleLineRow(
+                    k: 'ProductId',
+                    value: productId.trim(),
+                  ),
+                if (productUrl.isNotEmpty)
+                  CopyableSingleLineRow(
+                    k: '쿠팡 URL',
+                    value: productUrl,
+                  ),
+                if (productUrl.isNotEmpty)
                   TextButton(
                     onPressed: () async {
-                      final uri = Uri.tryParse(
-                        'https://www.coupang.com/vp/products/$sellerProductId?failRedirectApp=true',
-                      );
+                      final uri = Uri.tryParse(productUrl);
                       if (uri != null) {
                         await launchUrl(
                           uri,

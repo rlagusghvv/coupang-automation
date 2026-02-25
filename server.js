@@ -690,6 +690,30 @@ function pickFirstNonEmpty(...values) {
   return "";
 }
 
+const COUPANG_IMAGE_BASE_URL = "https://image.coupangcdn.com/image";
+
+function normalizeImageUrlForClient(rawUrl) {
+  const s = String(rawUrl || "").trim();
+  if (!s) return "";
+  if (s.startsWith("vendor_inventory/")) return `${COUPANG_IMAGE_BASE_URL}/${s}`;
+  if (s.startsWith("/vendor_inventory/")) return `${COUPANG_IMAGE_BASE_URL}${s}`;
+  if (s.startsWith("//")) return `https:${s}`;
+  if (/^https?:\/\//i.test(s)) return s.replace(/^http:\/\//i, "https://");
+  return s;
+}
+
+function normalizeImageListForClient(values = [], max = 50) {
+  return normalizeStringList(values, max)
+    .map((x) => normalizeImageUrlForClient(x))
+    .filter(Boolean);
+}
+
+function buildCoupangProductUrl(productIdRaw) {
+  const productId = String(productIdRaw || "").trim();
+  if (!productId) return "";
+  return `https://www.coupang.com/vp/products/${productId}`;
+}
+
 function isApprovedStatus(statusName) {
   const s = String(statusName || "").trim().toLowerCase();
   if (!s) return false;
@@ -747,7 +771,7 @@ function extractMainImageFromSellerData(data) {
   const item0 = items[0] || {};
   const images = Array.isArray(item0.images) ? item0.images : [];
   const firstImage = images[0] || {};
-  return pickFirstNonEmpty(
+  const raw = pickFirstNonEmpty(
     firstImage.cdnPath,
     firstImage.vendorPath,
     firstImage.imageUrl,
@@ -755,6 +779,7 @@ function extractMainImageFromSellerData(data) {
     d.mainImageUrl,
     d.imageUrl,
   );
+  return normalizeImageUrlForClient(raw);
 }
 
 function extractSellerStatusSnapshot({
@@ -784,7 +809,7 @@ function extractSellerStatusSnapshot({
   );
   const mainImageUrl = extractMainImageFromSellerData(data) || null;
   const detailHtml = extractDetailHtmlFromSellerData(data);
-  const detailImages = normalizeStringList(extractImageUrls(detailHtml), 200);
+  const detailImages = normalizeImageListForClient(extractImageUrls(detailHtml), 200);
   const categoryCode = toPositiveIntOrNull(
     data?.displayCategoryCode ??
       data?.displayCategoryId ??
@@ -802,6 +827,11 @@ function extractSellerStatusSnapshot({
       ? histObj
       : [];
   const lastHistory = historyItems[0] || null;
+  const productUrl = pickFirstNonEmpty(
+    data?.productUrl,
+    data?.displayProductUrl,
+    buildCoupangProductUrl(productId),
+  );
 
   return {
     ok: true,
@@ -816,7 +846,7 @@ function extractSellerStatusSnapshot({
     mainImageUrl,
     detailImages,
     categoryCode,
-    productUrl: productId ? `https://www.coupang.com/vp/products/${productId}` : null,
+    productUrl: productUrl || null,
     detailLength: String(detailHtml || "").trim().length,
     detailEmpty: !String(detailHtml || "").trim(),
     lastHistory,
@@ -839,20 +869,42 @@ function inferCatalogStatus(currentStatus, snapshot = null, fallback = "confirme
 
 function normalizeCatalogProduct(row) {
   const meta = row?.meta && typeof row.meta === "object" ? row.meta : {};
-  const detailImagesRaw = normalizeStringList(
+  const detailImagesRaw = normalizeImageListForClient(
     Array.isArray(meta.detailImages) ? meta.detailImages : [],
     100,
   );
-  const followUp = meta.followUp && typeof meta.followUp === "object" ? meta.followUp : {};
-  const mainImageUrl = pickFirstNonEmpty(
+  const followUpRaw = meta.followUp && typeof meta.followUp === "object" ? meta.followUp : {};
+  const followUp = { ...followUpRaw };
+  const followUpProductId = pickFirstNonEmpty(followUp.productId);
+  const followUpProductUrl = pickFirstNonEmpty(
+    followUp.productUrl,
+    buildCoupangProductUrl(followUpProductId),
+  );
+  followUp.mainImageUrl = normalizeImageUrlForClient(followUp.mainImageUrl);
+  followUp.detailImages = normalizeImageListForClient(
+    Array.isArray(followUp.detailImages) ? followUp.detailImages : [],
+    200,
+  );
+  if (followUpProductId) followUp.productId = followUpProductId;
+  if (followUpProductUrl) followUp.productUrl = followUpProductUrl;
+  const mainImageUrl = normalizeImageUrlForClient(pickFirstNonEmpty(
     meta.mainImageUrl,
     followUp.mainImageUrl,
     row?.imageUrl,
     detailImagesRaw[0] || "",
-  );
+  ));
   const detailImages = detailImagesRaw.length > 0
     ? detailImagesRaw
     : (mainImageUrl ? [mainImageUrl] : []);
+  const productId = pickFirstNonEmpty(
+    meta.productId,
+    followUp.productId,
+  );
+  const productUrl = pickFirstNonEmpty(
+    meta.productUrl,
+    followUp.productUrl,
+    buildCoupangProductUrl(productId),
+  );
   const validation = meta.validation && typeof meta.validation === "object" ? meta.validation : {};
   const sourceUrl = pickFirstNonEmpty(row?.sourceUrl, meta.sourceUrl);
   return {
@@ -864,6 +916,8 @@ function normalizeCatalogProduct(row) {
     presetId: meta.presetId == null ? null : String(meta.presetId || "").trim() || null,
     categoryOverride: toPositiveIntOrNull(meta.categoryOverride),
     sellerProductId: row?.sellerProductId == null ? null : String(row.sellerProductId || "").trim() || null,
+    productId: productId || null,
+    productUrl: productUrl || null,
     status: String(row?.status || "confirmed"),
     followUp,
     validation,
@@ -877,14 +931,31 @@ function applyLiveSnapshotToMeta(meta, live, { fallbackTitle = "", fallbackImage
   const nextMeta = meta && typeof meta === "object" ? { ...meta } : {};
   if (!live || live.ok !== true) return nextMeta;
 
-  nextMeta.followUp = live;
-  nextMeta.mainImageUrl = pickFirstNonEmpty(nextMeta.mainImageUrl, live.mainImageUrl, fallbackImageUrl);
-  nextMeta.confirmedTitle = pickFirstNonEmpty(nextMeta.confirmedTitle, live.title, fallbackTitle);
-
-  const liveDetailImages = normalizeStringList(
-    Array.isArray(live.detailImages) ? live.detailImages : [],
-    200,
+  const liveProductId = pickFirstNonEmpty(live.productId);
+  const liveProductUrl = pickFirstNonEmpty(
+    live.productUrl,
+    buildCoupangProductUrl(liveProductId),
   );
+  const normalizedLive = {
+    ...live,
+    productId: liveProductId || null,
+    productUrl: liveProductUrl || null,
+    mainImageUrl: normalizeImageUrlForClient(live.mainImageUrl),
+    detailImages: normalizeImageListForClient(
+      Array.isArray(live.detailImages) ? live.detailImages : [],
+      200,
+    ),
+  };
+
+  nextMeta.followUp = normalizedLive;
+  nextMeta.mainImageUrl = normalizeImageUrlForClient(
+    pickFirstNonEmpty(nextMeta.mainImageUrl, normalizedLive.mainImageUrl, fallbackImageUrl),
+  );
+  nextMeta.confirmedTitle = pickFirstNonEmpty(nextMeta.confirmedTitle, normalizedLive.title, fallbackTitle);
+  if (liveProductId) nextMeta.productId = liveProductId;
+  if (liveProductUrl) nextMeta.productUrl = liveProductUrl;
+
+  const liveDetailImages = normalizeImageListForClient(normalizedLive.detailImages, 200);
   if (liveDetailImages.length > 0) {
     nextMeta.detailImages = liveDetailImages;
   } else if (
@@ -1060,8 +1131,10 @@ async function upsertCatalogProductFromPayload({ userId, payload = {}, defaultSt
   if (!sourceUrl) throw new Error("missing sourceUrl");
 
   const confirmedTitle = String(payload.confirmedTitle || payload.title || "").trim();
-  const mainImageUrl = String(payload.mainImageUrl || "").trim();
-  const detailImages = normalizeStringList(payload.detailImages, 200);
+  const mainImageUrl = normalizeImageUrlForClient(String(payload.mainImageUrl || "").trim());
+  const detailImages = normalizeImageListForClient(payload.detailImages, 200);
+  const productId = String(payload.productId || "").trim();
+  const productUrl = String(payload.productUrl || "").trim();
   const categoryOverride = toPositiveIntOrNull(payload.categoryOverride);
   const presetIdRaw = String(payload.presetId || "").trim();
   const presetId = presetIdRaw || null;
@@ -1077,8 +1150,10 @@ async function upsertCatalogProductFromPayload({ userId, payload = {}, defaultSt
   const mergedMeta = {
     ...prevMeta,
     confirmedTitle: confirmedTitle || pickFirstNonEmpty(prevMeta.confirmedTitle, existing?.title),
-    mainImageUrl: mainImageUrl || pickFirstNonEmpty(prevMeta.mainImageUrl, existing?.imageUrl),
-    detailImages: detailImages.length > 0 ? detailImages : normalizeStringList(prevMeta.detailImages || [], 200),
+    mainImageUrl: mainImageUrl || normalizeImageUrlForClient(pickFirstNonEmpty(prevMeta.mainImageUrl, existing?.imageUrl)),
+    detailImages: detailImages.length > 0 ? detailImages : normalizeImageListForClient(prevMeta.detailImages || [], 200),
+    productId: productId || pickFirstNonEmpty(prevMeta.productId),
+    productUrl: productUrl || pickFirstNonEmpty(prevMeta.productUrl, buildCoupangProductUrl(productId || prevMeta.productId)),
     presetId,
     categoryOverride,
   };
@@ -2149,6 +2224,15 @@ app.post("/api/upload/bulk", authRequired, async (req, res) => {
         };
         const outcome = await executeUploadForUrl({ url, user: req.user, force, overrides });
         appendUploadHistoryFromOutcome(url, outcome);
+        const followUp =
+          outcome?.result?.followUp && typeof outcome.result.followUp === "object"
+            ? outcome.result.followUp
+            : {};
+        const productId = pickFirstNonEmpty(followUp.productId);
+        const productUrl = pickFirstNonEmpty(
+          followUp.productUrl,
+          buildCoupangProductUrl(productId),
+        );
         items.push({
           url,
           ok: Boolean(outcome?.ok),
@@ -2156,6 +2240,9 @@ app.post("/api/upload/bulk", authRequired, async (req, res) => {
           skipReason: normalizeSkipReason(outcome),
           error: outcome?.error || null,
           sellerProductId: resolveOutcomeSellerProductId(outcome),
+          productId: productId || null,
+          productUrl: productUrl || null,
+          statusName: pickFirstNonEmpty(followUp.statusName) || null,
         });
       }
 
