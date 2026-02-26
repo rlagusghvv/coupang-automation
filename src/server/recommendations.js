@@ -3,6 +3,7 @@ import crypto from 'node:crypto';
 import { analyzeSameProductImages, previewUploadFromUrl } from '../pipeline/previewUploadFromUrl.js';
 import { evaluateQcGate } from '../pipeline/qcGate.js';
 import { extractImageUrls } from '../utils/contentImages.js';
+import { stripDomeggookPromoBlocks } from '../utils/domeggookDetailHtml.js';
 import { dbAll, dbRun, openDb } from './storage_sqlite_internal.js';
 
 const DEFAULT_RECOMMENDATION_COOLDOWN_DAYS = 7;
@@ -1075,7 +1076,8 @@ async function buildHtmlPreviewFallback({
   const rawImages = [];
   const pushImages = (rawHtml, cap = 120) => {
     if (!rawHtml) return;
-    const list = extractImageUrls(String(rawHtml || '')).slice(0, cap);
+    const cleanedHtml = stripDomeggookPromoBlocks(String(rawHtml || ''));
+    const list = extractImageUrls(cleanedHtml).slice(0, cap);
     for (const item of list) rawImages.push(item);
   };
 

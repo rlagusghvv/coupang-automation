@@ -2,6 +2,7 @@ import { chromium } from "playwright";
 import fs from "node:fs";
 import path from "node:path";
 import { makeDraft } from "../../domain/productDraft.js";
+import { stripDomeggookPromoBlocks } from "../../utils/domeggookDetailHtml.js";
 
 function floorTo10Won(n) {
   const x = Number(n);
@@ -382,10 +383,11 @@ function sanitizeHtml(html, baseUrl) {
     .replace(/<script[\s\S]*?<\/script>/gi, "")
     .replace(/<style[\s\S]*?<\/style>/gi, "")
     .trim();
+  const cleaned = stripDomeggookPromoBlocks(raw);
 
-  if (!baseUrl) return raw;
+  if (!baseUrl) return cleaned;
 
-  return raw.replace(/(src|href)=["']?([^"' >]+)["']?/gi, (m, attr, val) => {
+  return cleaned.replace(/(src|href)=["']?([^"' >]+)["']?/gi, (m, attr, val) => {
     const v = String(val || "").trim();
     if (!v) return m;
     if (v.startsWith("data:") || v.startsWith("mailto:") || v.startsWith("tel:")) return m;
