@@ -745,6 +745,40 @@ function normalizeCandidateImageUrl(rawUrl) {
   return '';
 }
 
+function isDomeggookSourceUrl(rawUrl = '') {
+  const s = String(rawUrl || '').trim();
+  if (!s) return false;
+  try {
+    const u = new URL(s);
+    const host = String(u.hostname || '').toLowerCase();
+    return host === 'domeggook.com' || host.endsWith('.domeggook.com');
+  } catch {
+    return /domeggook\.com/i.test(s);
+  }
+}
+
+function isRelaxableQcReason(reason) {
+  const text = String(reason || '').trim();
+  if (!text) return false;
+  return [
+    '상세 이미지가 너무 적습니다',
+    '대표-상세 이미지 토큰 일치율이 낮아',
+    '상세 이미지 차단 비율이 높습니다',
+    '공통/배너/SNS 경로 이미지 비율이 높습니다',
+    '아이콘/배너성 이미지 비율이 높습니다',
+    '대표 이미지와 동일 호스트 비율이 낮습니다',
+    '상품 상세 자산 경로 비율이 낮습니다',
+  ].some((token) => text.includes(token));
+}
+
+function shouldAttemptRelaxedRecommendationQc(reasons = []) {
+  const normalized = Array.isArray(reasons)
+    ? reasons.map((r) => String(r || '').trim()).filter(Boolean)
+    : [];
+  if (normalized.length === 0) return false;
+  return normalized.every((r) => isRelaxableQcReason(r));
+}
+
 function parseCandidatePrice(raw) {
   const n = Number(raw);
   if (Number.isFinite(n) && n > 0) return n;
@@ -1070,6 +1104,8 @@ function resolveRecommendationThresholds(settings = {}) {
 }
 
 function resolveRecommendationQcSettings(settings = {}) {
+  const relaxEnabled = parseBoolean(settings?.recommendationQcRelaxEnabled, true);
+  const relaxStage2Enabled = parseBoolean(settings?.recommendationQcRelaxStage2Enabled, true);
   return {
     // Recommendation list should stay discoverable even for suppliers
     // that provide only one usable detail image.
@@ -1081,6 +1117,84 @@ function resolveRecommendationQcSettings(settings = {}) {
         1,
       ),
     ),
+    relaxEnabled,
+    relaxStage2Enabled,
+    relaxStage1: {
+      qcMinTokenMatchRate: clampNumber(
+        settings?.recommendationQcRelaxStage1MinTokenMatchRate,
+        0,
+        1,
+        0.12,
+      ),
+      qcMaxRejectedRate: clampNumber(
+        settings?.recommendationQcRelaxStage1MaxRejectedRate,
+        0.1,
+        1,
+        0.94,
+      ),
+      qcMinPathAllowRate: clampNumber(
+        settings?.recommendationQcRelaxStage1MinPathAllowRate,
+        0,
+        1,
+        0.03,
+      ),
+      qcMaxPathBlockedRate: clampNumber(
+        settings?.recommendationQcRelaxStage1MaxPathBlockedRate,
+        0,
+        1,
+        0.94,
+      ),
+      qcMaxSuspiciousPathRate: clampNumber(
+        settings?.recommendationQcRelaxStage1MaxSuspiciousPathRate,
+        0,
+        1,
+        0.9,
+      ),
+      qcMinExactHostRate: clampNumber(
+        settings?.recommendationQcRelaxStage1MinExactHostRate,
+        0,
+        1,
+        0.02,
+      ),
+    },
+    relaxStage2: {
+      qcMinTokenMatchRate: clampNumber(
+        settings?.recommendationQcRelaxStage2MinTokenMatchRate,
+        0,
+        1,
+        0.02,
+      ),
+      qcMaxRejectedRate: clampNumber(
+        settings?.recommendationQcRelaxStage2MaxRejectedRate,
+        0.1,
+        1,
+        0.985,
+      ),
+      qcMinPathAllowRate: clampNumber(
+        settings?.recommendationQcRelaxStage2MinPathAllowRate,
+        0,
+        1,
+        0,
+      ),
+      qcMaxPathBlockedRate: clampNumber(
+        settings?.recommendationQcRelaxStage2MaxPathBlockedRate,
+        0,
+        1,
+        0.985,
+      ),
+      qcMaxSuspiciousPathRate: clampNumber(
+        settings?.recommendationQcRelaxStage2MaxSuspiciousPathRate,
+        0,
+        1,
+        0.985,
+      ),
+      qcMinExactHostRate: clampNumber(
+        settings?.recommendationQcRelaxStage2MinExactHostRate,
+        0,
+        1,
+        0.01,
+      ),
+    },
   };
 }
 
@@ -1591,6 +1705,10 @@ async function generateRecommendationsBatch({
   let previewFallbackRecovered = 0;
   let previewFallbackFailed = 0;
   let previewTimeoutFallbackUsed = 0;
+  let qcRelaxAttemptStage1 = 0;
+  let qcRelaxPassStage1 = 0;
+  let qcRelaxAttemptStage2 = 0;
+  let qcRelaxPassStage2 = 0;
   const qcReasonCounts = {};
   const qcRejectedSamples = [];
   const maxQcRejectedSamples = 3;
@@ -1616,6 +1734,7 @@ async function generateRecommendationsBatch({
       }));
 
     let prev = await requestPreview(previewTimeoutMs);
+    let usedHtmlPreviewFallback = false;
     const firstPreviewTimedOut = isPreviewTimeoutReason(prev?.reason || prev?.error);
 
     // Timeout candidates are expensive; go straight to HTML fallback.
@@ -1644,6 +1763,7 @@ async function generateRecommendationsBatch({
       if (fallback?.ok) {
         prev = fallback;
         previewFallbackRecovered += 1;
+        usedHtmlPreviewFallback = true;
       } else {
         previewFallbackFailed += 1;
         prev = fallback || prev;
@@ -1662,7 +1782,45 @@ async function generateRecommendationsBatch({
       continue;
     }
 
-    const qcGate = evaluateQcGate(v.qcPreview || {}, qcSettings);
+    const strictQcGate = evaluateQcGate(v.qcPreview || {}, qcSettings);
+    let qcGate = strictQcGate;
+    let qcDecisionStage = 'strict';
+
+    const canTryRelaxedQc =
+      policy.requireQcPass &&
+      !strictQcGate.ok &&
+      recommendationQcSettings.relaxEnabled &&
+      isDomeggookSourceUrl(cand.sourceUrl) &&
+      shouldAttemptRelaxedRecommendationQc(strictQcGate.reasons);
+
+    if (canTryRelaxedQc) {
+      qcRelaxAttemptStage1 += 1;
+      const stage1Settings = { ...qcSettings, ...recommendationQcSettings.relaxStage1 };
+      const stage1Gate = evaluateQcGate(v.qcPreview || {}, stage1Settings);
+      if (stage1Gate.ok) {
+        qcGate = stage1Gate;
+        qcDecisionStage = 'relaxed_stage1';
+        qcRelaxPassStage1 += 1;
+      } else {
+        qcGate = stage1Gate;
+        qcDecisionStage = 'relaxed_stage1_failed';
+        const canTryStage2 =
+          recommendationQcSettings.relaxStage2Enabled &&
+          (usedHtmlPreviewFallback || Number(v.contentImageCount || 0) <= 1);
+        if (canTryStage2) {
+          qcRelaxAttemptStage2 += 1;
+          const stage2Settings = {
+            ...stage1Settings,
+            ...recommendationQcSettings.relaxStage2,
+          };
+          const stage2Gate = evaluateQcGate(v.qcPreview || {}, stage2Settings);
+          qcGate = stage2Gate;
+          qcDecisionStage = stage2Gate.ok ? 'relaxed_stage2' : 'relaxed_stage2_failed';
+          if (stage2Gate.ok) qcRelaxPassStage2 += 1;
+        }
+      }
+    }
+
     if (policy.requireQcPass && !qcGate.ok) {
       qcRejected += 1;
       const reasons = Array.isArray(qcGate?.reasons)
@@ -1677,6 +1835,7 @@ async function generateRecommendationsBatch({
           sourceUrl: cand.sourceUrl,
           title: String(v.title || cand.title || '').trim(),
           reasons: reasons.slice(0, 4),
+          stage: qcDecisionStage,
           metrics: buildQcMetricSnapshot(qcGate?.metrics || {}),
         });
       }
@@ -1719,6 +1878,7 @@ async function generateRecommendationsBatch({
           ok: Boolean(qcGate.ok),
           reasons: Array.isArray(qcGate.reasons) ? qcGate.reasons : [],
           metrics: qcGate.metrics && typeof qcGate.metrics === 'object' ? qcGate.metrics : {},
+          stage: qcDecisionStage,
           detailImageCount: detailCount,
           tier,
           eligibleUpload,
@@ -1781,6 +1941,10 @@ async function generateRecommendationsBatch({
     previewFallbackRecovered,
     previewFallbackFailed,
     previewTimeoutFallbackUsed,
+    qcRelaxAttemptStage1,
+    qcRelaxPassStage1,
+    qcRelaxAttemptStage2,
+    qcRelaxPassStage2,
     fallbackFilledCount,
     keywordDiagnostics: keywordDiagnostics.slice(0, keywordScanLimit).map((d) => ({
       keyword: d.keyword,
