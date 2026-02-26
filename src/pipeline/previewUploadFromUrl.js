@@ -168,23 +168,101 @@ function inspectImagePath(urlObj) {
   const allowedByPath = DETAIL_PATH_ALLOW_PATTERNS.some((re) => re.test(path));
   const allowByEsmplus = domain === "esmplus.com" && !isThumb;
   const allowByAlicdn = domain === "alicdn.com" && !isThumb;
+  const allowByOwnerclanCopy = domain === "ownerclan.com" && /\/copy\//i.test(path) && !isThumb;
   const blockedByPath = DETAIL_PATH_BLOCK_PATTERNS.some((re) => re.test(path));
   const suspiciousByName = SUSPICIOUS_ASSET_PATTERNS.some((re) => re.test(target));
 
   const blocked =
     isThumb ||
     blockedByPath ||
-    (suspiciousByName && !allowedByPath && !allowByEsmplus && !allowByAlicdn);
+    (
+      suspiciousByName &&
+      !allowedByPath &&
+      !allowByEsmplus &&
+      !allowByAlicdn &&
+      !allowByOwnerclanCopy
+    );
   const suspicious = suspiciousByName || blockedByPath || isThumb;
 
   return {
-    allowed: allowedByPath || allowByEsmplus || allowByAlicdn,
+    allowed: allowedByPath || allowByEsmplus || allowByAlicdn || allowByOwnerclanCopy,
     blocked,
     suspicious,
     path,
     isThumb,
     domain,
   };
+}
+
+function parseOwnerclanCopySequence(rawUrl) {
+  const u = toUrl(rawUrl);
+  if (!u) return null;
+  const domain = getDomain(u.hostname);
+  if (domain !== "ownerclan.com") return null;
+  const pathname = normalizePath(u);
+  const m = pathname.match(/^(.*)\((\d{1,3})\)(\.[a-z0-9]+)$/i);
+  if (!m) return null;
+  const index = Number(m[2]);
+  if (!Number.isFinite(index) || index <= 0) return null;
+  return {
+    origin: u.origin,
+    prefix: m[1],
+    suffix: m[3],
+    index,
+    search: String(u.search || ""),
+  };
+}
+
+async function probeImageHead(url, timeoutMs = 1400) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), Math.max(600, Number(timeoutMs) || 1400));
+  try {
+    const res = await fetch(url, {
+      method: "HEAD",
+      signal: controller.signal,
+      headers: {
+        "User-Agent": "Mozilla/5.0",
+        Referer: "https://domeggook.com/",
+      },
+    });
+    if (!res.ok) return false;
+    const contentType = String(res.headers.get("content-type") || "").toLowerCase();
+    return contentType.includes("image") || !contentType;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function expandOwnerclanCopyImages(urls = []) {
+  const raw = unique(urls || []);
+  if (raw.length === 0 || raw.length > 2) return raw;
+
+  const seeds = raw
+    .map((u) => parseOwnerclanCopySequence(u))
+    .filter(Boolean);
+  if (seeds.length === 0) return raw;
+
+  const out = new Set(raw);
+  let probeBudget = 6;
+  for (const seed of seeds) {
+    const around = [];
+    for (let d = 1; d <= 3; d += 1) {
+      around.push(seed.index - d, seed.index + d);
+    }
+    for (const n of around) {
+      if (probeBudget <= 0) break;
+      if (!Number.isFinite(n) || n <= 0) continue;
+      const candidate = `${seed.origin}${seed.prefix}(${n})${seed.suffix}${seed.search}`;
+      if (out.has(candidate)) continue;
+      probeBudget -= 1;
+      const ok = await probeImageHead(candidate);
+      if (ok) out.add(candidate);
+    }
+    if (probeBudget <= 0) break;
+  }
+  return unique(Array.from(out));
 }
 
 export function buildImageFingerprint({
@@ -283,7 +361,9 @@ export function analyzeSameProductImages({
     // Domeggook 페이지는 추천/썸네일 자산 혼입이 많아 경로를 강하게 제한한다.
     if (mainDomain === "domeggook.com") {
       const isTrustedCdnDetail =
-        pathSignals.domain === "esmplus.com" || pathSignals.domain === "alicdn.com";
+        pathSignals.domain === "esmplus.com" ||
+        pathSignals.domain === "alicdn.com" ||
+        (pathSignals.domain === "ownerclan.com" && pathname.includes("/copy/"));
       const looksProductUploadPath =
         pathname.includes("/upload/item/") ||
         pathname.includes("/upload/editor/") ||
@@ -337,7 +417,9 @@ export function analyzeSameProductImages({
     if (sameDomain) sameDomainCount += 1;
 
     const isTrustedCdnDetail =
-      pathSignals.domain === "esmplus.com" || pathSignals.domain === "alicdn.com";
+      pathSignals.domain === "esmplus.com" ||
+      pathSignals.domain === "alicdn.com" ||
+      (pathSignals.domain === "ownerclan.com" && pathname.includes("/copy/"));
     const score =
       (exactHost ? 2 : 0) +
       (sameDomain ? 1 : 0) +
@@ -423,7 +505,8 @@ export async function previewUploadFromUrl(inputUrl, settings = {}) {
 
   const strictMode = String(settings.strictImageMatch || "1").trim() !== "0";
   const draft = await parseProductFromDomaeqq(c.url);
-  const rawContentImages = unique(extractImageUrls(draft.contentText));
+  let rawContentImages = unique(extractImageUrls(draft.contentText));
+  rawContentImages = await expandOwnerclanCopyImages(rawContentImages);
   const filtered = analyzeSameProductImages({
     sourceUrl: draft.sourceUrl,
     mainImageUrl: draft.imageUrl,
