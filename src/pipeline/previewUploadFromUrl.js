@@ -167,14 +167,18 @@ function inspectImagePath(urlObj) {
     /(?:^|[\/_-])thumb(?:nail)?([\/_\-.]|$)/i.test(target);
   const allowedByPath = DETAIL_PATH_ALLOW_PATTERNS.some((re) => re.test(path));
   const allowByEsmplus = domain === "esmplus.com" && !isThumb;
+  const allowByAlicdn = domain === "alicdn.com" && !isThumb;
   const blockedByPath = DETAIL_PATH_BLOCK_PATTERNS.some((re) => re.test(path));
   const suspiciousByName = SUSPICIOUS_ASSET_PATTERNS.some((re) => re.test(target));
 
-  const blocked = isThumb || blockedByPath || (suspiciousByName && !allowedByPath && !allowByEsmplus);
+  const blocked =
+    isThumb ||
+    blockedByPath ||
+    (suspiciousByName && !allowedByPath && !allowByEsmplus && !allowByAlicdn);
   const suspicious = suspiciousByName || blockedByPath || isThumb;
 
   return {
-    allowed: allowedByPath || allowByEsmplus,
+    allowed: allowedByPath || allowByEsmplus || allowByAlicdn,
     blocked,
     suspicious,
     path,
@@ -278,7 +282,8 @@ export function analyzeSameProductImages({
 
     // Domeggook 페이지는 추천/썸네일 자산 혼입이 많아 경로를 강하게 제한한다.
     if (mainDomain === "domeggook.com") {
-      const isEsmplusDetail = pathSignals.domain === "esmplus.com";
+      const isTrustedCdnDetail =
+        pathSignals.domain === "esmplus.com" || pathSignals.domain === "alicdn.com";
       const looksProductUploadPath =
         pathname.includes("/upload/item/") ||
         pathname.includes("/upload/editor/") ||
@@ -287,7 +292,7 @@ export function analyzeSameProductImages({
         pathname.includes("/contents/") ||
         pathname.includes("/attach/") ||
         pathname.includes("/attachment/") ||
-        isEsmplusDetail;
+        isTrustedCdnDetail;
       const looksUiAsset =
         pathname.includes("/image/common/") ||
         pathname.includes("/image/item/") ||
@@ -331,19 +336,20 @@ export function analyzeSameProductImages({
     const sameDomain = domain && mainDomain && domain === mainDomain;
     if (sameDomain) sameDomainCount += 1;
 
-    const isEsmplusDetail = pathSignals.domain === "esmplus.com";
+    const isTrustedCdnDetail =
+      pathSignals.domain === "esmplus.com" || pathSignals.domain === "alicdn.com";
     const score =
       (exactHost ? 2 : 0) +
       (sameDomain ? 1 : 0) +
       (pathSignals.allowed ? 2 : 0) +
-      (isEsmplusDetail ? 2 : 0) +
+      (isTrustedCdnDetail ? 2 : 0) +
       (overlap >= 2 ? 2 : overlap >= 1 ? 1 : 0) +
       (mainOverlap >= 2 ? 2 : mainOverlap >= 1 ? 1 : 0) +
       (tokens.length === 0 ? -1 : 0) +
       (pathSignals.suspicious && !pathSignals.allowed ? -2 : 0);
 
     const keepStrict = pathSignals.allowed
-      ? score >= 3 && (sameDomain || overlap >= 1 || mainOverlap >= 1 || isEsmplusDetail)
+      ? score >= 3 && (sameDomain || overlap >= 1 || mainOverlap >= 1 || isTrustedCdnDetail)
       : score >= 5 && (exactHost || overlap >= 2 || mainOverlap >= 2);
     const keepLoose = pathSignals.allowed ? score >= 2 : score >= 3;
     const keep = strict ? keepStrict : keepLoose;

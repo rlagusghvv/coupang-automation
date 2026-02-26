@@ -1004,6 +1004,7 @@ async function buildHtmlPreviewFallback({
   seedTitle = '',
   seedPrice = null,
   seedImageUrl = '',
+  strictImageMatch = false,
   timeoutMs = 12_000,
 } = {}) {
   const url = String(sourceUrl || '').trim();
@@ -1109,7 +1110,7 @@ async function buildHtmlPreviewFallback({
     sourceUrl: url,
     mainImageUrl: mainImageUrl || imageCandidates[0] || '',
     contentImageUrls: imageCandidates,
-    strict: true,
+    strict: Boolean(strictImageMatch),
   });
 
   const price = parseCandidatePrice(extractPriceFromHtml(html)) ?? parseCandidatePrice(seedPrice);
@@ -1185,6 +1186,24 @@ function resolveRecommendationThresholds(settings = {}) {
     0.25,
   );
   return { minProfit, minMarginRate };
+}
+
+function resolveRecommendationPreviewSettings(settings = {}) {
+  return {
+    // Recommendation cards should show more detail images for operator review.
+    strictImageMatch: parseBoolean(
+      settings?.recommendationStrictImageMatch ?? settings?.recommendationPreviewStrictImageMatch,
+      parseBoolean(settings?.strictImageMatch, false),
+    ),
+    maxContentImages: Math.floor(
+      clampNumber(
+        settings?.recommendationPreviewMaxContentImages ?? settings?.maxContentImages,
+        10,
+        120,
+        60,
+      ),
+    ),
+  };
 }
 
 function resolveRecommendationQcSettings(settings = {}) {
@@ -1539,6 +1558,7 @@ async function generateRecommendationsBatch({
   const keywordDiagnostics = [];
   const normalizedSettings = settings || {};
   const recommendationQcSettings = resolveRecommendationQcSettings(normalizedSettings);
+  const recommendationPreviewSettings = resolveRecommendationPreviewSettings(normalizedSettings);
   const qcSettings = { ...normalizedSettings, ...recommendationQcSettings };
   const thresholds = resolveRecommendationThresholds(normalizedSettings);
   const policy = resolveRecommendationPolicy(normalizedSettings);
@@ -1808,7 +1828,8 @@ async function generateRecommendationsBatch({
       withTimeout(
         previewUploadFromUrl(cand.sourceUrl, {
           ...normalizedSettings,
-          maxContentImages: 30,
+          maxContentImages: recommendationPreviewSettings.maxContentImages,
+          strictImageMatch: recommendationPreviewSettings.strictImageMatch ? '1' : '0',
         }),
         timeoutMs,
         'preview_timeout',
@@ -1842,6 +1863,7 @@ async function generateRecommendationsBatch({
         seedTitle: cand.title,
         seedPrice: cand.sourcePrice,
         seedImageUrl: cand.mainImageUrl,
+        strictImageMatch: recommendationPreviewSettings.strictImageMatch,
         timeoutMs: Math.max(6000, Math.floor(previewTimeoutMs * 0.9)),
       });
       if (fallback?.ok) {
