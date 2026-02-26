@@ -1844,6 +1844,10 @@ app.post("/api/catalog/:id/deploy", authRequired, async (req, res) => {
           ...(Array.isArray(uploadPreview?.contentImagesFiltered) ? uploadPreview.contentImagesFiltered : []),
           ...(Array.isArray(outcomePreview?.contentImagesFiltered) ? outcomePreview.contentImagesFiltered : []),
         ]).slice(0, 200);
+        const liveDetailImages = normalizeStringList(
+          Array.isArray(live?.detailImages) ? live.detailImages : [],
+          200,
+        );
 
         const usedCategoryCode =
           toPositiveIntOrNull(uploadResult?.category?.used) ||
@@ -1863,12 +1867,14 @@ app.post("/api/catalog/:id/deploy", authRequired, async (req, res) => {
             latest.imageUrl,
           ),
           detailImages:
-            deployedDetailImages.length > 0
-              ? deployedDetailImages
-              : normalizeStringList(
-                  Array.isArray(live?.detailImages) ? live.detailImages : Array.isArray(meta.detailImages) ? meta.detailImages : [],
-                  200,
-                ),
+            liveDetailImages.length > 0
+              ? liveDetailImages
+              : (deployedDetailImages.length > 0
+                  ? deployedDetailImages
+                  : normalizeStringList(
+                      Array.isArray(meta.detailImages) ? meta.detailImages : [],
+                      200,
+                    )),
           categoryOverride: usedCategoryCode,
           deployedAt: new Date().toISOString(),
           lastDeployResult: {
@@ -2314,18 +2320,94 @@ async function executeUploadForUrl({ url, user, force = false, overrides = {} })
   }
 
   if (!result.payloadOnly) {
+    const createdSellerProductId = String(result?.create?.sellerProductId || "").trim() || null;
+    const fallbackTitle = String(result?.draft?.title || draftTitle || "").trim();
+    const fallbackImageUrl = normalizeImageUrlForClient(
+      pickFirstNonEmpty(result?.draft?.imageUrl, preview?.draft?.imageUrl),
+    );
+    const previewDetailImages = normalizeImageListForClient(
+      uniqueStrings([
+        ...(Array.isArray(result?.preview?.contentImagesFiltered) ? result.preview.contentImagesFiltered : []),
+        ...(Array.isArray(preview?.preview?.contentImagesFiltered) ? preview.preview.contentImagesFiltered : []),
+      ]),
+      200,
+    );
+    const seededDetailImages = previewDetailImages.length > 0
+      ? previewDetailImages
+      : normalizeImageListForClient(
+          fallbackImageUrl ? [fallbackImageUrl] : [],
+          200,
+        );
+
+    const followUpMeta =
+      result?.followUp && typeof result.followUp === "object"
+        ? JSON.parse(JSON.stringify(result.followUp))
+        : {};
+    if (createdSellerProductId && !String(followUpMeta?.sellerProductId || "").trim()) {
+      followUpMeta.sellerProductId = createdSellerProductId;
+    }
+    followUpMeta.mainImageUrl = normalizeImageUrlForClient(followUpMeta.mainImageUrl);
+    followUpMeta.detailImages = normalizeImageListForClient(
+      Array.isArray(followUpMeta.detailImages) ? followUpMeta.detailImages : [],
+      200,
+    );
+    const followUpProductId = pickFirstNonEmpty(followUpMeta.productId);
+    const followUpProductUrl = pickFirstNonEmpty(
+      followUpMeta.productUrl,
+      buildCoupangProductUrl(followUpProductId),
+    );
+    if (followUpProductId) followUpMeta.productId = followUpProductId;
+    if (followUpProductUrl) followUpMeta.productUrl = followUpProductUrl;
+
+    const nextMeta = {
+      skipReason: null,
+      createStatus: result?.create?.status ?? null,
+      confirmedTitle: fallbackTitle,
+      mainImageUrl: fallbackImageUrl,
+      detailImages: seededDetailImages,
+      followUp: followUpMeta,
+      categoryOverride:
+        toPositiveIntOrNull(result?.category?.used) ||
+        toPositiveIntOrNull(result?.category?.requested) ||
+        null,
+    };
+    if (followUpProductId) nextMeta.productId = followUpProductId;
+    if (followUpProductUrl) nextMeta.productUrl = followUpProductUrl;
+
+    let nextStatus = "uploaded";
+    if (createdSellerProductId) {
+      try {
+        const live = await fetchSellerStatusLive({
+          sellerProductId: createdSellerProductId,
+          settings: settings || {},
+          includeHistory: false,
+        });
+        if (live?.ok) {
+          Object.assign(
+            nextMeta,
+            applyLiveSnapshotToMeta(nextMeta, live, {
+              fallbackTitle,
+              fallbackImageUrl,
+            }),
+          );
+          nextMeta.lastSyncedAt = new Date().toISOString();
+          nextStatus = inferCatalogStatus("uploaded", live, "uploaded");
+          if (nextStatus === "deployed") nextMeta.deployedAt = new Date().toISOString();
+        } else if (live) {
+          nextMeta.lastRemoteError = live;
+        }
+      } catch {}
+    }
+
     await recordUploadedProduct({
       userId: user?.id,
       sourceUrl: c.url,
-      title: result?.draft?.title || draftTitle,
-      imageUrl: result?.draft?.imageUrl || preview?.draft?.imageUrl || "",
+      title: fallbackTitle,
+      imageUrl: fallbackImageUrl,
       imageFingerprint,
-      sellerProductId: result?.create?.sellerProductId ?? null,
-      status: "uploaded",
-      meta: {
-        skipReason: null,
-        createStatus: result?.create?.status ?? null,
-      },
+      sellerProductId: createdSellerProductId,
+      status: nextStatus,
+      meta: nextMeta,
     });
   }
 
