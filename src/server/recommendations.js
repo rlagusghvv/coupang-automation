@@ -25,6 +25,90 @@ function withTimeout(promise, ms, label = 'timeout') {
   return Promise.race([promise, t]);
 }
 
+function normalizeCharsetLabel(raw = '') {
+  const text = String(raw || '')
+    .trim()
+    .replace(/^["']|["']$/g, '')
+    .toLowerCase()
+    .replace(/_/g, '-');
+  if (!text) return '';
+  if (text === 'utf8') return 'utf-8';
+  if (
+    text === 'cp949' ||
+    text === 'ms949' ||
+    text === 'euckr' ||
+    text === 'x-euc-kr' ||
+    text === 'windows-949' ||
+    text === 'x-windows-949' ||
+    text === 'ks-c-5601-1987' ||
+    text === 'ks-c-5601-1989' ||
+    text === 'ksc5601'
+  ) {
+    return 'euc-kr';
+  }
+  return text;
+}
+
+function extractCharsetFromContentType(contentType = '') {
+  const m = String(contentType || '').match(/charset\s*=\s*["']?\s*([^;"'\s]+)/i);
+  return m && m[1] ? normalizeCharsetLabel(m[1]) : '';
+}
+
+function extractCharsetFromHtmlHead(headHtml = '') {
+  const text = String(headHtml || '');
+  const direct = text.match(/<meta[^>]+charset=["']?\s*([a-z0-9._-]+)/i);
+  if (direct && direct[1]) return normalizeCharsetLabel(direct[1]);
+
+  const viaContentA = text.match(/<meta[^>]+content=["'][^"']*charset\s*=\s*([a-z0-9._-]+)/i);
+  if (viaContentA && viaContentA[1]) return normalizeCharsetLabel(viaContentA[1]);
+
+  const viaContentB = text.match(/<meta[^>]+charset\s*=\s*([a-z0-9._-]+)[^>]*content=["']/i);
+  if (viaContentB && viaContentB[1]) return normalizeCharsetLabel(viaContentB[1]);
+
+  return '';
+}
+
+function countReplacementChars(text = '') {
+  const m = String(text || '').match(/\uFFFD/g);
+  return m ? m.length : 0;
+}
+
+function decodeHtmlBuffer(buffer, charset = 'utf-8') {
+  const encoding = normalizeCharsetLabel(charset) || 'utf-8';
+  try {
+    return new TextDecoder(encoding).decode(buffer);
+  } catch {
+    return Buffer.from(buffer).toString('utf8');
+  }
+}
+
+async function readHtmlWithCharset(response) {
+  const arr = await response.arrayBuffer();
+  const bytes = Buffer.from(arr);
+
+  let charset = extractCharsetFromContentType(response?.headers?.get('content-type') || '');
+  if (!charset) {
+    const sniffHead = bytes.subarray(0, 8192).toString('latin1');
+    charset = extractCharsetFromHtmlHead(sniffHead);
+  }
+
+  let html = decodeHtmlBuffer(bytes, charset || 'utf-8');
+
+  const utfLike = !charset || String(charset).startsWith('utf');
+  if (utfLike) {
+    const brokenUtf = countReplacementChars(html);
+    if (brokenUtf >= 8 && !/[가-힣]/.test(html)) {
+      const eucHtml = decodeHtmlBuffer(bytes, 'euc-kr');
+      const brokenEuc = countReplacementChars(eucHtml);
+      if (brokenEuc < brokenUtf || /[가-힣]/.test(eucHtml)) {
+        html = eucHtml;
+      }
+    }
+  }
+
+  return html;
+}
+
 export const DEFAULT_BAN_KEYWORDS = [
   // regulated (food etc)
   '식품', '먹거리', '음료', '건기식', '건강기능', '홍삼', '비타민', '영양',
@@ -142,7 +226,7 @@ export async function fetchDomeggookUrlsByKeyword({ keyword, limit = 40, storage
       clearTimeout(t);
       if (r.status === 429) throw new Error('domeggook_rate_limited');
       if (!r.ok) break;
-      const html = await r.text();
+      const html = await readHtmlWithCharset(r);
       await new Promise((r) => setTimeout(r, 220));
       const out = extractFromHtml(html);
       for (const u of out) {
@@ -937,7 +1021,7 @@ async function buildHtmlPreviewFallback({
       },
     });
     if (!r.ok) return { ok: false, reason: `fallback_http_${r.status}` };
-    html = await r.text();
+    html = await readHtmlWithCharset(r);
   } catch (error) {
     return { ok: false, reason: normalizeErrorMessage(error) };
   } finally {
@@ -978,7 +1062,7 @@ async function buildHtmlPreviewFallback({
           },
         });
         if (detailRes.ok) {
-          const detailHtml = await detailRes.text();
+          const detailHtml = await readHtmlWithCharset(detailRes);
           if (detailHtml) detailHtmlBlocks.push(detailHtml);
         }
       } catch {} finally {
@@ -1366,7 +1450,7 @@ async function fetchFastCandidatesFromList({ keyword, limit = 80, storageStatePa
       clearTimeout(t);
       if (r.status === 429) throw new Error('domeggook_rate_limited');
       if (!r.ok) continue;
-      const html = await r.text();
+      const html = await readHtmlWithCharset(r);
       await new Promise((r) => setTimeout(r, 200));
 
       const title = (() => {
