@@ -1069,6 +1069,21 @@ function resolveRecommendationThresholds(settings = {}) {
   return { minProfit, minMarginRate };
 }
 
+function resolveRecommendationQcSettings(settings = {}) {
+  return {
+    // Recommendation list should stay discoverable even for suppliers
+    // that provide only one usable detail image.
+    qcMinFilteredImages: Math.floor(
+      clampNumber(
+        settings?.recommendationQcMinFilteredImages ?? settings?.qcMinFilteredImages,
+        1,
+        6,
+        1,
+      ),
+    ),
+  };
+}
+
 async function fetchFastCandidatesFromList({ keyword, limit = 80, storageStatePath = '' }) {
   // v2: Prefer Domeggook OpenAPI if available.
   // Fallback: Playwright list scraping (legacy).
@@ -1325,6 +1340,8 @@ async function generateRecommendationsBatch({
   const startedAt = Date.now();
   const keywordDiagnostics = [];
   const normalizedSettings = settings || {};
+  const recommendationQcSettings = resolveRecommendationQcSettings(normalizedSettings);
+  const qcSettings = { ...normalizedSettings, ...recommendationQcSettings };
   const thresholds = resolveRecommendationThresholds(normalizedSettings);
   const policy = resolveRecommendationPolicy(normalizedSettings);
   const keywordScanLimit = Math.max(
@@ -1645,7 +1662,7 @@ async function generateRecommendationsBatch({
       continue;
     }
 
-    const qcGate = evaluateQcGate(v.qcPreview || {}, normalizedSettings);
+    const qcGate = evaluateQcGate(v.qcPreview || {}, qcSettings);
     if (policy.requireQcPass && !qcGate.ok) {
       qcRejected += 1;
       const reasons = Array.isArray(qcGate?.reasons)
@@ -1753,6 +1770,7 @@ async function generateRecommendationsBatch({
     scoringPasses,
     thresholds,
     policy,
+    qcSettings: recommendationQcSettings,
     validated,
     kept: final.length,
     qcRejected,
