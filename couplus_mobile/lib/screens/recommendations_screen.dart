@@ -190,13 +190,12 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
     }
   }
 
-  List<String> _previewImagesOf(Map<String, dynamic> item) {
+  List<String> _previewImagesOf(Map<String, dynamic> item, {int max = 6}) {
     final raw = (item['previewImages'] as List?) ?? const [];
-    return raw
-        .map((e) => e.toString().trim())
-        .where((s) => s.isNotEmpty)
-        .take(6)
-        .toList();
+    final images =
+        raw.map((e) => e.toString().trim()).where((s) => s.isNotEmpty).toList();
+    if (max <= 0) return images;
+    return images.take(max).toList();
   }
 
   @override
@@ -956,15 +955,19 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
                 final finalPrice = (it['finalPrice'] ?? 0);
                 final reason = (it['reason'] ?? '').toString();
                 final url = (it['sourceUrl'] ?? '').toString();
-                final previewImages = _previewImagesOf(it);
+                final previewImagesAll = _previewImagesOf(it, max: 0);
+                final previewImages = previewImagesAll.take(6).toList();
                 final qc = (it['qc'] as Map?)?.cast<String, dynamic>() ??
                     const <String, dynamic>{};
                 final qcTier = (qc['tier'] ?? '-').toString();
                 final eligibleUpload = qc['eligibleUpload'] == true;
-                final detailImageCount = int.tryParse(
+                final detailImageCountRaw = int.tryParse(
                         (it['contentImageCount'] ?? qc['detailImageCount'] ?? 0)
                             .toString()) ??
                     0;
+                final detailImageCount = previewImagesAll.isNotEmpty
+                    ? previewImagesAll.length
+                    : detailImageCountRaw;
 
                 final selected = url.isNotEmpty && _selected.contains(url);
                 final saved = url.isNotEmpty && _savedUrls.contains(url);

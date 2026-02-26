@@ -1952,6 +1952,8 @@ async function generateRecommendationsBatch({
     }
 
     const detailCount = Number(v.contentImageCount || 0) || 0;
+    const previewCount = Array.isArray(v.previewImages) ? v.previewImages.length : 0;
+    const detailDisplayCount = previewCount > 0 ? previewCount : detailCount;
     const tier = detailCount >= 3 ? 'A' : (detailCount >= 1 ? 'B' : 'C');
     const eligibleUpload = Boolean(qcGate.ok);
 
@@ -1960,6 +1962,15 @@ async function generateRecommendationsBatch({
     const prevMainImageUrl = String(v.mainImageUrl || '').trim();
     const prevPrice = Number(v.sourcePrice);
     const prevShip = v.shippingFee;
+    const finalPriceNum = Number(cand.finalPrice);
+    const profitNum = Number(cand.profit);
+    const marginNum = Number(cand.marginRate);
+    const resolvedReason =
+      Number.isFinite(finalPriceNum) &&
+      Number.isFinite(profitNum) &&
+      Number.isFinite(marginNum)
+        ? `recommend≈${Math.round(finalPriceNum)} / profit≈${Math.round(profitNum)} / margin≈${Math.round(marginNum * 100)}% / detailImages=${detailDisplayCount}`
+        : String(cand.reason || '').trim();
 
     final.push({
       ...cand,
@@ -1967,6 +1978,7 @@ async function generateRecommendationsBatch({
       mainImageUrl: prevMainImageUrl || cand.mainImageUrl,
       sourcePrice: Number.isFinite(prevPrice) ? prevPrice : cand.sourcePrice,
       shippingFee: (prevShip == null ? cand.shippingFee : prevShip),
+      reason: resolvedReason,
       payload: {
         ...cand.payload,
         preview: {
@@ -1974,9 +1986,9 @@ async function generateRecommendationsBatch({
           draft: prev?.draft || null,
           computed: {
             images: v.previewImages || [],
-            contentImageCount: detailCount,
+            contentImageCount: detailDisplayCount,
             imageCountRaw: Number(v.qcPreview?.imageCountRaw || 0) || 0,
-            imageCountFiltered: Number(v.qcPreview?.imageCountFiltered || detailCount) || detailCount,
+            imageCountFiltered: Number(v.qcPreview?.imageCountFiltered || detailDisplayCount) || detailDisplayCount,
             imageCountRejected: Number(v.qcPreview?.imageCountRejected || 0) || 0,
           },
         },
@@ -1985,7 +1997,7 @@ async function generateRecommendationsBatch({
           reasons: Array.isArray(qcGate.reasons) ? qcGate.reasons : [],
           metrics: qcGate.metrics && typeof qcGate.metrics === 'object' ? qcGate.metrics : {},
           stage: qcDecisionStage,
-          detailImageCount: detailCount,
+          detailImageCount: detailDisplayCount,
           tier,
           eligibleUpload,
         },

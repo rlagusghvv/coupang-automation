@@ -234,10 +234,13 @@ class _RecommendationDetailScreenState
         .where((s) => s.trim().isNotEmpty)
         .toList();
 
-    final detailImageCount = (qcMetrics['imageCountFiltered'] ??
-            _seed['contentImageCount'] ??
-            widget.detailImageCount)
-        .toString();
+    final detailImageCount = images.isNotEmpty
+        ? images.length
+        : (int.tryParse((qcMetrics['imageCountFiltered'] ??
+                    _seed['contentImageCount'] ??
+                    widget.detailImageCount)
+                .toString()) ??
+            widget.detailImageCount);
 
     final leadImage = images.isNotEmpty
         ? images.first
@@ -304,7 +307,7 @@ class _RecommendationDetailScreenState
                         runSpacing: 6,
                         children: [
                           InfoChip(label: '추천등급 ${widget.qcTier}'),
-                          InfoChip(label: '상세 $detailImageCount장'),
+                          InfoChip(label: '상세 ${detailImageCount.toString()}장'),
                           InfoChip(
                             label: qc.isEmpty
                                 ? 'QC 점검 중'

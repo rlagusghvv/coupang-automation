@@ -504,21 +504,28 @@ export async function previewUploadFromUrl(inputUrl, settings = {}) {
   }
 
   const strictMode = String(settings.strictImageMatch || "1").trim() !== "0";
+  const maxContentImages = Math.max(
+    10,
+    Math.min(120, Number(settings.maxContentImages) || 60),
+  );
   const draft = await parseProductFromDomaeqq(c.url);
   let rawContentImages = unique(extractImageUrls(draft.contentText));
+  rawContentImages = rawContentImages.slice(0, maxContentImages);
   rawContentImages = await expandOwnerclanCopyImages(rawContentImages);
+  rawContentImages = rawContentImages.slice(0, maxContentImages);
   const filtered = analyzeSameProductImages({
     sourceUrl: draft.sourceUrl,
     mainImageUrl: draft.imageUrl,
     contentImageUrls: rawContentImages,
     strict: strictMode,
   });
+  const filteredImages = filtered.filteredImageUrls.slice(0, maxContentImages);
 
   const imageFingerprint = buildImageFingerprint({
     sourceUrl: draft.sourceUrl,
     title: draft.title,
     mainImageUrl: draft.imageUrl,
-    filteredImageUrls: filtered.filteredImageUrls,
+    filteredImageUrls: filteredImages,
   });
 
   return {
@@ -531,10 +538,11 @@ export async function previewUploadFromUrl(inputUrl, settings = {}) {
       title: draft.title,
       mainImageUrl: draft.imageUrl,
       contentImagesRaw: rawContentImages,
-      contentImagesFiltered: filtered.filteredImageUrls,
+      contentImagesFiltered: filteredImages,
       contentImagesRejected: filtered.rejectedImages,
       imageFingerprint,
-      ...filtered.metrics,
+      ...(filtered.metrics || {}),
+      imageCountFiltered: filteredImages.length,
     },
   };
 }
