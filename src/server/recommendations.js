@@ -1246,7 +1246,7 @@ function resolveRecommendationQcSettings(settings = {}) {
         settings?.recommendationQcRelaxStage2MinTokenMatchRate,
         0,
         1,
-        0.02,
+        0,
       ),
       qcMaxRejectedRate: clampNumber(
         settings?.recommendationQcRelaxStage2MaxRejectedRate,

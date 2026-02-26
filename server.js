@@ -1057,6 +1057,15 @@ function inferCatalogStatus(currentStatus, snapshot = null, fallback = "confirme
   return "confirmed";
 }
 
+function inferCatalogStatusForSync(currentStatus, snapshot = null, fallback = "confirmed") {
+  const current = String(currentStatus || "").trim();
+  const inferred = inferCatalogStatus(currentStatus, snapshot, fallback);
+  if (inferred !== "deployed") return inferred;
+  if (current === "deployed" || current === "deployed_invalid") return inferred;
+  // Sync is metadata refresh; avoid auto-promoting lifecycle status here.
+  return current || fallback;
+}
+
 function normalizeCatalogProduct(row) {
   const meta = row?.meta && typeof row.meta === "object" ? row.meta : {};
   const detailImagesRaw = normalizeImageListForClient(
@@ -1729,7 +1738,7 @@ app.post("/api/catalog/:id/sync", authRequired, async (req, res) => {
       userId: req.user.id,
       id: row.id,
       patch: {
-        status: remoteDeleted ? "deleted_remote" : inferCatalogStatus(row.status, live, "confirmed"),
+        status: remoteDeleted ? "deleted_remote" : inferCatalogStatusForSync(row.status, live, "confirmed"),
         title: pickFirstNonEmpty(nextMeta.confirmedTitle, row.title),
         imageUrl: pickFirstNonEmpty(nextMeta.mainImageUrl, row.imageUrl),
         metaReplace: nextMeta,
@@ -1998,7 +2007,7 @@ app.get("/api/products/status/:sellerProductId", authRequired, async (req, res) 
         userId: req.user.id,
         id: linked.id,
         patch: {
-          status: remoteDeleted ? "deleted_remote" : inferCatalogStatus(linked.status, status, "confirmed"),
+          status: remoteDeleted ? "deleted_remote" : inferCatalogStatusForSync(linked.status, status, "confirmed"),
           title: pickFirstNonEmpty(nextMeta.confirmedTitle, status?.title, linked.title),
           imageUrl: pickFirstNonEmpty(nextMeta.mainImageUrl, status?.mainImageUrl, linked.imageUrl),
           metaReplace: nextMeta,
@@ -2075,7 +2084,7 @@ app.post("/api/products/status/refresh", authRequired, async (req, res) => {
           userId: req.user.id,
           id: linked.id,
           patch: {
-            status: remoteDeleted ? "deleted_remote" : inferCatalogStatus(linked.status, live, "confirmed"),
+            status: remoteDeleted ? "deleted_remote" : inferCatalogStatusForSync(linked.status, live, "confirmed"),
             title: pickFirstNonEmpty(nextMeta.confirmedTitle, live?.title, linked.title),
             imageUrl: pickFirstNonEmpty(nextMeta.mainImageUrl, live?.mainImageUrl, linked.imageUrl),
             metaReplace: nextMeta,
