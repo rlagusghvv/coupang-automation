@@ -1939,6 +1939,10 @@ async function generateRecommendationsBatch({
   const previewPlaywrightRetryBudgetText = previewPlaywrightRetryBudgetDisabled
     ? '무제한(테스트)'
     : `${configuredPreviewPlaywrightRetryBudget}건`;
+  const previewTimeoutDisabled = parseBoolean(
+    normalizedSettings?.recommendationDisablePreviewTimeout,
+    true,
+  );
   let maxValidate = Math.max(topN * (policy.requireQcPass ? 12 : 2), 24);
   maxValidate = Math.min(maxValidate, policy.requireQcPass ? 220 : 80);
   for (const cand of scoredPool) {
@@ -1948,19 +1952,32 @@ async function generateRecommendationsBatch({
     if (excludeUrls.has(cand.sourceUrl)) continue;
 
     const requestPreview = async (timeoutMs, previewSourceMode = 'auto') =>
-      withTimeout(
-        previewUploadFromUrl(cand.sourceUrl, {
-          ...normalizedSettings,
-          maxContentImages: recommendationPreviewSettings.maxContentImages,
-          strictImageMatch: recommendationPreviewSettings.strictImageMatch ? '1' : '0',
-          previewSourceMode,
-          previewOpenApiTimeoutMs,
-          seedTitle: cand.title,
-          seedPrice: cand.sourcePrice,
-          seedImageUrl: cand.mainImageUrl,
-        }),
-        timeoutMs,
-        'preview_timeout',
+      (
+        previewTimeoutDisabled
+          ? previewUploadFromUrl(cand.sourceUrl, {
+              ...normalizedSettings,
+              maxContentImages: recommendationPreviewSettings.maxContentImages,
+              strictImageMatch: recommendationPreviewSettings.strictImageMatch ? '1' : '0',
+              previewSourceMode,
+              previewOpenApiTimeoutMs,
+              seedTitle: cand.title,
+              seedPrice: cand.sourcePrice,
+              seedImageUrl: cand.mainImageUrl,
+            })
+          : withTimeout(
+              previewUploadFromUrl(cand.sourceUrl, {
+                ...normalizedSettings,
+                maxContentImages: recommendationPreviewSettings.maxContentImages,
+                strictImageMatch: recommendationPreviewSettings.strictImageMatch ? '1' : '0',
+                previewSourceMode,
+                previewOpenApiTimeoutMs,
+                seedTitle: cand.title,
+                seedPrice: cand.sourcePrice,
+                seedImageUrl: cand.mainImageUrl,
+              }),
+              timeoutMs,
+              'preview_timeout',
+            )
       ).catch((error) => ({
         ok: false,
         reason: normalizeErrorMessage(error),
@@ -2241,6 +2258,7 @@ async function generateRecommendationsBatch({
     previewOpenApiFailed,
     previewOpenApiTimeout,
     previewOpenApiNonTimeoutFailed,
+    previewTimeoutDisabled,
     previewPlaywrightFallbackNeeded,
     previewPlaywrightRecovered,
     previewPlaywrightFailed,
@@ -2302,6 +2320,7 @@ async function generateRecommendationsBatch({
         openApiFailed: previewOpenApiFailed,
         openApiTimeout: previewOpenApiTimeout,
         openApiNonTimeoutFailed: previewOpenApiNonTimeoutFailed,
+        timeoutDisabled: previewTimeoutDisabled,
         playwrightFallbackNeeded: previewPlaywrightFallbackNeeded,
         playwrightAttempts: previewPlaywrightAttempts,
         playwrightRetryBudget: previewPlaywrightRetryBudgetDisabled ? null : configuredPreviewPlaywrightRetryBudget,
