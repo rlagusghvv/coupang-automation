@@ -335,6 +335,35 @@ function pickBestOpenApiDetailImages(images, baseUrl, mainImageUrl = "") {
   return main ? [main] : [];
 }
 
+function buildOpenApiDetailHtmlBundle(raw, baseUrl, opts = {}) {
+  const includeDeli = opts?.includeDeli !== false;
+  const contents =
+    raw?.domeggook?.desc?.contents && typeof raw.domeggook.desc.contents === "object"
+      ? raw.domeggook.desc.contents
+      : {};
+  const itemHtml = String(contents?.item || "").trim();
+  const deliHtml = String(contents?.deli || "").trim();
+  const eventHtml = String(contents?.event || "").trim();
+  const otherItemHtml = String(contents?.otherItem || "").trim();
+
+  const parts = [];
+  if (itemHtml) parts.push(itemHtml);
+  if (includeDeli && deliHtml) parts.push(deliHtml);
+
+  // Keep event/other blocks as fallback only.
+  if (parts.length === 0 && eventHtml) parts.push(eventHtml);
+  if (parts.length === 0 && otherItemHtml) parts.push(otherItemHtml);
+
+  const mergedRaw = parts.join("\n");
+  const mergedHtml = mergedRaw ? sanitizeHtml(mergedRaw, baseUrl) : "";
+
+  return {
+    mergedHtml,
+    itemHtml: itemHtml ? sanitizeHtml(itemHtml, baseUrl) : "",
+    deliHtml: deliHtml ? sanitizeHtml(deliHtml, baseUrl) : "",
+  };
+}
+
 async function fetchDetailHtmlFromLinks(links, baseUrl, opts = {}) {
   const timeoutMs = Math.max(800, Math.min(6000, Number(opts?.timeoutMs) || 2000));
   const maxFetch = Math.max(0, Math.min(3, Number(opts?.maxFetch) || 2));
@@ -382,6 +411,7 @@ async function fetchTextWithTimeout(url, opts = {}) {
 
 async function loadOpenApiItemViewCandidate(itemUrl, opts = {}) {
   const fastMode = Boolean(opts?.fastMode);
+  const includeDeli = opts?.includeDeli !== false;
   const timeoutMs = Math.max(
     1200,
     Math.min(10000, Number(opts?.timeoutMs) || (fastMode ? 5500 : 15000)),
@@ -411,18 +441,29 @@ async function loadOpenApiItemViewCandidate(itemUrl, opts = {}) {
     };
     collectOpenApiSignals(raw, state, "", itemUrl);
 
+    const detailBundle = buildOpenApiDetailHtmlBundle(raw, itemUrl, { includeDeli });
+
     const linkHtml = fastMode
       ? []
       : await fetchDetailHtmlFromLinks(state.detailLinks, itemUrl, {
           timeoutMs: 1600,
           maxFetch: 1,
         });
-    const detailHtml = pickBestOpenApiDetailHtml(
+    const scoredDetailHtml = pickBestOpenApiDetailHtml(
       [...state.detailHtmlCandidates, ...linkHtml],
       itemUrl,
     );
-    const imageUrl = pickBestOpenApiImage(state.images, itemUrl);
-    const detailImages = pickBestOpenApiDetailImages(state.images, itemUrl, imageUrl);
+    const detailHtml = detailBundle.mergedHtml || scoredDetailHtml;
+    const detailHtmlImages = extractImageUrlsFromHtml(detailHtml, itemUrl);
+    let imageUrl = pickBestOpenApiImage(state.images, itemUrl);
+    const detailImages = pickBestOpenApiDetailImages(
+      [...detailHtmlImages, ...state.images],
+      itemUrl,
+      imageUrl,
+    );
+    if (!imageUrl && detailImages.length > 0) {
+      imageUrl = detailImages[0];
+    }
     const price = (() => {
       const nums = state.prices.filter((n) => Number.isFinite(n) && n > 0);
       if (nums.length === 0) return null;
@@ -441,6 +482,10 @@ async function loadOpenApiItemViewCandidate(itemUrl, opts = {}) {
       title: String(title || "").trim(),
       diagnostics: {
         detailHtmlCandidates: state.detailHtmlCandidates.length + linkHtml.length,
+        bundleItemPresent: Boolean(detailBundle.itemHtml),
+        bundleDeliPresent: Boolean(detailBundle.deliHtml),
+        bundleUsed: Boolean(detailBundle.mergedHtml),
+        bundleImageCandidates: detailHtmlImages.length,
         imageCandidates: state.images.length,
         detailImageCandidates: detailImages.length,
         priceCandidates: state.prices.length,
