@@ -26,6 +26,9 @@ export function evaluateQcGate(preview = {}, settings = {}) {
   const trustedPathAllowRate = num(settings.qcTrustedPathAllowRate, 0.9);
   const trustedPathBlockedRate = num(settings.qcTrustedPathBlockedRate, 0.15);
   const trustedSuspiciousRate = num(settings.qcTrustedSuspiciousRate, 0.1);
+  const trustedFilteredMinCount = num(settings.qcTrustedFilteredMinCount, minFilteredImages);
+  const trustedFilteredMaxBlockedRate = num(settings.qcTrustedFilteredMaxBlockedRate, 0.7);
+  const trustedFilteredMaxRejectedRate = num(settings.qcTrustedFilteredMaxRejectedRate, 0.8);
 
   const metrics = {
     imageCountRaw: num(preview.imageCountRaw, 0),
@@ -50,12 +53,19 @@ export function evaluateQcGate(preview = {}, settings = {}) {
   };
 
   const reasons = [];
-  const trustedDetailAssetMode =
+  const trustedDetailAssetModeByRaw =
     metrics.imageCountRaw >= minFilteredImages &&
     metrics.imageCountFiltered >= minFilteredImages &&
     metrics.pathAllowRateRaw >= trustedPathAllowRate &&
     metrics.pathBlockedRateRaw <= trustedPathBlockedRate &&
     metrics.suspiciousPathRateRaw <= trustedSuspiciousRate;
+  const trustedDetailAssetModeByFiltered =
+    metrics.imageCountFiltered >= trustedFilteredMinCount &&
+    metrics.pathAllowCountFiltered >= trustedFilteredMinCount &&
+    metrics.suspiciousPathCountFiltered === 0 &&
+    metrics.pathBlockedRateRaw <= trustedFilteredMaxBlockedRate &&
+    metrics.rejectedRate <= trustedFilteredMaxRejectedRate;
+  const trustedDetailAssetMode = trustedDetailAssetModeByRaw || trustedDetailAssetModeByFiltered;
 
   if (!preview.mainImageUrl) {
     reasons.push("대표 이미지가 비어 있습니다.");

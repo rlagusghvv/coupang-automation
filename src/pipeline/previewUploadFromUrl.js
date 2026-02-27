@@ -67,7 +67,7 @@ const DETAIL_PATH_BLOCK_PATTERNS = [
 ];
 
 const NON_PRODUCT_INFO_PATTERNS = [
-  /(^|\/)(notice|guide|policy|faq|qna|cs|service)(\/|[_\-.]|$)/i,
+  /(^|\/)(notice|info|guide|policy|faq|qna|cs|service)(\/|[_\-.]|$)/i,
   /(^|\/)(delivery|shipping|ship|refund|return|exchange|as)([_\-.]?\d+)?\.(?:jpe?g|png|gif|webp)$/i,
   /(^|[_\-/])(index[_-]?(?:gift|event|notice|info)|print[-_]?top|banner[-_]?top)([_\-./]|$)/i,
   /배송|교환|반품|환불|안내|공지|문의|고객센터|유의|주의/i,
@@ -82,6 +82,23 @@ const SUSPICIOUS_ASSET_PATTERNS = [
   /(^|[_\-/])btn([_\-./]|$)/i,
   /sprite/i,
 ];
+
+const SUPPLIER_PRODUCT_PATH_RE = /\/image\/product\//i;
+const SUPPLIER_PRODUCT_FILE_RE = /\.[a-z0-9]{3,5}$/i;
+
+function isSupplierProductAssetPath(path = "", target = "") {
+  const normalizedPath = String(path || "").toLowerCase();
+  if (!SUPPLIER_PRODUCT_PATH_RE.test(normalizedPath)) return false;
+
+  const fileName = normalizedPath.split("/").pop() || "";
+  if (!SUPPLIER_PRODUCT_FILE_RE.test(fileName)) return false;
+
+  const loweredTarget = String(target || normalizedPath).toLowerCase();
+  if (NON_PRODUCT_INFO_PATTERNS.some((re) => re.test(loweredTarget))) return false;
+  if (SUSPICIOUS_ASSET_PATTERNS.some((re) => re.test(loweredTarget))) return false;
+
+  return true;
+}
 
 function toUrl(raw) {
   try {
@@ -176,6 +193,7 @@ function inspectImagePath(urlObj) {
   const allowByEsmplus = domain === "esmplus.com" && !isThumb;
   const allowByAlicdn = domain === "alicdn.com" && !isThumb;
   const allowByOwnerclanCopy = domain === "ownerclan.com" && /\/copy\//i.test(path) && !isThumb;
+  const allowBySupplierProduct = isSupplierProductAssetPath(path, target) && !isThumb;
   const blockedByPath = DETAIL_PATH_BLOCK_PATTERNS.some((re) => re.test(path));
   const blockedByInfoAsset = NON_PRODUCT_INFO_PATTERNS.some((re) => re.test(target));
   const suspiciousByName = SUSPICIOUS_ASSET_PATTERNS.some((re) => re.test(target));
@@ -194,12 +212,14 @@ function inspectImagePath(urlObj) {
   const suspicious = suspiciousByName || blockedByPath || blockedByInfoAsset || isThumb;
 
   return {
-    allowed: allowedByPath || allowByEsmplus || allowByAlicdn || allowByOwnerclanCopy,
+    allowed:
+      allowedByPath || allowByEsmplus || allowByAlicdn || allowByOwnerclanCopy || allowBySupplierProduct,
     blocked,
     suspicious,
     path,
     isThumb,
     domain,
+    allowBySupplierProduct,
   };
 }
 
@@ -373,6 +393,7 @@ export function analyzeSameProductImages({
         pathSignals.domain === "esmplus.com" ||
         pathSignals.domain === "alicdn.com" ||
         (pathSignals.domain === "ownerclan.com" && pathname.includes("/copy/"));
+      const isSupplierProductDetail = Boolean(pathSignals.allowBySupplierProduct);
       const looksProductUploadPath =
         pathname.includes("/upload/item/") ||
         pathname.includes("/upload/editor/") ||
@@ -381,7 +402,8 @@ export function analyzeSameProductImages({
         pathname.includes("/contents/") ||
         pathname.includes("/attach/") ||
         pathname.includes("/attachment/") ||
-        isTrustedCdnDetail;
+        isTrustedCdnDetail ||
+        isSupplierProductDetail;
       const looksUiAsset =
         pathname.includes("/image/common/") ||
         pathname.includes("/image/item/") ||
@@ -429,18 +451,20 @@ export function analyzeSameProductImages({
       pathSignals.domain === "esmplus.com" ||
       pathSignals.domain === "alicdn.com" ||
       (pathSignals.domain === "ownerclan.com" && pathname.includes("/copy/"));
+    const isSupplierProductDetail = Boolean(pathSignals.allowBySupplierProduct);
     const score =
       (exactHost ? 2 : 0) +
       (sameDomain ? 1 : 0) +
       (pathSignals.allowed ? 2 : 0) +
       (isTrustedCdnDetail ? 2 : 0) +
+      (isSupplierProductDetail ? 1 : 0) +
       (overlap >= 2 ? 2 : overlap >= 1 ? 1 : 0) +
       (mainOverlap >= 2 ? 2 : mainOverlap >= 1 ? 1 : 0) +
       (tokens.length === 0 ? -1 : 0) +
       (pathSignals.suspicious && !pathSignals.allowed ? -2 : 0);
 
     const keepStrict = pathSignals.allowed
-      ? score >= 3 && (sameDomain || overlap >= 1 || mainOverlap >= 1 || isTrustedCdnDetail)
+      ? score >= 3 && (sameDomain || overlap >= 1 || mainOverlap >= 1 || isTrustedCdnDetail || isSupplierProductDetail)
       : score >= 5 && (exactHost || overlap >= 2 || mainOverlap >= 2);
     const keepLoose = pathSignals.allowed ? score >= 2 : score >= 3;
     const keep = strict ? keepStrict : keepLoose;

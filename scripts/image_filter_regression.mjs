@@ -39,6 +39,34 @@ function run() {
   assert.ok(analyzed.metrics.pathBlockedCountRaw >= 3, "pathBlockedCountRaw must reflect blocked assets");
   assert.ok(analyzed.metrics.pathAllowCountRaw >= 2, "pathAllowCountRaw must reflect allow-path assets");
 
+  const supplierCase = analyzeSameProductImages({
+    sourceUrl: "https://domeggook.com/59970154",
+    mainImageUrl:
+      "https://cdn1.domeggook.com/upload/item/2025/07/28/175366583417B4300E665103511679BE/175366583417B4300E665103511679BE_img_760?hash=510f3f2847a10d975b72cdb49f04aa81",
+    contentImageUrls: [
+      "https://bandimall.smilecast.co.kr/Image/product/1018/1018_01.jpg",
+      "https://bandimall.smilecast.co.kr/Image/product/1018/1018_02.jpg",
+      "https://bandimall.smilecast.co.kr/Image/product/notice.jpg",
+      "https://bandimall.smilecast.co.kr/Image/product/info.jpg",
+    ],
+    strict: true,
+  });
+  const supplierKept = supplierCase.filteredImageUrls || [];
+  const supplierRejected = supplierCase.rejectedImages || [];
+  assert.equal(supplierKept.length, 2, "supplier product path images must keep 2 detail assets");
+  assert.ok(
+    supplierKept.every((u) => /\/image\/product\/1018\/1018_0[12]\.jpg$/i.test(u)),
+    "supplier kept images must be the numbered detail assets",
+  );
+  assert.ok(
+    supplierRejected.some((r) => /notice\.jpg$/i.test(String(r?.url || ""))),
+    "supplier notice asset must be rejected",
+  );
+  assert.ok(
+    supplierRejected.some((r) => /info\.jpg$/i.test(String(r?.url || ""))),
+    "supplier info asset must be rejected",
+  );
+
   console.log(
     JSON.stringify(
       {
@@ -46,7 +74,9 @@ function run() {
         test: "image_filter_regression",
         keptCount: kept.length,
         blockedCount: blocked.length,
+        supplierKeptCount: supplierKept.length,
         metrics: analyzed.metrics,
+        supplierMetrics: supplierCase.metrics,
       },
       null,
       2,

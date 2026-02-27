@@ -644,11 +644,23 @@ const DETAIL_GARBAGE_PATTERNS = [
   /(^|[_\-/])btn([_\-./]|$)/i,
   /sprite/i,
   /facebook|twitter|kakao|share/i,
-  /(^|\/)(notice|guide|policy|faq|qna|cs|service)(\/|[_\-.]|$)/i,
+  /(^|\/)(notice|info|guide|policy|faq|qna|cs|service)(\/|[_\-.]|$)/i,
   /(^|\/)(delivery|shipping|ship|refund|return|exchange|as)([_\-.]?\d+)?\.(?:jpe?g|png|gif|webp)$/i,
   /(^|[_\-/])(index[_-]?(?:gift|event|notice|info)|print[-_]?top|banner[-_]?top)([_\-./]|$)/i,
   /배송|교환|반품|환불|안내|공지|문의|고객센터|유의|주의/i,
 ];
+
+const SUPPLIER_PRODUCT_PATH_RE = /\/image\/product\//i;
+const SUPPLIER_PRODUCT_FILE_RE = /\.[a-z0-9]{3,5}$/i;
+
+function isSupplierProductAssetPath(path = "") {
+  const normalizedPath = String(path || "").toLowerCase();
+  if (!SUPPLIER_PRODUCT_PATH_RE.test(normalizedPath)) return false;
+  const fileName = normalizedPath.split("/").pop() || "";
+  if (!SUPPLIER_PRODUCT_FILE_RE.test(fileName)) return false;
+  if (DETAIL_GARBAGE_PATTERNS.some((re) => re.test(normalizedPath))) return false;
+  return true;
+}
 
 function classifyDetailImageUrl(rawUrl) {
   let url = String(rawUrl || "").trim();
@@ -676,7 +688,8 @@ function classifyDetailImageUrl(rawUrl) {
     /\/upload\/contents\//i.test(path) ||
     /\/editor\//i.test(path) ||
     /\/contents\//i.test(path) ||
-    /\/attach(?:ment)?\//i.test(path);
+    /\/attach(?:ment)?\//i.test(path) ||
+    isSupplierProductAssetPath(path);
 
   return {
     usable: Boolean(!garbage && likelyDetail),
