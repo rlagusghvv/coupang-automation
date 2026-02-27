@@ -2284,19 +2284,26 @@ export async function refreshRecommendationsForUser({
     }
   }
 
-  const reasonCounts = batch?.diagnostics?.qcReasonCounts && typeof batch.diagnostics.qcReasonCounts === 'object'
-    ? batch.diagnostics.qcReasonCounts
-    : {};
-  rescueDetailTooFewCount = Object.entries(reasonCounts).reduce((sum, [reason, count]) => {
-    if (!String(reason || '').includes('상세 이미지가 너무 적습니다')) return sum;
-    return sum + (Number(count) || 0);
-  }, 0);
+  const countDetailTooFewReasons = (diag) => {
+    const reasonMap = diag?.qcReasonCounts && typeof diag.qcReasonCounts === 'object'
+      ? diag.qcReasonCounts
+      : {};
+    return Object.entries(reasonMap).reduce((sum, [reason, count]) => {
+      if (!String(reason || '').includes('상세 이미지가 너무 적습니다')) return sum;
+      return sum + (Number(count) || 0);
+    }, 0);
+  };
+  rescueDetailTooFewCount = countDetailTooFewReasons(batch?.diagnostics);
+  const validatedCount = Number(batch?.diagnostics?.validated || 0);
+  const underfilledThreshold = Math.max(2, Math.floor(target * 0.4));
+  const severelyUnderfilled = batch.items.length < underfilledThreshold;
+  const noCandidatesCollected = Number(batch?.diagnostics?.collectedCandidates || 0) === 0;
 
-  // Empty-result rescue #1:
+  // Underfilled-result rescue #1:
   // keep QC strict, but switch candidate source to list scraping (playwright).
   const shouldTryPlaywrightRescue =
-    batch.items.length === 0 &&
-    Number(batch?.diagnostics?.validated || 0) >= 5;
+    severelyUnderfilled &&
+    (validatedCount >= 5 || noCandidatesCollected);
   if (shouldTryPlaywrightRescue) {
     rescuePlaywrightTried = true;
     if (typeof onProgress === 'function') {
@@ -2320,13 +2327,15 @@ export async function refreshRecommendationsForUser({
       batch = rescueBatch;
       rescuePlaywrightApplied = true;
     }
+    // review-mode rescue should use the latest batch diagnostics.
+    rescueDetailTooFewCount = countDetailTooFewReasons(batch?.diagnostics);
   }
 
-  // Empty-result rescue #2:
+  // Underfilled-result rescue #2:
   // when detail-image shortage dominates QC rejections, switch to review mode
   // so operators can still inspect candidates without repetitive reruns.
   const shouldTryReviewModeRescue =
-    batch.items.length === 0 &&
+    batch.items.length < underfilledThreshold &&
     Number(batch?.diagnostics?.qcRejected || 0) > 0 &&
     rescueDetailTooFewCount > 0;
   if (shouldTryReviewModeRescue) {
