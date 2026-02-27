@@ -1848,6 +1848,8 @@ async function generateRecommendationsBatch({
   let qcRejected = 0;
   let previewRetryRecovered = 0;
   let previewRetryFailed = 0;
+  let previewPlaywrightRecovered = 0;
+  let previewPlaywrightFailed = 0;
   let previewFallbackRecovered = 0;
   let previewFallbackFailed = 0;
   let previewTimeoutFallbackUsed = 0;
@@ -1858,6 +1860,17 @@ async function generateRecommendationsBatch({
   const qcReasonCounts = {};
   const qcRejectedSamples = [];
   const maxQcRejectedSamples = 3;
+  const previewOpenApiTimeoutMs = Math.max(
+    1800,
+    Math.min(9000, Number(normalizedSettings?.recommendationPreviewOpenApiTimeoutMs) || Math.floor(previewTimeoutMs * 0.62)),
+  );
+  const previewPlaywrightTimeoutMs = Math.max(
+    previewTimeoutMs + 7000,
+    Math.min(
+      45_000,
+      Math.max(18_000, Number(normalizedSettings?.recommendationPreviewPlaywrightTimeoutMs) || 28_000),
+    ),
+  );
   let maxValidate = Math.max(topN * (policy.requireQcPass ? 12 : 2), 24);
   maxValidate = Math.min(maxValidate, policy.requireQcPass ? 220 : 80);
   for (const cand of scoredPool) {
@@ -1866,12 +1879,14 @@ async function generateRecommendationsBatch({
     if (Date.now() - startedAt > Math.floor(maxRuntimeMs * 0.92)) break;
     if (excludeUrls.has(cand.sourceUrl)) continue;
 
-    const requestPreview = async (timeoutMs) =>
+    const requestPreview = async (timeoutMs, previewSourceMode = 'auto') =>
       withTimeout(
         previewUploadFromUrl(cand.sourceUrl, {
           ...normalizedSettings,
           maxContentImages: recommendationPreviewSettings.maxContentImages,
           strictImageMatch: recommendationPreviewSettings.strictImageMatch ? '1' : '0',
+          previewSourceMode,
+          previewOpenApiTimeoutMs,
         }),
         timeoutMs,
         'preview_timeout',
@@ -1880,15 +1895,14 @@ async function generateRecommendationsBatch({
         reason: normalizeErrorMessage(error),
       }));
 
-    let prev = await requestPreview(previewTimeoutMs);
+    let prev = await requestPreview(previewTimeoutMs, 'openapi');
     let usedHtmlPreviewFallback = false;
     const firstPreviewTimedOut = isPreviewTimeoutReason(prev?.reason || prev?.error);
 
-    // Timeout candidates are expensive; go straight to HTML fallback.
-    // Retry is only used for non-timeout failures.
+    // Primary flow: OpenAPI preview first.
+    // If it fails (non-timeout), retry once with Playwright parser.
     if (!prev?.ok && !firstPreviewTimedOut) {
-      const retryTimeoutMs = Math.max(previewTimeoutMs + 4000, Math.floor(previewTimeoutMs * 1.5));
-      const retry = await requestPreview(retryTimeoutMs);
+      const retry = await requestPreview(previewPlaywrightTimeoutMs, 'playwright');
       if (retry?.ok) {
         prev = retry;
         previewRetryRecovered += 1;
@@ -1900,21 +1914,31 @@ async function generateRecommendationsBatch({
 
     if (!prev?.ok && isPreviewTimeoutReason(prev?.reason || prev?.error)) {
       previewTimeoutFallbackUsed += 1;
-      const fallback = await buildHtmlPreviewFallback({
-        sourceUrl: cand.sourceUrl,
-        seedTitle: cand.title,
-        seedPrice: cand.sourcePrice,
-        seedImageUrl: cand.mainImageUrl,
-        strictImageMatch: recommendationPreviewSettings.strictImageMatch,
-        timeoutMs: Math.max(6000, Math.floor(previewTimeoutMs * 0.9)),
-      });
-      if (fallback?.ok) {
-        prev = fallback;
-        previewFallbackRecovered += 1;
-        usedHtmlPreviewFallback = true;
+      const playwrightFallback = await requestPreview(previewPlaywrightTimeoutMs, 'playwright');
+      if (playwrightFallback?.ok) {
+        prev = playwrightFallback;
+        previewPlaywrightRecovered += 1;
       } else {
-        previewFallbackFailed += 1;
-        prev = fallback || prev;
+        previewPlaywrightFailed += 1;
+        prev = playwrightFallback || prev;
+        if (policy.allowQuickFallback) {
+          const fallback = await buildHtmlPreviewFallback({
+            sourceUrl: cand.sourceUrl,
+            seedTitle: cand.title,
+            seedPrice: cand.sourcePrice,
+            seedImageUrl: cand.mainImageUrl,
+            strictImageMatch: recommendationPreviewSettings.strictImageMatch,
+            timeoutMs: Math.max(6000, Math.floor(previewTimeoutMs * 0.9)),
+          });
+          if (fallback?.ok) {
+            prev = fallback;
+            previewFallbackRecovered += 1;
+            usedHtmlPreviewFallback = true;
+          } else {
+            previewFallbackFailed += 1;
+            prev = fallback || prev;
+          }
+        }
       }
     }
 
@@ -2101,6 +2125,8 @@ async function generateRecommendationsBatch({
     qcRejectedSamples,
     previewRetryRecovered,
     previewRetryFailed,
+    previewPlaywrightRecovered,
+    previewPlaywrightFailed,
     previewFallbackRecovered,
     previewFallbackFailed,
     previewTimeoutFallbackUsed,

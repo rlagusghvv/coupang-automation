@@ -301,17 +301,57 @@ function pickBestOpenApiImage(images, baseUrl) {
   return ranked[0]?.url || "";
 }
 
-async function fetchDetailHtmlFromLinks(links, baseUrl) {
+function pickBestOpenApiDetailImages(images, baseUrl, mainImageUrl = "") {
+  const main = toAbsoluteUrl(mainImageUrl, baseUrl);
+  const uniq = Array.from(new Set((images || []).map((u) => toAbsoluteUrl(u, baseUrl)).filter(Boolean)));
+  if (uniq.length === 0) return [];
+
+  const ranked = uniq
+    .map((url) => {
+      const cls = classifyDetailImageUrl(url);
+      const path = String(url).toLowerCase();
+      let score = 0;
+      if (cls.usable) score += 10;
+      if (cls.esmplus) score += 2;
+      if (/\/upload\/item\//i.test(path)) score += 4;
+      if (/\/upload\/editor\//i.test(path) || /\/contents?\//i.test(path)) score += 3;
+      if (cls.thumb) score -= 8;
+      if (cls.garbage) score -= 6;
+      if (main && url === main) score -= 5;
+      return { url, score, cls };
+    })
+    .sort((a, b) => b.score - a.score);
+
+  const preferred = ranked
+    .filter((x) => x.cls.usable && x.url !== main)
+    .map((x) => x.url);
+  if (preferred.length >= 2) return preferred.slice(0, 80);
+
+  const fallback = ranked
+    .filter((x) => !x.cls.garbage && !x.cls.thumb && x.url !== main)
+    .map((x) => x.url);
+  if (fallback.length > 0) return fallback.slice(0, 80);
+
+  return main ? [main] : [];
+}
+
+async function fetchDetailHtmlFromLinks(links, baseUrl, opts = {}) {
+  const timeoutMs = Math.max(800, Math.min(6000, Number(opts?.timeoutMs) || 2000));
+  const maxFetch = Math.max(0, Math.min(3, Number(opts?.maxFetch) || 2));
   const out = [];
   const uniq = Array.from(new Set((links || []).map((u) => toAbsoluteUrl(u, baseUrl)).filter(Boolean)));
-  for (const link of uniq.slice(0, 2)) {
+  for (const link of uniq.slice(0, maxFetch)) {
     try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
       const res = await fetch(link, {
+        signal: controller.signal,
         headers: {
           Referer: baseUrl,
           "User-Agent": "Mozilla/5.0",
         },
       });
+      clearTimeout(timer);
       if (!res.ok) continue;
       const html = await res.text();
       if (String(html || "").length >= 120) out.push(html);
@@ -320,7 +360,12 @@ async function fetchDetailHtmlFromLinks(links, baseUrl) {
   return out;
 }
 
-async function loadOpenApiItemViewCandidate(itemUrl) {
+async function loadOpenApiItemViewCandidate(itemUrl, opts = {}) {
+  const fastMode = Boolean(opts?.fastMode);
+  const timeoutMs = Math.max(
+    1200,
+    Math.min(10000, Number(opts?.timeoutMs) || (fastMode ? 5500 : 15000)),
+  );
   const itemNo = extractDomeggookItemNo(itemUrl);
   if (!itemNo) return { ok: false, reason: "openapi_item_no_missing", itemNo: "" };
 
@@ -330,6 +375,7 @@ async function loadOpenApiItemViewCandidate(itemUrl) {
       itemNo,
       ver: "4.5",
       om: "json",
+      timeoutMs,
     });
     const raw = view?.raw;
     if (!raw || typeof raw !== "object") {
@@ -345,12 +391,18 @@ async function loadOpenApiItemViewCandidate(itemUrl) {
     };
     collectOpenApiSignals(raw, state, "", itemUrl);
 
-    const linkHtml = await fetchDetailHtmlFromLinks(state.detailLinks, itemUrl);
+    const linkHtml = fastMode
+      ? []
+      : await fetchDetailHtmlFromLinks(state.detailLinks, itemUrl, {
+          timeoutMs: 1600,
+          maxFetch: 1,
+        });
     const detailHtml = pickBestOpenApiDetailHtml(
       [...state.detailHtmlCandidates, ...linkHtml],
       itemUrl,
     );
     const imageUrl = pickBestOpenApiImage(state.images, itemUrl);
+    const detailImages = pickBestOpenApiDetailImages(state.images, itemUrl, imageUrl);
     const price = (() => {
       const nums = state.prices.filter((n) => Number.isFinite(n) && n > 0);
       if (nums.length === 0) return null;
@@ -364,11 +416,13 @@ async function loadOpenApiItemViewCandidate(itemUrl) {
       itemNo,
       detailHtml,
       imageUrl,
+      detailImages,
       price,
       title: String(title || "").trim(),
       diagnostics: {
         detailHtmlCandidates: state.detailHtmlCandidates.length + linkHtml.length,
         imageCandidates: state.images.length,
+        detailImageCandidates: detailImages.length,
         priceCandidates: state.prices.length,
       },
     };
@@ -650,7 +704,7 @@ const DETAIL_GARBAGE_PATTERNS = [
   /배송|교환|반품|환불|안내|공지|문의|고객센터|유의|주의/i,
 ];
 
-const SUPPLIER_PRODUCT_PATH_RE = /\/image\/product\//i;
+const SUPPLIER_PRODUCT_PATH_RE = /\/(?:image\/product|productimgs?)\//i;
 const SUPPLIER_PRODUCT_FILE_RE = /\.[a-z0-9]{3,5}$/i;
 
 function isSupplierProductAssetPath(path = "") {
@@ -1120,6 +1174,15 @@ async function pickMainImageSrc(page) {
 
 export async function parseProductFromDomaeqq(url, opts = {}) {
   const mode = String(opts?.mode || "full").trim().toLowerCase();
+  const previewSourceMode = (() => {
+    const raw = String(opts?.previewSourceMode || "auto").trim().toLowerCase();
+    if (raw === "openapi" || raw === "playwright") return raw;
+    return "auto";
+  })();
+  const previewOpenApiTimeoutMs = Math.max(
+    1600,
+    Math.min(9000, Number(opts?.previewOpenApiTimeoutMs) || 4500),
+  );
   const is1688 = String(url || "").includes("1688.domeggook.com");
   const isMobile = (() => {
     try {
@@ -1132,15 +1195,24 @@ export async function parseProductFromDomaeqq(url, opts = {}) {
 
   // Recommendation preview path: prefer fast OpenAPI item-view parse
   // to avoid repeated Playwright timeouts.
-  if (mode === "preview" && !is1688) {
+  if (mode === "preview" && !is1688 && previewSourceMode !== "playwright") {
+    let openApiFailureReason = "";
     try {
-      const openApiItemView = await loadOpenApiItemViewCandidate(url);
+      const openApiItemView = await loadOpenApiItemViewCandidate(url, {
+        fastMode: true,
+        timeoutMs: previewOpenApiTimeoutMs,
+      });
+      openApiFailureReason = String(openApiItemView?.reason || "").trim();
       const fastTitle = String(openApiItemView?.title || "").trim();
       const fastPrice = Number(openApiItemView?.price);
       const fastImageUrl = normalizeUrl(openApiItemView?.imageUrl || "");
-      const fastContentHtml = stripDomeggookPromoBlocks(
+      const openApiDetailHtml = stripDomeggookPromoBlocks(
         String(openApiItemView?.detailHtml || "").trim(),
       );
+      const openApiDetailImages = Array.isArray(openApiItemView?.detailImages)
+        ? openApiItemView.detailImages.map((u) => normalizeUrl(u)).filter(Boolean)
+        : [];
+      const fastContentHtml = openApiDetailHtml || buildImageHtml(openApiDetailImages.slice(0, 80));
 
       if (
         openApiItemView?.ok &&
@@ -1173,13 +1245,23 @@ export async function parseProductFromDomaeqq(url, opts = {}) {
             reason: String(openApiItemView?.reason || ""),
             itemNo: String(openApiItemView?.itemNo || ""),
             diagnostics: openApiItemView?.diagnostics || null,
+            sourceMode: previewSourceMode,
             usedDetail: Boolean(fastContentHtml),
             usedImage: true,
           },
         };
         return draft;
       }
-    } catch {}
+    } catch (e) {
+      openApiFailureReason = String(e?.message || e || "openapi_error").trim();
+    }
+    if (previewSourceMode === "openapi") {
+      throw new Error(
+        `preview_openapi_failed:${openApiFailureReason || "openapi_item_view_insufficient"}`,
+      );
+    }
+  } else if (mode === "preview" && previewSourceMode === "openapi") {
+    throw new Error("preview_openapi_failed:not_domeggook_item_view");
   }
 
   const browser = await chromium.launch({ headless: true });

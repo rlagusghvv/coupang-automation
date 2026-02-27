@@ -83,7 +83,7 @@ const SUSPICIOUS_ASSET_PATTERNS = [
   /sprite/i,
 ];
 
-const SUPPLIER_PRODUCT_PATH_RE = /\/image\/product\//i;
+const SUPPLIER_PRODUCT_PATH_RE = /\/(?:image\/product|productimgs?)\//i;
 const SUPPLIER_PRODUCT_FILE_RE = /\.[a-z0-9]{3,5}$/i;
 
 function isSupplierProductAssetPath(path = "", target = "") {
@@ -536,12 +536,21 @@ export async function previewUploadFromUrl(inputUrl, settings = {}) {
     return { ok: false, skipped: true, reason: c.reason, url: c.url };
   }
 
+  const previewSourceModeRaw = String(settings.previewSourceMode || "auto").trim().toLowerCase();
+  const previewSourceMode =
+    previewSourceModeRaw === "openapi" || previewSourceModeRaw === "playwright"
+      ? previewSourceModeRaw
+      : "auto";
   const strictMode = String(settings.strictImageMatch || "1").trim() !== "0";
   const maxContentImages = Math.max(
     10,
     Math.min(120, Number(settings.maxContentImages) || 60),
   );
-  const draft = await parseProductFromDomaeqq(c.url, { mode: "preview" });
+  const draft = await parseProductFromDomaeqq(c.url, {
+    mode: "preview",
+    previewSourceMode,
+    previewOpenApiTimeoutMs: settings.previewOpenApiTimeoutMs,
+  });
   let rawContentImages = unique(extractImageUrls(draft.contentText));
   rawContentImages = rawContentImages.slice(0, maxContentImages);
   rawContentImages = await expandOwnerclanCopyImages(rawContentImages);

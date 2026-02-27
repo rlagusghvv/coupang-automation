@@ -16,15 +16,22 @@ function toUrl(base, params) {
   return u;
 }
 
-async function fetchText(url) {
-  const r = await fetch(url.toString(), {
-    headers: {
-      'User-Agent': 'Couplus/1.0 (+https://app.splui.com)'
-    },
-    timeout: 30_000,
-  });
-  const text = await r.text();
-  return { status: r.status, ok: r.ok, text };
+async function fetchText(url, timeoutMs = 30_000) {
+  const ms = Math.max(1200, Math.min(60_000, Number(timeoutMs) || 30_000));
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ms);
+  try {
+    const r = await fetch(url.toString(), {
+      signal: controller.signal,
+      headers: {
+        'User-Agent': 'Couplus/1.0 (+https://app.splui.com)'
+      },
+    });
+    const text = await r.text();
+    return { status: r.status, ok: r.ok, text };
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 // Domeggook OpenAPI: Item list
@@ -41,6 +48,7 @@ export async function domeggookOpenApiGetItemList({
   // getItemList works on 4.0/4.1 (older versions return GONE)
   ver = '4.1',
   om = 'json',
+  timeoutMs = 15_000,
 }) {
   const key = assertKey();
   const kw = String(keyword || '').trim();
@@ -58,7 +66,7 @@ export async function domeggookOpenApiGetItemList({
     kw: kw || undefined,
   });
 
-  const r = await fetchText(url);
+  const r = await fetchText(url, timeoutMs);
 
   // Some errors redirect to HTML error pages; treat HTML as failure for json requests.
   const looksHtml = /<html|<!doctype/i.test(r.text || '');
@@ -90,6 +98,7 @@ export async function domeggookOpenApiGetItemView({
   ver = '4.5',
   om = 'json',
   multiple = false,
+  timeoutMs = 15_000,
 }) {
   const key = assertKey();
   const no = String(itemNo || '').trim();
@@ -104,8 +113,9 @@ export async function domeggookOpenApiGetItemView({
     multiple: multiple ? 'true' : undefined,
   });
 
-  const r = await fetchText(url);
-  if (!r.ok) {
+  const r = await fetchText(url, timeoutMs);
+  const looksHtml = /<html|<!doctype/i.test(r.text || '');
+  if (!r.ok || looksHtml) {
     const e = new Error('domeggook_openapi_getItemView_failed');
     e.details = [{ url: url.toString(), status: r.status, body: (r.text || '').slice(0, 500) }];
     throw e;
