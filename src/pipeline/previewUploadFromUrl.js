@@ -541,7 +541,7 @@ export async function previewUploadFromUrl(inputUrl, settings = {}) {
     10,
     Math.min(120, Number(settings.maxContentImages) || 60),
   );
-  const draft = await parseProductFromDomaeqq(c.url);
+  const draft = await parseProductFromDomaeqq(c.url, { mode: "preview" });
   let rawContentImages = unique(extractImageUrls(draft.contentText));
   rawContentImages = rawContentImages.slice(0, maxContentImages);
   rawContentImages = await expandOwnerclanCopyImages(rawContentImages);

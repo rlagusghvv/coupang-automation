@@ -1118,7 +1118,70 @@ async function pickMainImageSrc(page) {
   return null;
 }
 
-export async function parseProductFromDomaeqq(url) {
+export async function parseProductFromDomaeqq(url, opts = {}) {
+  const mode = String(opts?.mode || "full").trim().toLowerCase();
+  const is1688 = String(url || "").includes("1688.domeggook.com");
+  const isMobile = (() => {
+    try {
+      const h = new URL(String(url || "")).hostname || "";
+      return /^mobile\./i.test(h);
+    } catch {
+      return false;
+    }
+  })();
+
+  // Recommendation preview path: prefer fast OpenAPI item-view parse
+  // to avoid repeated Playwright timeouts.
+  if (mode === "preview" && !is1688) {
+    try {
+      const openApiItemView = await loadOpenApiItemViewCandidate(url);
+      const fastTitle = String(openApiItemView?.title || "").trim();
+      const fastPrice = Number(openApiItemView?.price);
+      const fastImageUrl = normalizeUrl(openApiItemView?.imageUrl || "");
+      const fastContentHtml = stripDomeggookPromoBlocks(
+        String(openApiItemView?.detailHtml || "").trim(),
+      );
+
+      if (
+        openApiItemView?.ok &&
+        fastTitle &&
+        Number.isFinite(fastPrice) &&
+        fastPrice > 0 &&
+        fastImageUrl
+      ) {
+        const draft = makeDraft({
+          sourceUrl: String(url || "").trim(),
+          title: fastTitle,
+          price: fastPrice,
+          imageUrl: fastImageUrl,
+          contentText: fastContentHtml || fastTitle,
+          categoryText: "",
+          options: [],
+          shippingFee: null,
+        });
+        draft.__debug = {
+          source: "domeggook",
+          is1688,
+          isMobile,
+          mode,
+          optionStrategy: "preview.openapi_item_view",
+          finalOptionsCount: 0,
+          detailSource: "openapi_item_view_fast_path",
+          openApi: {
+            attempted: true,
+            ok: Boolean(openApiItemView?.ok),
+            reason: String(openApiItemView?.reason || ""),
+            itemNo: String(openApiItemView?.itemNo || ""),
+            diagnostics: openApiItemView?.diagnostics || null,
+            usedDetail: Boolean(fastContentHtml),
+            usedImage: true,
+          },
+        };
+        return draft;
+      }
+    } catch {}
+  }
+
   const browser = await chromium.launch({ headless: true });
   const storageStatePath =
     process.env.DOMEGGOOK_STORAGE_STATE ||
@@ -1129,15 +1192,6 @@ export async function parseProductFromDomaeqq(url) {
     : await browser.newContext();
 
   const page = await context.newPage();
-  const is1688 = String(url || "").includes("1688.domeggook.com");
-  const isMobile = (() => {
-    try {
-      const h = new URL(String(url || "")).hostname || "";
-      return /^mobile\./i.test(h);
-    } catch {
-      return false;
-    }
-  })();
 
   try {
     await page.goto(url, { waitUntil: "domcontentloaded", timeout: 90000 });
