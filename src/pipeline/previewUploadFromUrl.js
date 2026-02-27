@@ -162,6 +162,16 @@ function unique(arr) {
   return Array.from(new Set((arr || []).filter(Boolean)));
 }
 
+function parseBoolean(value, fallback = false) {
+  if (value == null) return fallback;
+  if (typeof value === "boolean") return value;
+  const text = String(value).trim().toLowerCase();
+  if (!text) return fallback;
+  if (["1", "true", "yes", "y", "on"].includes(text)) return true;
+  if (["0", "false", "no", "n", "off"].includes(text)) return false;
+  return fallback;
+}
+
 function countOverlap(tokens, referenceSet) {
   let n = 0;
   for (const t of tokens) {
@@ -558,13 +568,45 @@ export async function previewUploadFromUrl(inputUrl, settings = {}) {
   rawContentImages = rawContentImages.slice(0, maxContentImages);
   rawContentImages = await expandOwnerclanCopyImages(rawContentImages);
   rawContentImages = rawContentImages.slice(0, maxContentImages);
-  const filtered = analyzeSameProductImages({
+  const detailSource = String(draft?.__debug?.detailSource || "").trim().toLowerCase();
+  const isOpenApiDetailSource = detailSource.startsWith("openapi_");
+  const openApiIncludeAllImages = parseBoolean(
+    settings.previewOpenApiIncludeAllImages ?? settings.recommendationPreviewOpenApiIncludeAllImages,
+    true,
+  );
+
+  const analyzed = analyzeSameProductImages({
     sourceUrl: draft.sourceUrl,
     mainImageUrl: draft.imageUrl,
     contentImageUrls: rawContentImages,
     strict: strictMode,
   });
-  const filteredImages = filtered.filteredImageUrls.slice(0, maxContentImages);
+  let filteredImages = analyzed.filteredImageUrls.slice(0, maxContentImages);
+  let rejectedImages = analyzed.rejectedImages;
+  let metrics = analyzed.metrics || {};
+  let openApiImagePassthrough = false;
+
+  if (isOpenApiDetailSource && openApiIncludeAllImages && rawContentImages.length > 0) {
+    // User request mode: trust OpenAPI detail set first, then tighten later.
+    openApiImagePassthrough = true;
+    filteredImages = unique(rawContentImages).slice(0, maxContentImages);
+    rejectedImages = [];
+    metrics = {
+      ...(metrics || {}),
+      imageCountRaw: rawContentImages.length,
+      imageCountFiltered: filteredImages.length,
+      imageCountRejected: Math.max(0, rawContentImages.length - filteredImages.length),
+      rejectedRate:
+        rawContentImages.length > 0
+          ? Number(
+              (
+                Math.max(0, rawContentImages.length - filteredImages.length) /
+                rawContentImages.length
+              ).toFixed(4),
+            )
+          : 0,
+    };
+  }
 
   const imageFingerprint = buildImageFingerprint({
     sourceUrl: draft.sourceUrl,
@@ -584,9 +626,11 @@ export async function previewUploadFromUrl(inputUrl, settings = {}) {
       mainImageUrl: draft.imageUrl,
       contentImagesRaw: rawContentImages,
       contentImagesFiltered: filteredImages,
-      contentImagesRejected: filtered.rejectedImages,
+      contentImagesRejected: rejectedImages,
+      openApiImagePassthrough,
+      openApiDetailSource: openApiImagePassthrough ? detailSource : "",
       imageFingerprint,
-      ...(filtered.metrics || {}),
+      ...(metrics || {}),
       imageCountFiltered: filteredImages.length,
     },
   };

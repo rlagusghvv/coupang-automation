@@ -52,6 +52,23 @@ export function evaluateQcGate(preview = {}, settings = {}) {
     suspiciousPathCountFiltered: num(preview.suspiciousPathCountFiltered, 0),
   };
 
+  const openApiImagePassthrough = Boolean(preview.openApiImagePassthrough);
+  if (openApiImagePassthrough) {
+    const reasons = [];
+    if (!preview.mainImageUrl) {
+      reasons.push("대표 이미지가 비어 있습니다.");
+    }
+    // Passthrough mode is intentionally lenient: allow 1+ detail image.
+    if (metrics.imageCountFiltered < 1) {
+      reasons.push(`상세 이미지가 너무 적습니다 (${metrics.imageCountFiltered}/1).`);
+    }
+    return {
+      ok: reasons.length === 0,
+      reasons,
+      metrics,
+    };
+  }
+
   const reasons = [];
   const trustedDetailAssetModeByRaw =
     metrics.imageCountRaw >= minFilteredImages &&
