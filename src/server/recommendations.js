@@ -1924,10 +1924,21 @@ async function generateRecommendationsBatch({
       Math.max(12_000, Number(normalizedSettings?.recommendationPreviewPlaywrightTimeoutMs) || 14_000),
     ),
   );
-  const previewPlaywrightRetryBudget = Math.max(
+  const configuredPreviewPlaywrightRetryBudget = Math.max(
     0,
     Math.min(12, Number(normalizedSettings?.recommendationPreviewPlaywrightRetryBudget) || 6),
   );
+  const previewPlaywrightRetryBudgetDisabled = parseBoolean(
+    normalizedSettings?.recommendationDisablePreviewPlaywrightRetryBudget ??
+      normalizedSettings?.recommendationDisablePreviewPlaywrightBudget,
+    true,
+  );
+  const previewPlaywrightRetryBudget = previewPlaywrightRetryBudgetDisabled
+    ? Number.POSITIVE_INFINITY
+    : configuredPreviewPlaywrightRetryBudget;
+  const previewPlaywrightRetryBudgetText = previewPlaywrightRetryBudgetDisabled
+    ? '무제한(테스트)'
+    : `${configuredPreviewPlaywrightRetryBudget}건`;
   let maxValidate = Math.max(topN * (policy.requireQcPass ? 12 : 2), 24);
   maxValidate = Math.min(maxValidate, policy.requireQcPass ? 220 : 80);
   for (const cand of scoredPool) {
@@ -2234,7 +2245,9 @@ async function generateRecommendationsBatch({
     previewPlaywrightRecovered,
     previewPlaywrightFailed,
     previewPlaywrightAttempts,
-    previewPlaywrightRetryBudget,
+    previewPlaywrightRetryBudget: previewPlaywrightRetryBudgetDisabled ? null : configuredPreviewPlaywrightRetryBudget,
+    previewPlaywrightRetryBudgetConfigured: configuredPreviewPlaywrightRetryBudget,
+    previewPlaywrightRetryBudgetDisabled,
     previewPlaywrightBudgetExhausted: Number(strictRejectCounts.preview_playwright_budget_exhausted || 0),
     previewFallbackRecovered,
     previewFallbackFailed,
@@ -2291,7 +2304,9 @@ async function generateRecommendationsBatch({
         openApiNonTimeoutFailed: previewOpenApiNonTimeoutFailed,
         playwrightFallbackNeeded: previewPlaywrightFallbackNeeded,
         playwrightAttempts: previewPlaywrightAttempts,
-        playwrightRetryBudget: previewPlaywrightRetryBudget,
+        playwrightRetryBudget: previewPlaywrightRetryBudgetDisabled ? null : configuredPreviewPlaywrightRetryBudget,
+        playwrightRetryBudgetConfigured: configuredPreviewPlaywrightRetryBudget,
+        playwrightRetryBudgetDisabled: previewPlaywrightRetryBudgetDisabled,
         playwrightBudgetExhausted: Number(strictRejectCounts.preview_playwright_budget_exhausted || 0),
         topRejects: strictRejectTop,
       },
@@ -2327,7 +2342,7 @@ async function generateRecommendationsBatch({
           const budgetExhausted = Number(strictRejectCounts.preview_playwright_budget_exhausted || 0);
           const timeoutRejected = Number(strictRejectCounts.preview_timeout || 0);
           if (budgetExhausted > 0) {
-            diagnostics.hint = `미리보기 단계에서 제외되었습니다 (${reasonLabel} ${topStrictReject[1]}건). OpenAPI 후보 수집은 되었지만 Playwright 폴백 예산 ${previewPlaywrightRetryBudget}건을 모두 사용해 추가 재시도를 하지 못했습니다 (예산소진 ${budgetExhausted}건, timeout ${timeoutRejected}건).`;
+            diagnostics.hint = `미리보기 단계에서 제외되었습니다 (${reasonLabel} ${topStrictReject[1]}건). OpenAPI 후보 수집은 되었지만 Playwright 폴백 예산 ${previewPlaywrightRetryBudgetText}을 모두 사용해 추가 재시도를 하지 못했습니다 (예산소진 ${budgetExhausted}건, timeout ${timeoutRejected}건).`;
           } else {
             diagnostics.hint = `미리보기 단계에서 제외되었습니다 (${reasonLabel} ${topStrictReject[1]}건). OpenAPI 미리보기 시도 ${previewOpenApiAttempts}건 중 성공 ${previewOpenApiSucceeded}건, 실패 ${previewOpenApiFailed}건입니다.`;
           }
