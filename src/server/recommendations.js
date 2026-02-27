@@ -2361,7 +2361,7 @@ export async function refreshRecommendationsForUser({
       topN: target,
       excludeUrls: activeExcludeUrls,
       onProgress,
-      candidateSourceMode: 'playwright',
+      candidateSourceMode: 'auto',
     });
     if (reviewBatch.items.length > batch.items.length) {
       batch = reviewBatch;
