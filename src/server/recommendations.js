@@ -853,6 +853,35 @@ function detectRecommendationHint(keywordDiagnostics = []) {
   return '';
 }
 
+function sumCountValues(map = {}) {
+  if (!map || typeof map !== 'object') return 0;
+  return Object.values(map).reduce((acc, value) => {
+    const n = Number(value || 0);
+    return acc + (Number.isFinite(n) ? n : 0);
+  }, 0);
+}
+
+function humanizeStrictRejectReason(reason = '') {
+  const key = String(reason || '').trim().toLowerCase();
+  if (!key) return '알 수 없는 검증 실패';
+  if (key === 'preview_playwright_budget_exhausted') return 'Playwright 재시도 예산 소진';
+  if (key === 'preview_timeout') return '미리보기 타임아웃';
+  if (key === 'preview_failed') return '미리보기 실패';
+  if (key === 'no_title') return '제목 누락';
+  if (key === 'no_images') return '이미지 없음';
+  if (key.startsWith('preview_')) return `미리보기 실패 (${key.replace(/^preview_/, '')})`;
+  return key;
+}
+
+function toSortedCountEntries(map = {}, limit = 5) {
+  if (!map || typeof map !== 'object') return [];
+  return Object.entries(map)
+    .map(([reason, count]) => [String(reason || ''), Number(count || 0)])
+    .filter(([reason, count]) => Boolean(reason) && Number.isFinite(count) && count > 0)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, Math.max(1, Number(limit) || 5));
+}
+
 function normalizeCandidateImageUrl(rawUrl) {
   const s = String(rawUrl || '').trim();
   if (!s) return '';
@@ -1868,6 +1897,12 @@ async function generateRecommendationsBatch({
   let previewPlaywrightRecovered = 0;
   let previewPlaywrightFailed = 0;
   let previewPlaywrightAttempts = 0;
+  let previewOpenApiAttempts = 0;
+  let previewOpenApiSucceeded = 0;
+  let previewOpenApiFailed = 0;
+  let previewOpenApiTimeout = 0;
+  let previewOpenApiNonTimeoutFailed = 0;
+  let previewPlaywrightFallbackNeeded = 0;
   let previewFallbackRecovered = 0;
   let previewFallbackFailed = 0;
   let previewTimeoutFallbackUsed = 0;
@@ -1891,7 +1926,7 @@ async function generateRecommendationsBatch({
   );
   const previewPlaywrightRetryBudget = Math.max(
     0,
-    Math.min(6, Number(normalizedSettings?.recommendationPreviewPlaywrightRetryBudget) || 2),
+    Math.min(12, Number(normalizedSettings?.recommendationPreviewPlaywrightRetryBudget) || 6),
   );
   let maxValidate = Math.max(topN * (policy.requireQcPass ? 12 : 2), 24);
   maxValidate = Math.min(maxValidate, policy.requireQcPass ? 220 : 80);
@@ -1920,10 +1955,19 @@ async function generateRecommendationsBatch({
         reason: normalizeErrorMessage(error),
       }));
 
+    previewOpenApiAttempts += 1;
     let prev = await requestPreview(previewTimeoutMs, 'openapi');
     let attemptedPlaywrightPreview = false;
     let usedHtmlPreviewFallback = false;
     const firstPreviewTimedOut = isPreviewTimeoutReason(prev?.reason || prev?.error);
+    if (prev?.ok) {
+      previewOpenApiSucceeded += 1;
+    } else {
+      previewOpenApiFailed += 1;
+      previewPlaywrightFallbackNeeded += 1;
+      if (firstPreviewTimedOut) previewOpenApiTimeout += 1;
+      else previewOpenApiNonTimeoutFailed += 1;
+    }
 
     // Primary flow: OpenAPI preview first.
     // If it fails (non-timeout), retry once with Playwright parser.
@@ -2149,6 +2193,17 @@ async function generateRecommendationsBatch({
     }
   }
 
+  const strictRejectedTotal = sumCountValues(strictRejectCounts);
+  const strictRejectTop = toSortedCountEntries(strictRejectCounts, 5).map(([reason, count]) => ({
+    reason,
+    reasonLabel: humanizeStrictRejectReason(reason),
+    count,
+  }));
+  const qcReasonTop = toSortedCountEntries(qcReasonCounts, 5).map(([reason, count]) => ({
+    reason,
+    count,
+  }));
+
   const diagnostics = {
     candidateSourceMode,
     openApiCircuitBreakApplied,
@@ -2170,10 +2225,17 @@ async function generateRecommendationsBatch({
     qcRejectedSamples,
     previewRetryRecovered,
     previewRetryFailed,
+    previewOpenApiAttempts,
+    previewOpenApiSucceeded,
+    previewOpenApiFailed,
+    previewOpenApiTimeout,
+    previewOpenApiNonTimeoutFailed,
+    previewPlaywrightFallbackNeeded,
     previewPlaywrightRecovered,
     previewPlaywrightFailed,
     previewPlaywrightAttempts,
     previewPlaywrightRetryBudget,
+    previewPlaywrightBudgetExhausted: Number(strictRejectCounts.preview_playwright_budget_exhausted || 0),
     previewFallbackRecovered,
     previewFallbackFailed,
     previewTimeoutFallbackUsed,
@@ -2211,6 +2273,39 @@ async function generateRecommendationsBatch({
       )
     ),
     hasDomeggookSessionPath: Boolean(String(normalizedSettings?.domeggookStorageStatePath || '').trim()),
+    stageBreakdown: {
+      collect: {
+        keywordsTried: keywordScanLimit,
+        collectedCandidates: candidates.length,
+        uniqueCandidates: uniq.length,
+        scoredCandidates: scoredPool.length,
+      },
+      preview: {
+        attempted: validated,
+        passedStrictValidation: Math.max(0, validated - strictRejectedTotal),
+        strictRejected: strictRejectedTotal,
+        openApiAttempts: previewOpenApiAttempts,
+        openApiSucceeded: previewOpenApiSucceeded,
+        openApiFailed: previewOpenApiFailed,
+        openApiTimeout: previewOpenApiTimeout,
+        openApiNonTimeoutFailed: previewOpenApiNonTimeoutFailed,
+        playwrightFallbackNeeded: previewPlaywrightFallbackNeeded,
+        playwrightAttempts: previewPlaywrightAttempts,
+        playwrightRetryBudget: previewPlaywrightRetryBudget,
+        playwrightBudgetExhausted: Number(strictRejectCounts.preview_playwright_budget_exhausted || 0),
+        topRejects: strictRejectTop,
+      },
+      qc: {
+        rejected: qcRejected,
+        kept: final.length,
+        relaxAttemptStage1: qcRelaxAttemptStage1,
+        relaxPassStage1: qcRelaxPassStage1,
+        relaxAttemptStage2: qcRelaxAttemptStage2,
+        relaxPassStage2: qcRelaxPassStage2,
+        topReasons: qcReasonTop,
+      },
+    },
+    strictRejectTop,
     hint: '',
   };
   if (final.length === 0) {
@@ -2225,11 +2320,19 @@ async function generateRecommendationsBatch({
       const topStrictReject = Object.entries(strictRejectCounts)
         .sort((a, b) => Number(b?.[1] || 0) - Number(a?.[1] || 0))[0];
       if (topStrictReject && Number(topStrictReject[1] || 0) > 0) {
-        const reason = String(topStrictReject[0] || '').toLowerCase();
+        const reasonRaw = String(topStrictReject[0] || '').trim();
+        const reason = reasonRaw.toLowerCase();
+        const reasonLabel = humanizeStrictRejectReason(reasonRaw);
         if (reason.includes('preview')) {
-          diagnostics.hint = `상품 페이지 파싱 실패가 많습니다 (${topStrictReject[0]} ${topStrictReject[1]}건).`;
+          const budgetExhausted = Number(strictRejectCounts.preview_playwright_budget_exhausted || 0);
+          const timeoutRejected = Number(strictRejectCounts.preview_timeout || 0);
+          if (budgetExhausted > 0) {
+            diagnostics.hint = `미리보기 단계에서 제외되었습니다 (${reasonLabel} ${topStrictReject[1]}건). OpenAPI 후보 수집은 되었지만 Playwright 폴백 예산 ${previewPlaywrightRetryBudget}건을 모두 사용해 추가 재시도를 하지 못했습니다 (예산소진 ${budgetExhausted}건, timeout ${timeoutRejected}건).`;
+          } else {
+            diagnostics.hint = `미리보기 단계에서 제외되었습니다 (${reasonLabel} ${topStrictReject[1]}건). OpenAPI 미리보기 시도 ${previewOpenApiAttempts}건 중 성공 ${previewOpenApiSucceeded}건, 실패 ${previewOpenApiFailed}건입니다.`;
+          }
         } else {
-          diagnostics.hint = `품질 검증 단계에서 제외되었습니다 (${topStrictReject[0]} ${topStrictReject[1]}건).`;
+          diagnostics.hint = `품질 검증 단계에서 제외되었습니다 (${reasonLabel} ${topStrictReject[1]}건).`;
         }
       }
     } else if (Number(diagnostics.scoredCandidates || 0) === 0) {
