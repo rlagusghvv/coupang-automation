@@ -272,118 +272,6 @@ export async function fetchDomeggookUrlsByKeyword({ keyword, limit = 40, storage
   }
 }
 
-async function buildCandidatesFromSourceUrls({
-  sourceUrls = [],
-  limit = 80,
-  timeoutMs = 4_500,
-  concurrency = 4,
-  onProgress = null,
-} = {}) {
-  const uniqSourceUrls = Array.from(
-    new Set(
-      (Array.isArray(sourceUrls) ? sourceUrls : [])
-        .map((u) => String(u || '').trim())
-        .filter(Boolean),
-    ),
-  );
-  if (uniqSourceUrls.length === 0) {
-    return {
-      items: [],
-      diagnostics: {
-        strategy: 'seed_url_detail_fetch',
-        scanned: 0,
-        collected: 0,
-        errors: [],
-      },
-    };
-  }
-
-  const target = Math.max(1, Math.min(200, Number(limit) || 80));
-  const queueLimit = Math.min(uniqSourceUrls.length, Math.max(target * 4, target));
-  const queue = uniqSourceUrls.slice(0, queueLimit);
-  const out = [];
-  const seen = new Set();
-  const errors = [];
-  const workerCount = Math.max(1, Math.min(8, Number(concurrency) || 4));
-  const timeout = Math.max(2500, Math.min(12000, Number(timeoutMs) || 4500));
-
-  let cursor = 0;
-  let scanned = 0;
-  const runWorker = async () => {
-    while (true) {
-      if (out.length >= target) break;
-      const idx = cursor;
-      cursor += 1;
-      if (idx >= queue.length) break;
-
-      const url = String(queue[idx] || '').trim();
-      if (!url || seen.has(url)) continue;
-      scanned += 1;
-      try {
-        const controller = new AbortController();
-        const t = setTimeout(() => controller.abort(), timeout);
-        const r = await fetch(url, {
-          signal: controller.signal,
-          headers: {
-            'User-Agent': 'Mozilla/5.0',
-            Referer: 'https://domeggook.com/',
-          },
-        });
-        clearTimeout(t);
-        if (!r.ok) continue;
-
-        const html = await readHtmlWithCharset(r);
-        const title = extractTitleFromHtml(html);
-        const price = parseCandidatePrice(extractPriceFromHtml(html));
-        if (!title || !Number.isFinite(price) || price <= 0) continue;
-
-        const ogImage = extractMetaContent(html, 'og:image');
-        const firstImageMatch = String(html || '').match(/<img[^>]+src=["']([^"']+)["']/i);
-        const imageUrl = normalizeCandidateImageUrl(
-          normalizeImageUrlWithBase(
-            ogImage || (firstImageMatch && firstImageMatch[1] ? firstImageMatch[1] : ''),
-            url,
-          ),
-        );
-
-        seen.add(url);
-        out.push({
-          url,
-          keyword: '재사용 후보',
-          title: String(title).slice(0, 80),
-          price,
-          imageUrl,
-        });
-      } catch (e) {
-        if (errors.length < 12) errors.push(normalizeErrorMessage(e));
-      }
-
-      if (typeof onProgress === 'function' && scanned % 6 === 0) {
-        try {
-          onProgress({
-            stage: 'collect_seed_urls',
-            scanned,
-            candidates: out.length,
-            target,
-          });
-        } catch {}
-      }
-    }
-  };
-
-  await Promise.all(Array.from({ length: workerCount }, () => runWorker()));
-
-  return {
-    items: out.slice(0, target),
-    diagnostics: {
-      strategy: 'seed_url_detail_fetch',
-      scanned: Math.max(scanned, Math.min(cursor, queue.length)),
-      collected: out.length,
-      errors,
-    },
-  };
-}
-
 function containsBanKeyword(text, banList) {
   const t = String(text || '').toLowerCase();
   if (!t) return false;
@@ -921,6 +809,8 @@ function detectRecommendationHint(keywordDiagnostics = []) {
   const flatErrors = rows
     .flatMap((r) => Array.isArray(r?.errors) ? r.errors : [])
     .map((e) => String(e || '').toLowerCase());
+  const hasOpenApiError = flatErrors.some((e) => e.includes('openapi:'));
+  const hasPlaywrightError = flatErrors.some((e) => e.includes('playwright:'));
 
   if (flatErrors.some((e) => e.includes('rate_limited') || e.includes('429'))) {
     return '도매꾹 요청 제한(429) 가능성이 있습니다. 잠시 후 다시 시도하세요.';
@@ -931,8 +821,14 @@ function detectRecommendationHint(keywordDiagnostics = []) {
   if (flatErrors.some((e) => e.includes('fetch failed') || e.includes('etimedout') || e.includes('econnreset'))) {
     return '도매꾹 네트워크 연결 또는 차단 이슈로 후보 수집에 실패했습니다.';
   }
-  if (flatErrors.some((e) => e.includes('domeggook_openapi_getitemlist_failed'))) {
-    return '도매꾹 OpenAPI 응답 오류로 후보 수집에 실패했습니다. 잠시 후 다시 시도하세요.';
+  if (hasOpenApiError && hasPlaywrightError) {
+    return '도매꾹 OpenAPI 실패 후 Playwright 파싱도 실패했습니다. 서버 Playwright 실행 환경을 확인하세요.';
+  }
+  if (hasOpenApiError) {
+    return '도매꾹 OpenAPI 응답 오류로 후보 수집에 실패했습니다. Playwright 폴백을 확인하세요.';
+  }
+  if (hasPlaywrightError) {
+    return 'Playwright 파싱 실패로 후보 수집에 실패했습니다. 브라우저 실행 환경을 확인하세요.';
   }
   if (rows.length > 0 && rows.every((r) => Number(r?.collected || 0) === 0)) {
     return '키워드 결과가 없거나 수집이 차단되어 추천 후보를 만들지 못했습니다.';
@@ -1427,225 +1323,199 @@ async function fetchFastCandidatesFromList({
   storageStatePath = '',
   sourceMode = 'auto',
 }) {
-  // v2: Prefer Domeggook OpenAPI if available.
-  // Fallback: Playwright list scraping (legacy).
+  // Collection policy:
+  // 1) OpenAPI first
+  // 2) Playwright fallback only
   const q = String(keyword || '').trim();
   if (!q) return { items: [], diagnostics: { keyword: '', strategy: 'none', collected: 0, errors: ['empty_keyword'] } };
   const modeRaw = String(sourceMode || 'auto').trim().toLowerCase();
   const mode = modeRaw === 'openapi' || modeRaw === 'playwright' ? modeRaw : 'auto';
-  const diagnostics = { keyword: q, strategy: 'none', collected: 0, errors: [], sourceMode: mode };
+  const diagnostics = {
+    keyword: q,
+    strategy: 'none',
+    collected: 0,
+    errors: [],
+    sourceMode: mode,
+    openapi: { tried: false, attempts: 0, collected: 0, ok: false },
+    playwright: { tried: false, attempts: 0, collected: 0, ok: false },
+  };
 
-  // 0) Try OpenAPI (best-effort). If docs/endpoint mismatch, it will throw.
-  if (mode !== 'playwright') {
-    try {
-      const { domeggookOpenApiGetItemList } = await import('../utils/domeggook_openapi.js');
-      const r = await domeggookOpenApiGetItemList({
-        keyword: q,
-        market: 'dome',
-        page: 1,
-        pageSize: Math.max(10, Math.min(80, Number(limit) || 40)),
-        sort: q ? 'se' : 'rd',
-        ver: '4.1',
-        om: 'json',
+  const normalizeOpenApiItems = (raw) => {
+    const items = raw?.domeggook?.list?.item || raw?.list?.item;
+    const list = Array.isArray(items) ? items : (items ? [items] : []);
+    if (!list.length) return [];
+    const out = [];
+    for (const it of list) {
+      const title = String(it?.title || '').trim();
+      const price = Number(it?.price);
+      const url = String(it?.url || '').trim() || '';
+      const no = String(it?.no || '').trim();
+      const imageUrl = normalizeCandidateImageUrl(
+        it?.img ||
+        it?.image ||
+        it?.imageUrl ||
+        it?.img_url ||
+        it?.thumbnail ||
+        it?.thumb ||
+        it?.main_image ||
+        it?.main_image_url ||
+        it?.image_url ||
+        it?.list_img ||
+        it?.photo,
+      );
+      const finalUrl = url || (no ? `https://domeggook.com/${no}` : '');
+      if (!finalUrl || !title || !Number.isFinite(price)) continue;
+      out.push({
+        url: finalUrl.replace(/^http:\/\//, 'https://'),
+        title: title.slice(0, 80),
+        price,
+        imageUrl,
       });
+      if (out.length >= limit) break;
+    }
+    return out;
+  };
 
-      const raw = r?.raw || null;
-      const items = raw?.domeggook?.list?.item || raw?.list?.item;
-      const list = Array.isArray(items) ? items : (items ? [items] : []);
+  if (mode !== 'playwright') {
+    diagnostics.openapi.tried = true;
+    const { domeggookOpenApiGetItemList } = await import('../utils/domeggook_openapi.js');
+    const versions = ['4.1', '4.0'];
+    for (const ver of versions) {
+      diagnostics.openapi.attempts += 1;
+      try {
+        const r = await domeggookOpenApiGetItemList({
+          keyword: q,
+          market: 'dome',
+          page: 1,
+          pageSize: Math.max(10, Math.min(80, Number(limit) || 40)),
+          sort: q ? 'se' : 'rd',
+          ver,
+          om: 'json',
+        });
+        const out = normalizeOpenApiItems(r?.raw || null);
+        if (out.length > 0) {
+          diagnostics.strategy = 'openapi';
+          diagnostics.collected = out.length;
+          diagnostics.openapi.collected = out.length;
+          diagnostics.openapi.ok = true;
+          return { items: out, diagnostics };
+        }
+      } catch (e) {
+        if (diagnostics.errors.length < 8) diagnostics.errors.push(`openapi: ${normalizeErrorMessage(e)}`);
+      }
+    }
+    if (mode === 'openapi') {
+      return { items: [], diagnostics };
+    }
+  }
 
-      if (list.length) {
+  diagnostics.playwright.tried = true;
+  try {
+    const { chromium } = await import('playwright');
+    const fs = await import('node:fs');
+    const hasState = storageStatePath && fs.existsSync(storageStatePath);
+
+    const launchPlans = [{ channel: null }, { channel: 'chrome' }];
+    let browser = null;
+    for (const plan of launchPlans) {
+      diagnostics.playwright.attempts += 1;
+      try {
+        const launchOpts = plan.channel ? { headless: true, channel: plan.channel } : { headless: true };
+        browser = await chromium.launch(launchOpts);
+        break;
+      } catch (e) {
+        if (diagnostics.errors.length < 8) diagnostics.errors.push(`playwright: ${normalizeErrorMessage(e)}`);
+      }
+    }
+    if (!browser) return { items: [], diagnostics };
+
+    try {
+      const context = hasState
+        ? await browser.newContext({ storageState: storageStatePath })
+        : await browser.newContext();
+      const page = await context.newPage();
+      const listUrl = `https://domeggook.com/main/item/itemList.php?sw=${encodeURIComponent(q)}&sf=ttl`;
+      await page.goto(listUrl, { waitUntil: 'domcontentloaded', timeout: 18_000 });
+      await page.waitForLoadState('networkidle', { timeout: 4_000 }).catch(() => {});
+      await page.waitForTimeout(900);
+
+      const rows = await page.evaluate(({ keyword }) => {
+        const kwRaw = String(keyword || '').trim().toLowerCase();
+        const kw = kwRaw.replace(/\s+/g, '');
+        const parseWon = (s) => {
+          const m = String(s || '').match(/(\d[\d,]{2,})\s*원/);
+          if (!m) return null;
+          const n = Number(String(m[1]).replace(/,/g, ''));
+          return Number.isFinite(n) ? n : null;
+        };
+        const normalizeTitle = (s) =>
+          String(s || '')
+            .replace(/\d[\d,]{2,}\s*원/g, '')
+            .replace(/\s+/g, ' ')
+            .trim();
+
         const out = [];
-        for (const it of list) {
-          const title = String(it?.title || '').trim();
-          const price = Number(it?.price);
-          const url = String(it?.url || '').trim() || '';
-          const no = String(it?.no || '').trim();
-          const imageUrl = normalizeCandidateImageUrl(
-            it?.img ||
-            it?.image ||
-            it?.imageUrl ||
-            it?.img_url ||
-            it?.thumbnail ||
-            it?.thumb ||
-            it?.main_image ||
-            it?.main_image_url ||
-            it?.image_url ||
-            it?.list_img ||
-            it?.photo,
-          );
-          const finalUrl = url || (no ? `https://domeggook.com/${no}` : '');
-          if (!finalUrl || !title || !Number.isFinite(price)) continue;
+        const seen = new Set();
+        const anchors = Array.from(document.querySelectorAll('a[href^="/"]'));
+        for (const a of anchors) {
+          const href = String(a.getAttribute('href') || '').trim();
+          const m = href.match(/^\/(\d{6,})(?:\?|$)/);
+          if (!m) continue;
+          const id = m[1];
+          if (seen.has(id)) continue;
+
+          const card = a.closest('li, article, div, td') || a.parentElement;
+          const text = String(card?.innerText || a.innerText || '')
+            .replace(/\s+/g, ' ')
+            .trim();
+          const price = parseWon(text);
+          if (!price) continue;
+
+          const title = normalizeTitle(text);
+          if (!title) continue;
+
+          const hay = `${title} ${text}`.toLowerCase().replace(/\s+/g, '');
+          if (kw && !hay.includes(kw)) continue;
+
+          const imgEl = card?.querySelector?.('img');
+          const imageUrlRaw =
+            imgEl?.getAttribute?.('data-src') ||
+            imgEl?.getAttribute?.('src') ||
+            '';
+          let imageUrl = String(imageUrlRaw || '').trim();
+          if (imageUrl.startsWith('//')) imageUrl = `https:${imageUrl}`;
+          else if (imageUrl.startsWith('/')) imageUrl = `${location.origin}${imageUrl}`;
+          imageUrl = imageUrl.replace(/^http:\/\//i, 'https://');
+
+          seen.add(id);
           out.push({
-            url: finalUrl.replace(/^http:\/\//, 'https://'),
+            url: `https://domeggook.com/${id}`,
             title: title.slice(0, 80),
             price,
             imageUrl,
           });
-          if (out.length >= limit) break;
+          if (out.length >= 200) break;
         }
-        if (out.length) {
-          diagnostics.strategy = 'openapi';
-          diagnostics.collected = out.length;
-          return { items: out, diagnostics };
-        }
+        return out;
+      }, { keyword: q });
+
+      const items = Array.isArray(rows)
+        ? rows.slice(0, Math.max(1, Math.min(200, Number(limit) || 80)))
+        : [];
+      if (items.length > 0) {
+        diagnostics.strategy = 'playwright';
+        diagnostics.collected = items.length;
+        diagnostics.playwright.collected = items.length;
+        diagnostics.playwright.ok = true;
       }
-    } catch (e) {
-      diagnostics.errors.push(`openapi: ${normalizeErrorMessage(e)}`);
+      return { items, diagnostics };
+    } finally {
+      await browser.close().catch(() => {});
     }
-  }
-
-  // 1) Playwright list-page extraction (legacy)
-  if (mode !== 'openapi') {
-    try {
-      const { chromium } = await import('playwright');
-      const fs = await import('node:fs');
-
-      const hasState = storageStatePath && fs.existsSync(storageStatePath);
-      const browser = await chromium.launch();
-      try {
-        const context = hasState ? await browser.newContext({ storageState: storageStatePath }) : await browser.newContext();
-        const page = await context.newPage();
-
-        const listUrl = `https://domeggook.com/main/item/itemList.php?sw=${encodeURIComponent(q)}&sf=ttl`;
-        await page.goto(listUrl, { waitUntil: 'domcontentloaded', timeout: 12_000 });
-        await page.waitForTimeout(700);
-
-        const rows = await page.evaluate(({ keyword }) => {
-          const kwRaw = String(keyword || '').trim().toLowerCase();
-          const kw = kwRaw.replace(/\s+/g, '');
-
-          const parseWon = (s) => {
-            const m = String(s || '').match(/(\d[\d,]{2,})\s*원/);
-            if (!m) return null;
-            const n = Number(String(m[1]).replace(/,/g, ''));
-            return Number.isFinite(n) ? n : null;
-          };
-
-          const out = [];
-          const seen = new Set();
-          const anchors = [...document.querySelectorAll('a[href^="/"]')];
-
-          for (const a of anchors) {
-            const href = a.getAttribute('href') || '';
-            const m = href.match(/^\/(\d{6,})(?:\?|$)/);
-            if (!m) continue;
-            const id = m[1];
-            if (seen.has(id)) continue;
-
-            const card = a.closest('li, article, div, td') || a.parentElement;
-            const text = (card?.innerText || a.innerText || '').replace(/\s+/g, ' ').trim();
-            const price = parseWon(text);
-            if (!price) continue;
-
-            const title = text.replace(/\d[\d,]{2,}\s*원/g, '').trim();
-            if (!title) continue;
-
-            const hay = (title + ' ' + text).toLowerCase();
-            const hayNorm = hay.replace(/\s+/g, '');
-            if (kw && !hayNorm.includes(kw)) continue;
-
-            seen.add(id);
-            const imgEl = card?.querySelector?.('img');
-            const imageUrlRaw =
-              imgEl?.getAttribute?.('data-src') ||
-              imgEl?.getAttribute?.('src') ||
-              '';
-            let imageUrl = String(imageUrlRaw || '').trim();
-            if (imageUrl.startsWith('//')) imageUrl = `https:${imageUrl}`;
-            else if (imageUrl.startsWith('/')) imageUrl = `${location.origin}${imageUrl}`;
-            imageUrl = imageUrl.replace(/^http:\/\//i, 'https://');
-            out.push({
-              url: `https://domeggook.com/${id}`,
-              title: title.slice(0, 80),
-              price,
-              imageUrl,
-            });
-            if (out.length >= 120) break;
-          }
-
-          return out;
-        }, { keyword: q });
-
-        if (rows && rows.length) {
-          const items = rows.slice(0, Math.max(1, Math.min(200, Number(limit) || 80)));
-          diagnostics.strategy = 'playwright';
-          diagnostics.collected = items.length;
-          return { items, diagnostics };
-        }
-      } finally {
-        await browser.close().catch(() => {});
-      }
-    } catch (e) {
-      diagnostics.errors.push(`playwright: ${normalizeErrorMessage(e)}`);
-    }
-  } else {
-    diagnostics.strategy = diagnostics.strategy || 'openapi';
-    diagnostics.collected = Number(diagnostics.collected || 0);
+  } catch (e) {
+    if (diagnostics.errors.length < 8) diagnostics.errors.push(`playwright: ${normalizeErrorMessage(e)}`);
     return { items: [], diagnostics };
   }
-
-  // 2) Fallback: get URLs then fetch each item HTML (may hit 429)
-  const urls = await fetchDomeggookUrlsByKeyword({ keyword: q, limit: Math.min(limit, 12), storageStatePath }).catch((e) => {
-    diagnostics.errors.push(`url_seed: ${normalizeErrorMessage(e)}`);
-    return [];
-  });
-  const out = [];
-  const maxFallbackFetch = Math.max(1, Math.min(4, Number(limit) || 4));
-
-  for (const u of urls) {
-    if (out.length >= maxFallbackFetch) break;
-    try {
-      const controller = new AbortController();
-      const t = setTimeout(() => controller.abort(), 3_000);
-      const r = await fetch(u, {
-        signal: controller.signal,
-        headers: { 'User-Agent': 'Mozilla/5.0', 'Referer': 'https://domeggook.com/' },
-      });
-      clearTimeout(t);
-      if (r.status === 429) throw new Error('domeggook_rate_limited');
-      if (!r.ok) continue;
-      const html = await readHtmlWithCharset(r);
-      await new Promise((r) => setTimeout(r, 200));
-
-      const title = (() => {
-        const m = html.match(/<meta property=["']og:title["'] content=["']([^"']+)["']/i);
-        if (m && m[1]) return m[1].trim();
-        const t2 = html.match(/<title>([\s\S]*?)<\/title>/i);
-        return t2 && t2[1] ? t2[1].replace(/\s+/g, ' ').trim() : '';
-      })();
-
-      const price = (() => {
-        const m1 = html.match(/(\d[\d,]{2,})\s*원/);
-        if (!m1) return null;
-        const n = Number(String(m1[1]).replace(/,/g, ''));
-        return Number.isFinite(n) ? n : null;
-      })();
-
-      const imageUrl = (() => {
-        const m = html.match(/<meta property=["']og:image["'] content=["']([^"']+)["']/i);
-        if (m && m[1]) return normalizeCandidateImageUrl(m[1]);
-        const m2 = html.match(/<img[^>]+src=["']([^"']+)["']/i);
-        if (m2 && m2[1]) return normalizeCandidateImageUrl(m2[1]);
-        return '';
-      })();
-
-      if (!title || !price) continue;
-      const hay = String(title).toLowerCase().replace(/\s+/g, '');
-      const needle = String(q).trim().toLowerCase().replace(/\s+/g, '');
-      if (needle && !hay.includes(needle)) continue;
-      out.push({ url: u, title, price, imageUrl });
-      if (out.length >= limit) break;
-    } catch (e) {
-      if (String(e?.message || e).includes('rate_limited')) throw e;
-      if (diagnostics.errors.length < 8) diagnostics.errors.push(`item_fetch: ${normalizeErrorMessage(e)}`);
-    }
-
-    await new Promise((r) => setTimeout(r, 80));
-  }
-
-  diagnostics.strategy = out.length ? 'url_fallback' : diagnostics.strategy;
-  diagnostics.collected = out.length;
-  return { items: out, diagnostics };
 }
 
 function strictValidatePreview(preview, banKeywords = DEFAULT_BAN_KEYWORDS) {
@@ -1684,7 +1554,6 @@ async function generateRecommendationsBatch({
   keywords,
   topN = 20,
   excludeUrls = new Set(),
-  seedCandidates = null,
   onProgress = null,
   maxRuntimeMs = 110_000,
   previewTimeoutMs = 9_000,
@@ -1699,91 +1568,91 @@ async function generateRecommendationsBatch({
   const qcSettings = { ...normalizedSettings, ...recommendationQcSettings };
   const thresholds = resolveRecommendationThresholds(normalizedSettings);
   const policy = resolveRecommendationPolicy(normalizedSettings);
-  const providedCandidates = Array.isArray(seedCandidates) ? seedCandidates : [];
   const keywordScanLimit = Math.max(
     1,
     Math.min(
-      providedCandidates.length > 0
-        ? 1
-        : Math.min(
-            seed.length,
-            policy.requireQcPass ? 18 : 10,
-            Math.max(
-              policy.requireQcPass ? 10 : 8,
-              Math.ceil(Number(topN || 20) * (policy.requireQcPass ? 2 : 1.5)),
-            ),
-          ),
+      seed.length,
+      policy.requireQcPass ? 18 : 10,
+      Math.max(
+        policy.requireQcPass ? 10 : 8,
+        Math.ceil(Number(topN || 20) * (policy.requireQcPass ? 2 : 1.5)),
+      ),
       18,
     ),
   );
 
   const candidates = [];
-  if (providedCandidates.length > 0) {
-    let accepted = 0;
-    for (const raw of providedCandidates) {
-      const url = String(raw?.url || raw?.sourceUrl || '').trim();
-      if (!url || excludeUrls.has(url)) continue;
-      const title = String(raw?.title || '').trim();
-      const price = parseCandidatePrice(raw?.price ?? raw?.sourcePrice);
-      if (!title || !Number.isFinite(price) || price <= 0) continue;
-      candidates.push({
-        keyword: String(raw?.keyword || '재사용 후보').trim() || '재사용 후보',
-        url,
-        title: title.slice(0, 80),
-        price,
-        imageUrl: normalizeCandidateImageUrl(raw?.imageUrl || raw?.mainImageUrl || ''),
+  let openApiFailureStreak = 0;
+  let openApiCircuitBreakApplied = false;
+  for (const kw of seed.slice(0, keywordScanLimit)) {
+    if (Date.now() - startedAt > Math.floor(maxRuntimeMs * 0.45)) break;
+    const effectiveSourceMode =
+      candidateSourceMode === 'auto' && openApiCircuitBreakApplied
+        ? 'playwright'
+        : candidateSourceMode;
+    let list = [];
+    try {
+      const result = await fetchFastCandidatesFromList({
+        keyword: kw,
+        limit: policy.requireQcPass ? 80 : 40,
+        storageStatePath: String(normalizedSettings?.domeggookStorageStatePath || ''),
+        sourceMode: effectiveSourceMode,
       });
-      accepted += 1;
-      if (candidates.length >= 1800) break;
-    }
-    keywordDiagnostics.push({
-      keyword: 'seed_candidates',
-      strategy: 'seed_candidates',
-      collected: accepted,
-      errors: [],
-    });
-    if (typeof onProgress === 'function') {
-      try { onProgress({ stage: 'collect_seed', candidates: candidates.length }); } catch {}
-    }
-  } else {
-    for (const kw of seed.slice(0, keywordScanLimit)) {
-      if (Date.now() - startedAt > Math.floor(maxRuntimeMs * 0.45)) break;
-      let list = [];
-      try {
-        const result = await fetchFastCandidatesFromList({
-          keyword: kw,
-          limit: policy.requireQcPass ? 80 : 40,
-          storageStatePath: String(normalizedSettings?.domeggookStorageStatePath || ''),
-          sourceMode: candidateSourceMode,
-        });
-        list = Array.isArray(result?.items) ? result.items : [];
-        if (result?.diagnostics) keywordDiagnostics.push(result.diagnostics);
-      } catch (e) {
-        if (String(e?.message || e).includes('rate_limited')) {
-          if (typeof onProgress === 'function') {
-            try { onProgress({ stage: 'rate_limited', keyword: kw, candidates: candidates.length }); } catch {}
-          }
-          throw e;
-        }
+      list = Array.isArray(result?.items) ? result.items : [];
+      if (result?.diagnostics) {
         keywordDiagnostics.push({
-          keyword: kw,
-          strategy: 'error',
-          collected: 0,
-          errors: [normalizeErrorMessage(e)],
+          ...result.diagnostics,
+          sourceModeUsed: effectiveSourceMode,
         });
-        list = [];
+        if (candidateSourceMode === 'auto' && effectiveSourceMode === 'auto') {
+          const errs = Array.isArray(result?.diagnostics?.errors) ? result.diagnostics.errors : [];
+          const openApiFailed = errs.some((e) => String(e || '').toLowerCase().includes('openapi:'));
+          const openApiCollected = Number(result?.diagnostics?.openapi?.collected || 0);
+          if (openApiFailed && openApiCollected === 0) {
+            openApiFailureStreak += 1;
+            if (openApiFailureStreak >= 2) {
+              openApiCircuitBreakApplied = true;
+              if (typeof onProgress === 'function') {
+                try {
+                  onProgress({
+                    stage: 'source_switch_playwright',
+                    reason: 'openapi_failed_consecutively',
+                    failureStreak: openApiFailureStreak,
+                  });
+                } catch {}
+              }
+            }
+          } else {
+            openApiFailureStreak = 0;
+          }
+        }
       }
+    } catch (e) {
+      if (String(e?.message || e).includes('rate_limited')) {
+        if (typeof onProgress === 'function') {
+          try { onProgress({ stage: 'rate_limited', keyword: kw, candidates: candidates.length }); } catch {}
+        }
+        throw e;
+      }
+      keywordDiagnostics.push({
+        keyword: kw,
+        strategy: 'error',
+        collected: 0,
+        sourceModeUsed: effectiveSourceMode,
+        errors: [normalizeErrorMessage(e)],
+      });
+      list = [];
+    }
 
-      for (const it of list) {
-        if (excludeUrls.has(it.url)) continue;
-        candidates.push({ keyword: kw, ...it });
-        if (candidates.length >= 1800) break;
-      }
-      if (typeof onProgress === 'function') {
-        try { onProgress({ stage: 'collect', keyword: kw, candidates: candidates.length }); } catch {}
-      }
+    for (const it of list) {
+      if (excludeUrls.has(it.url)) continue;
+      candidates.push({ keyword: kw, ...it });
       if (candidates.length >= 1800) break;
     }
+    if (typeof onProgress === 'function') {
+      try { onProgress({ stage: 'collect', keyword: kw, candidates: candidates.length }); } catch {}
+    }
+    if (candidates.length >= 1800) break;
   }
 
   const uniq = [];
@@ -2213,6 +2082,8 @@ async function generateRecommendationsBatch({
 
   const diagnostics = {
     candidateSourceMode,
+    openApiCircuitBreakApplied,
+    openApiFailureStreakFinal: openApiFailureStreak,
     keywordsTried: keywordScanLimit,
     collectedCandidates: candidates.length,
     uniqueCandidates: uniq.length,
@@ -2241,7 +2112,24 @@ async function generateRecommendationsBatch({
     keywordDiagnostics: keywordDiagnostics.slice(0, keywordScanLimit).map((d) => ({
       keyword: d.keyword,
       strategy: d.strategy || 'none',
+      sourceModeUsed: d.sourceModeUsed || candidateSourceMode,
       collected: Number(d.collected || 0),
+      openapi: d.openapi && typeof d.openapi === 'object'
+        ? {
+            tried: Boolean(d.openapi.tried),
+            attempts: Number(d.openapi.attempts || 0),
+            collected: Number(d.openapi.collected || 0),
+            ok: Boolean(d.openapi.ok),
+          }
+        : undefined,
+      playwright: d.playwright && typeof d.playwright === 'object'
+        ? {
+            tried: Boolean(d.playwright.tried),
+            attempts: Number(d.playwright.attempts || 0),
+            collected: Number(d.playwright.collected || 0),
+            ok: Boolean(d.playwright.ok),
+          }
+        : undefined,
       errors: (Array.isArray(d.errors) ? d.errors : []).slice(0, 2),
     })),
     openApiKeyMissing: keywordDiagnostics.some((d) =>
@@ -2337,6 +2225,7 @@ export async function fillRecommendationsForUser({ userId, settings, keywords, t
   }
 
   const fillTopN = Math.min(Math.max(1, need), Math.max(2, Number(maxAddPerRun) || 6));
+  const allowReviewModeRescue = parseBoolean(settings?.recommendationAllowReviewModeRescue, false);
   let batch = await generateRecommendationsBatch({
     settings,
     keywords: [kw],
@@ -2395,6 +2284,7 @@ export async function fillRecommendationsForUser({ userId, settings, keywords, t
 
   const detailTooFewCount = collectDetailTooFewCount(batch?.diagnostics);
   if (
+    allowReviewModeRescue &&
     batch.items.length === 0 &&
     Number(batch?.diagnostics?.qcRejected || 0) > 0 &&
     detailTooFewCount > 0
@@ -2498,11 +2388,6 @@ export async function refreshRecommendationsForUser({
   let rescueReviewModeTried = false;
   let rescueReviewModeApplied = false;
   let rescueDetailTooFewCount = 0;
-  let rescueSeedUrlTried = false;
-  let rescueSeedUrlApplied = false;
-  let rescueSeedUrlScanned = 0;
-  let rescueSeedCandidatesCollected = 0;
-  let rescueSeedUrlErrors = [];
 
   let batch = await generateRecommendationsBatch({
     settings,
@@ -2551,6 +2436,7 @@ export async function refreshRecommendationsForUser({
     }, 0);
   };
   rescueDetailTooFewCount = countDetailTooFewReasons(batch?.diagnostics);
+  const allowReviewModeRescue = parseBoolean(settings?.recommendationAllowReviewModeRescue, false);
   const validatedCount = Number(batch?.diagnostics?.validated || 0);
   const underfilledThreshold = Math.max(2, Math.floor(target * 0.4));
   const severelyUnderfilled = batch.items.length < underfilledThreshold;
@@ -2592,6 +2478,7 @@ export async function refreshRecommendationsForUser({
   // when detail-image shortage dominates QC rejections, switch to review mode
   // so operators can still inspect candidates without repetitive reruns.
   const shouldTryReviewModeRescue =
+    allowReviewModeRescue &&
     batch.items.length < underfilledThreshold &&
     Number(batch?.diagnostics?.qcRejected || 0) > 0 &&
     rescueDetailTooFewCount > 0;
@@ -2626,83 +2513,6 @@ export async function refreshRecommendationsForUser({
     }
   }
 
-  // Underfilled-result rescue #3:
-  // if keyword/list collection is fully blocked, rebuild candidates from known product URLs
-  // (recently seen list) by directly parsing item pages.
-  const noKeywordCandidatesCollected = Array.isArray(batch?.diagnostics?.keywordDiagnostics)
-    && batch.diagnostics.keywordDiagnostics.length > 0
-    && batch.diagnostics.keywordDiagnostics.every((d) => Number(d?.collected || 0) === 0);
-  if (batch.items.length === 0 && noKeywordCandidatesCollected) {
-    rescueSeedUrlTried = true;
-    const uploadedOnlyExclude = new Set(uploadedUrls);
-    const seedUrlPool = Array.from(
-      new Set([...existingUrls, ...recentSeenUrls]),
-    ).filter((url) => {
-      const u = String(url || '').trim();
-      return Boolean(u) && !uploadedOnlyExclude.has(u);
-    });
-
-    if (typeof onProgress === 'function') {
-      try {
-        onProgress({
-          stage: 'rescue_seed_urls_start',
-          poolSize: seedUrlPool.length,
-        });
-      } catch {}
-    }
-
-    if (seedUrlPool.length > 0) {
-      const seedCandidateResult = await buildCandidatesFromSourceUrls({
-        sourceUrls: seedUrlPool,
-        limit: Math.max(60, Math.min(320, target * 16)),
-        timeoutMs: 4_500,
-        concurrency: 4,
-        onProgress,
-      });
-      rescueSeedUrlScanned = Number(seedCandidateResult?.diagnostics?.scanned || 0) || 0;
-      rescueSeedCandidatesCollected = Number(seedCandidateResult?.diagnostics?.collected || 0) || 0;
-      rescueSeedUrlErrors = Array.isArray(seedCandidateResult?.diagnostics?.errors)
-        ? seedCandidateResult.diagnostics.errors.slice(0, 6)
-        : [];
-      const seedCandidates = Array.isArray(seedCandidateResult?.items)
-        ? seedCandidateResult.items
-        : [];
-
-      if (seedCandidates.length > 0) {
-        if (typeof onProgress === 'function') {
-          try {
-            onProgress({
-              stage: 'rescue_seed_urls',
-              scanned: rescueSeedUrlScanned,
-              collected: seedCandidates.length,
-            });
-          } catch {}
-        }
-        const seedRescueSettings = {
-          ...(settings || {}),
-          recommendationRequireQcPass: false,
-          recommendationAllowQuickFallback: true,
-        };
-        const seedBatch = await generateRecommendationsBatch({
-          settings: seedRescueSettings,
-          keywords: seed,
-          topN: target,
-          excludeUrls: uploadedOnlyExclude,
-          seedCandidates,
-          onProgress,
-          candidateSourceMode: 'seed',
-        });
-        if (seedBatch.items.length > batch.items.length) {
-          batch = seedBatch;
-          rescueSeedUrlApplied = true;
-          usedRelaxedExclusion = true;
-          finalExcludedCount = uploadedOnlyExclude.size;
-          activeExcludeUrls = uploadedOnlyExclude;
-        }
-      }
-    }
-  }
-
   await replaceRecommendationsForUser({ userId, items: batch.items });
 
   const diagnostics = {
@@ -2716,11 +2526,6 @@ export async function refreshRecommendationsForUser({
     rescueReviewModeTried,
     rescueReviewModeApplied,
     rescueDetailTooFewCount,
-    rescueSeedUrlTried,
-    rescueSeedUrlApplied,
-    rescueSeedUrlScanned,
-    rescueSeedCandidatesCollected,
-    rescueSeedUrlErrors,
   };
 
   return {
