@@ -84,6 +84,125 @@ class _RecommendationDetailScreenState
         .toList();
   }
 
+  List<String> _httpImageList(dynamic raw) {
+    if (raw is! List) return const [];
+    final out = <String>[];
+    for (final item in raw) {
+      final url = item.toString().trim();
+      if (url.isEmpty) continue;
+      final uri = Uri.tryParse(url);
+      if (uri == null) continue;
+      if (uri.scheme != 'http' && uri.scheme != 'https') continue;
+      out.add(url);
+    }
+    return out;
+  }
+
+  List<String> _uniqueUrls(Iterable<String> urls) {
+    final seen = <String>{};
+    final out = <String>[];
+    for (final raw in urls) {
+      final url = raw.trim();
+      if (url.isEmpty) continue;
+      if (seen.add(url)) out.add(url);
+    }
+    return out;
+  }
+
+  Future<void> _openImageDialog(String imageUrl) async {
+    await showDialog<void>(
+      context: context,
+      barrierColor: Colors.black87,
+      builder: (ctx) => Dialog(
+        backgroundColor: const Color(0xFF0B1220),
+        insetPadding: const EdgeInsets.all(12),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 1100, maxHeight: 920),
+          child: Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 8, 6, 4),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        '원본 이미지 미리보기',
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.onSurface,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      onPressed: () => Navigator.of(ctx).pop(),
+                      icon: const Icon(Icons.close),
+                      tooltip: '닫기',
+                    ),
+                  ],
+                ),
+              ),
+              const Divider(height: 1),
+              Expanded(
+                child: InteractiveViewer(
+                  minScale: 0.5,
+                  maxScale: 6,
+                  child: Container(
+                    width: double.infinity,
+                    alignment: Alignment.center,
+                    color: Colors.black,
+                    child: Image.network(
+                      widget.api.proxyImageUrl(imageUrl),
+                      fit: BoxFit.contain,
+                      errorBuilder: (_, __, ___) => const Padding(
+                        padding: EdgeInsets.all(16),
+                        child: Text('이미지를 불러오지 못했습니다.'),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              const Divider(height: 1),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 8, 12, 10),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        imageUrl,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Theme.of(context)
+                              .colorScheme
+                              .onSurface
+                              .withValues(alpha: 0.75),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    OutlinedButton.icon(
+                      onPressed: () async {
+                        final uri = Uri.tryParse(imageUrl);
+                        if (uri == null) return;
+                        await launchUrl(
+                          uri,
+                          mode: LaunchMode.externalApplication,
+                        );
+                      },
+                      icon: const Icon(Icons.open_in_new, size: 16),
+                      label: const Text('원본 열기'),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Future<void> _loadPreview() async {
     setState(() {
       _loading = true;
@@ -208,6 +327,7 @@ class _RecommendationDetailScreenState
   Widget build(BuildContext context) {
     final p = _preview ?? {};
     final draft = (p['draft'] as Map?)?.cast<String, dynamic>() ?? {};
+    final inspect = (p['preview'] as Map?)?.cast<String, dynamic>() ?? {};
     final computed = (p['computed'] as Map?)?.cast<String, dynamic>() ?? {};
     final qc = _qc ?? const <String, dynamic>{};
     final qcReasons = ((qc['reasons'] as List?) ?? const [])
@@ -228,11 +348,27 @@ class _RecommendationDetailScreenState
     final profit = _seed['profit'];
     final marginRate = _seed['marginRate'];
 
-    final imagesRaw = (computed['images'] as List?) ?? _seedImages();
-    final images = imagesRaw
-        .map((e) => e.toString())
-        .where((s) => s.trim().isNotEmpty)
-        .toList();
+    final filteredDetailImages =
+        _httpImageList(inspect['contentImagesFiltered']);
+    final rawDetailImages = _httpImageList(inspect['contentImagesRaw']);
+    final computedImages = _httpImageList(computed['images']);
+    final seedImages = _seedImages();
+
+    final mainImageCandidate =
+        (draft['imageUrl'] ?? _seed['mainImageUrl'] ?? widget.thumbUrl)
+            .toString()
+            .trim();
+    final leadImage = mainImageCandidate.isNotEmpty
+        ? mainImageCandidate
+        : (computedImages.isNotEmpty ? computedImages.first : '');
+
+    final mergedImages = _uniqueUrls([
+      ...filteredDetailImages,
+      ...rawDetailImages,
+      ...seedImages,
+      ...computedImages,
+    ]);
+    final images = mergedImages.where((u) => u != leadImage).toList();
 
     final detailImageCount = images.isNotEmpty
         ? images.length
@@ -241,10 +377,6 @@ class _RecommendationDetailScreenState
                     widget.detailImageCount)
                 .toString()) ??
             widget.detailImageCount);
-
-    final leadImage = images.isNotEmpty
-        ? images.first
-        : (widget.thumbUrl.trim().isNotEmpty ? widget.thumbUrl : '');
 
     return AppScaffold(
       title: '추천 상세',
@@ -417,6 +549,17 @@ class _RecommendationDetailScreenState
               children: [
                 SectionHeader('이미지 (${images.length})'),
                 const SizedBox(height: 8),
+                Text(
+                  '필터 ${filteredDetailImages.length}장 · 원본 ${rawDetailImages.length}장 (탭해서 원본 보기)',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Theme.of(context)
+                        .colorScheme
+                        .onSurface
+                        .withValues(alpha: 0.7),
+                  ),
+                ),
+                const SizedBox(height: 8),
                 if (images.isEmpty)
                   Text(
                     '이미지 파싱 결과가 비어 있습니다. 원문에서 직접 확인해 주세요.',
@@ -440,13 +583,43 @@ class _RecommendationDetailScreenState
                     itemCount: images.length,
                     itemBuilder: (ctx, i) {
                       final u = images[i];
-                      return ClipRRect(
-                        borderRadius: BorderRadius.circular(10),
-                        child: Image.network(
-                          widget.api.proxyImageUrl(u),
-                          fit: BoxFit.cover,
-                          errorBuilder: (_, __, ___) =>
-                              Container(color: Colors.black12),
+                      return Material(
+                        color: Colors.transparent,
+                        child: InkWell(
+                          borderRadius: BorderRadius.circular(10),
+                          onTap: () => _openImageDialog(u),
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(10),
+                            child: Stack(
+                              fit: StackFit.expand,
+                              children: [
+                                Container(color: Colors.black12),
+                                Image.network(
+                                  widget.api.proxyImageUrl(u),
+                                  fit: BoxFit.contain,
+                                  errorBuilder: (_, __, ___) =>
+                                      Container(color: Colors.black12),
+                                ),
+                                Positioned(
+                                  right: 6,
+                                  bottom: 6,
+                                  child: Container(
+                                    padding: const EdgeInsets.all(4),
+                                    decoration: BoxDecoration(
+                                      color:
+                                          Colors.black.withValues(alpha: 0.5),
+                                      borderRadius: BorderRadius.circular(6),
+                                    ),
+                                    child: const Icon(
+                                      Icons.zoom_in,
+                                      size: 16,
+                                      color: Colors.white,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
                         ),
                       );
                     },
