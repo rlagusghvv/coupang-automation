@@ -409,6 +409,46 @@ async function fetchTextWithTimeout(url, opts = {}) {
   }
 }
 
+async function loadQuickDetailHtmlCandidate(itemUrl, opts = {}) {
+  const timeoutMs = Math.max(1200, Math.min(8000, Number(opts?.timeoutMs) || 3200));
+  const res = await fetchTextWithTimeout(itemUrl, {
+    timeoutMs,
+    headers: {
+      Referer: "https://domeggook.com/",
+      "User-Agent": "Mozilla/5.0",
+    },
+  });
+  if (!res.ok) {
+    return {
+      ok: false,
+      reason: `quick_detail_fetch_failed_${Number(res.status || 0) || 0}`,
+      detailHtml: "",
+      detailImages: [],
+    };
+  }
+
+  const raw = String(res.text || "");
+  const candidates = [];
+  const bufMatch = raw.match(/<textarea[^>]*id=["']contentsBuffer["'][^>]*>([\s\S]*?)<\/textarea>/i);
+  if (bufMatch && bufMatch[1]) candidates.push(String(bufMatch[1]));
+  const bodyOnly = extractBodyHtml(raw);
+  if (bodyOnly) candidates.push(bodyOnly);
+  const mainOnly = extractMainBlock(bodyOnly);
+  if (mainOnly) candidates.push(mainOnly);
+
+  const detailHtml =
+    pickBestOpenApiDetailHtml(candidates, itemUrl) ||
+    sanitizeHtml(mainOnly || bodyOnly || raw, itemUrl);
+  const detailImages = extractImageUrlsFromHtml(detailHtml, itemUrl);
+
+  return {
+    ok: Boolean(detailHtml),
+    reason: "",
+    detailHtml,
+    detailImages,
+  };
+}
+
 async function loadOpenApiItemViewCandidate(itemUrl, opts = {}) {
   const fastMode = Boolean(opts?.fastMode);
   const includeDeli = opts?.includeDeli !== false;
@@ -1281,17 +1321,35 @@ export async function parseProductFromDomaeqq(url, opts = {}) {
       const openApiDetailHtml = stripDomeggookPromoBlocks(
         String(openApiItemView?.detailHtml || "").trim(),
       );
-      const openApiDetailImages = Array.isArray(openApiItemView?.detailImages)
+      const openApiDetailImagesRaw = Array.isArray(openApiItemView?.detailImages)
         ? openApiItemView.detailImages.map((u) => normalizeUrl(u)).filter(Boolean)
         : [];
-      const fastContentHtml = openApiDetailHtml || buildImageHtml(openApiDetailImages.slice(0, 80));
-
-      if (
-        openApiItemView?.ok &&
-        fastTitle &&
+      const quickDetail =
+        !openApiDetailHtml
+          ? await loadQuickDetailHtmlCandidate(url, {
+              timeoutMs: Math.min(4500, previewOpenApiTimeoutMs + 800),
+            })
+          : { ok: false, reason: "openapi_detail_present", detailHtml: "", detailImages: [] };
+      const mergedDetailImages = Array.from(
+        new Set([
+          ...openApiDetailImagesRaw,
+          ...(Array.isArray(quickDetail?.detailImages) ? quickDetail.detailImages : []),
+        ]),
+      );
+      const fastContentHtml =
+        openApiDetailHtml ||
+        String(quickDetail?.detailHtml || "").trim() ||
+        buildImageHtml(mergedDetailImages.slice(0, 80));
+      const hasSeedCore =
+        Boolean(fastTitle) &&
         Number.isFinite(fastPrice) &&
         fastPrice > 0 &&
-        fastImageUrl
+        Boolean(fastImageUrl);
+      const hasUsableDetail = Boolean(fastContentHtml) || mergedDetailImages.length > 0;
+
+      if (
+        hasSeedCore &&
+        (openApiItemView?.ok || Boolean(quickDetail?.ok) || hasUsableDetail)
       ) {
         const draft = makeDraft({
           sourceUrl: String(url || "").trim(),
@@ -1310,7 +1368,9 @@ export async function parseProductFromDomaeqq(url, opts = {}) {
           mode,
           optionStrategy: "preview.openapi_item_view",
           finalOptionsCount: 0,
-          detailSource: "openapi_item_view_fast_path",
+          detailSource: openApiDetailHtml
+            ? "openapi_item_view_fast_path"
+            : (quickDetail?.ok ? "openapi_quick_http_fallback" : "openapi_item_view_fast_path"),
           openApi: {
             attempted: true,
             ok: Boolean(openApiItemView?.ok),
@@ -1318,6 +1378,12 @@ export async function parseProductFromDomaeqq(url, opts = {}) {
             itemNo: String(openApiItemView?.itemNo || ""),
             diagnostics: openApiItemView?.diagnostics || null,
             sourceMode: previewSourceMode,
+            quickDetail: {
+              attempted: !openApiDetailHtml,
+              ok: Boolean(quickDetail?.ok),
+              reason: String(quickDetail?.reason || ""),
+              detailImages: mergedDetailImages.length,
+            },
             seedFallbackUsed: Boolean(
               (!String(openApiItemView?.title || "").trim() && previewSeedTitle) ||
               (!(Number.isFinite(openApiPrice) && openApiPrice > 0) && Number.isFinite(previewSeedPrice)) ||
