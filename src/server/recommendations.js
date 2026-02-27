@@ -272,6 +272,118 @@ export async function fetchDomeggookUrlsByKeyword({ keyword, limit = 40, storage
   }
 }
 
+async function buildCandidatesFromSourceUrls({
+  sourceUrls = [],
+  limit = 80,
+  timeoutMs = 4_500,
+  concurrency = 4,
+  onProgress = null,
+} = {}) {
+  const uniqSourceUrls = Array.from(
+    new Set(
+      (Array.isArray(sourceUrls) ? sourceUrls : [])
+        .map((u) => String(u || '').trim())
+        .filter(Boolean),
+    ),
+  );
+  if (uniqSourceUrls.length === 0) {
+    return {
+      items: [],
+      diagnostics: {
+        strategy: 'seed_url_detail_fetch',
+        scanned: 0,
+        collected: 0,
+        errors: [],
+      },
+    };
+  }
+
+  const target = Math.max(1, Math.min(200, Number(limit) || 80));
+  const queueLimit = Math.min(uniqSourceUrls.length, Math.max(target * 4, target));
+  const queue = uniqSourceUrls.slice(0, queueLimit);
+  const out = [];
+  const seen = new Set();
+  const errors = [];
+  const workerCount = Math.max(1, Math.min(8, Number(concurrency) || 4));
+  const timeout = Math.max(2500, Math.min(12000, Number(timeoutMs) || 4500));
+
+  let cursor = 0;
+  let scanned = 0;
+  const runWorker = async () => {
+    while (true) {
+      if (out.length >= target) break;
+      const idx = cursor;
+      cursor += 1;
+      if (idx >= queue.length) break;
+
+      const url = String(queue[idx] || '').trim();
+      if (!url || seen.has(url)) continue;
+      scanned += 1;
+      try {
+        const controller = new AbortController();
+        const t = setTimeout(() => controller.abort(), timeout);
+        const r = await fetch(url, {
+          signal: controller.signal,
+          headers: {
+            'User-Agent': 'Mozilla/5.0',
+            Referer: 'https://domeggook.com/',
+          },
+        });
+        clearTimeout(t);
+        if (!r.ok) continue;
+
+        const html = await readHtmlWithCharset(r);
+        const title = extractTitleFromHtml(html);
+        const price = parseCandidatePrice(extractPriceFromHtml(html));
+        if (!title || !Number.isFinite(price) || price <= 0) continue;
+
+        const ogImage = extractMetaContent(html, 'og:image');
+        const firstImageMatch = String(html || '').match(/<img[^>]+src=["']([^"']+)["']/i);
+        const imageUrl = normalizeCandidateImageUrl(
+          normalizeImageUrlWithBase(
+            ogImage || (firstImageMatch && firstImageMatch[1] ? firstImageMatch[1] : ''),
+            url,
+          ),
+        );
+
+        seen.add(url);
+        out.push({
+          url,
+          keyword: '재사용 후보',
+          title: String(title).slice(0, 80),
+          price,
+          imageUrl,
+        });
+      } catch (e) {
+        if (errors.length < 12) errors.push(normalizeErrorMessage(e));
+      }
+
+      if (typeof onProgress === 'function' && scanned % 6 === 0) {
+        try {
+          onProgress({
+            stage: 'collect_seed_urls',
+            scanned,
+            candidates: out.length,
+            target,
+          });
+        } catch {}
+      }
+    }
+  };
+
+  await Promise.all(Array.from({ length: workerCount }, () => runWorker()));
+
+  return {
+    items: out.slice(0, target),
+    diagnostics: {
+      strategy: 'seed_url_detail_fetch',
+      scanned: Math.max(scanned, Math.min(cursor, queue.length)),
+      collected: out.length,
+      errors,
+    },
+  };
+}
+
 function containsBanKeyword(text, banList) {
   const t = String(text || '').toLowerCase();
   if (!t) return false;
@@ -1572,6 +1684,7 @@ async function generateRecommendationsBatch({
   keywords,
   topN = 20,
   excludeUrls = new Set(),
+  seedCandidates = null,
   onProgress = null,
   maxRuntimeMs = 110_000,
   previewTimeoutMs = 9_000,
@@ -1586,56 +1699,91 @@ async function generateRecommendationsBatch({
   const qcSettings = { ...normalizedSettings, ...recommendationQcSettings };
   const thresholds = resolveRecommendationThresholds(normalizedSettings);
   const policy = resolveRecommendationPolicy(normalizedSettings);
+  const providedCandidates = Array.isArray(seedCandidates) ? seedCandidates : [];
   const keywordScanLimit = Math.max(
     1,
     Math.min(
-      seed.length,
-      policy.requireQcPass ? 18 : 10,
-      Math.max(
-        policy.requireQcPass ? 10 : 8,
-        Math.ceil(Number(topN || 20) * (policy.requireQcPass ? 2 : 1.5)),
-      ),
+      providedCandidates.length > 0
+        ? 1
+        : Math.min(
+            seed.length,
+            policy.requireQcPass ? 18 : 10,
+            Math.max(
+              policy.requireQcPass ? 10 : 8,
+              Math.ceil(Number(topN || 20) * (policy.requireQcPass ? 2 : 1.5)),
+            ),
+          ),
+      18,
     ),
   );
 
   const candidates = [];
-  for (const kw of seed.slice(0, keywordScanLimit)) {
-    if (Date.now() - startedAt > Math.floor(maxRuntimeMs * 0.45)) break;
-    let list = [];
-    try {
-      const result = await fetchFastCandidatesFromList({
-        keyword: kw,
-        limit: policy.requireQcPass ? 80 : 40,
-        storageStatePath: String(normalizedSettings?.domeggookStorageStatePath || ''),
-        sourceMode: candidateSourceMode,
+  if (providedCandidates.length > 0) {
+    let accepted = 0;
+    for (const raw of providedCandidates) {
+      const url = String(raw?.url || raw?.sourceUrl || '').trim();
+      if (!url || excludeUrls.has(url)) continue;
+      const title = String(raw?.title || '').trim();
+      const price = parseCandidatePrice(raw?.price ?? raw?.sourcePrice);
+      if (!title || !Number.isFinite(price) || price <= 0) continue;
+      candidates.push({
+        keyword: String(raw?.keyword || '재사용 후보').trim() || '재사용 후보',
+        url,
+        title: title.slice(0, 80),
+        price,
+        imageUrl: normalizeCandidateImageUrl(raw?.imageUrl || raw?.mainImageUrl || ''),
       });
-      list = Array.isArray(result?.items) ? result.items : [];
-      if (result?.diagnostics) keywordDiagnostics.push(result.diagnostics);
-    } catch (e) {
-      if (String(e?.message || e).includes('rate_limited')) {
-        if (typeof onProgress === 'function') {
-          try { onProgress({ stage: 'rate_limited', keyword: kw, candidates: candidates.length }); } catch {}
-        }
-        throw e;
-      }
-      keywordDiagnostics.push({
-        keyword: kw,
-        strategy: 'error',
-        collected: 0,
-        errors: [normalizeErrorMessage(e)],
-      });
-      list = [];
-    }
-
-    for (const it of list) {
-      if (excludeUrls.has(it.url)) continue;
-      candidates.push({ keyword: kw, ...it });
+      accepted += 1;
       if (candidates.length >= 1800) break;
     }
+    keywordDiagnostics.push({
+      keyword: 'seed_candidates',
+      strategy: 'seed_candidates',
+      collected: accepted,
+      errors: [],
+    });
     if (typeof onProgress === 'function') {
-      try { onProgress({ stage: 'collect', keyword: kw, candidates: candidates.length }); } catch {}
+      try { onProgress({ stage: 'collect_seed', candidates: candidates.length }); } catch {}
     }
-    if (candidates.length >= 1800) break;
+  } else {
+    for (const kw of seed.slice(0, keywordScanLimit)) {
+      if (Date.now() - startedAt > Math.floor(maxRuntimeMs * 0.45)) break;
+      let list = [];
+      try {
+        const result = await fetchFastCandidatesFromList({
+          keyword: kw,
+          limit: policy.requireQcPass ? 80 : 40,
+          storageStatePath: String(normalizedSettings?.domeggookStorageStatePath || ''),
+          sourceMode: candidateSourceMode,
+        });
+        list = Array.isArray(result?.items) ? result.items : [];
+        if (result?.diagnostics) keywordDiagnostics.push(result.diagnostics);
+      } catch (e) {
+        if (String(e?.message || e).includes('rate_limited')) {
+          if (typeof onProgress === 'function') {
+            try { onProgress({ stage: 'rate_limited', keyword: kw, candidates: candidates.length }); } catch {}
+          }
+          throw e;
+        }
+        keywordDiagnostics.push({
+          keyword: kw,
+          strategy: 'error',
+          collected: 0,
+          errors: [normalizeErrorMessage(e)],
+        });
+        list = [];
+      }
+
+      for (const it of list) {
+        if (excludeUrls.has(it.url)) continue;
+        candidates.push({ keyword: kw, ...it });
+        if (candidates.length >= 1800) break;
+      }
+      if (typeof onProgress === 'function') {
+        try { onProgress({ stage: 'collect', keyword: kw, candidates: candidates.length }); } catch {}
+      }
+      if (candidates.length >= 1800) break;
+    }
   }
 
   const uniq = [];
@@ -2350,6 +2498,11 @@ export async function refreshRecommendationsForUser({
   let rescueReviewModeTried = false;
   let rescueReviewModeApplied = false;
   let rescueDetailTooFewCount = 0;
+  let rescueSeedUrlTried = false;
+  let rescueSeedUrlApplied = false;
+  let rescueSeedUrlScanned = 0;
+  let rescueSeedCandidatesCollected = 0;
+  let rescueSeedUrlErrors = [];
 
   let batch = await generateRecommendationsBatch({
     settings,
@@ -2473,6 +2626,83 @@ export async function refreshRecommendationsForUser({
     }
   }
 
+  // Underfilled-result rescue #3:
+  // if keyword/list collection is fully blocked, rebuild candidates from known product URLs
+  // (recently seen list) by directly parsing item pages.
+  const noKeywordCandidatesCollected = Array.isArray(batch?.diagnostics?.keywordDiagnostics)
+    && batch.diagnostics.keywordDiagnostics.length > 0
+    && batch.diagnostics.keywordDiagnostics.every((d) => Number(d?.collected || 0) === 0);
+  if (batch.items.length === 0 && noKeywordCandidatesCollected) {
+    rescueSeedUrlTried = true;
+    const uploadedOnlyExclude = new Set(uploadedUrls);
+    const seedUrlPool = Array.from(
+      new Set([...existingUrls, ...recentSeenUrls]),
+    ).filter((url) => {
+      const u = String(url || '').trim();
+      return Boolean(u) && !uploadedOnlyExclude.has(u);
+    });
+
+    if (typeof onProgress === 'function') {
+      try {
+        onProgress({
+          stage: 'rescue_seed_urls_start',
+          poolSize: seedUrlPool.length,
+        });
+      } catch {}
+    }
+
+    if (seedUrlPool.length > 0) {
+      const seedCandidateResult = await buildCandidatesFromSourceUrls({
+        sourceUrls: seedUrlPool,
+        limit: Math.max(60, Math.min(320, target * 16)),
+        timeoutMs: 4_500,
+        concurrency: 4,
+        onProgress,
+      });
+      rescueSeedUrlScanned = Number(seedCandidateResult?.diagnostics?.scanned || 0) || 0;
+      rescueSeedCandidatesCollected = Number(seedCandidateResult?.diagnostics?.collected || 0) || 0;
+      rescueSeedUrlErrors = Array.isArray(seedCandidateResult?.diagnostics?.errors)
+        ? seedCandidateResult.diagnostics.errors.slice(0, 6)
+        : [];
+      const seedCandidates = Array.isArray(seedCandidateResult?.items)
+        ? seedCandidateResult.items
+        : [];
+
+      if (seedCandidates.length > 0) {
+        if (typeof onProgress === 'function') {
+          try {
+            onProgress({
+              stage: 'rescue_seed_urls',
+              scanned: rescueSeedUrlScanned,
+              collected: seedCandidates.length,
+            });
+          } catch {}
+        }
+        const seedRescueSettings = {
+          ...(settings || {}),
+          recommendationRequireQcPass: false,
+          recommendationAllowQuickFallback: true,
+        };
+        const seedBatch = await generateRecommendationsBatch({
+          settings: seedRescueSettings,
+          keywords: seed,
+          topN: target,
+          excludeUrls: uploadedOnlyExclude,
+          seedCandidates,
+          onProgress,
+          candidateSourceMode: 'seed',
+        });
+        if (seedBatch.items.length > batch.items.length) {
+          batch = seedBatch;
+          rescueSeedUrlApplied = true;
+          usedRelaxedExclusion = true;
+          finalExcludedCount = uploadedOnlyExclude.size;
+          activeExcludeUrls = uploadedOnlyExclude;
+        }
+      }
+    }
+  }
+
   await replaceRecommendationsForUser({ userId, items: batch.items });
 
   const diagnostics = {
@@ -2486,6 +2716,11 @@ export async function refreshRecommendationsForUser({
     rescueReviewModeTried,
     rescueReviewModeApplied,
     rescueDetailTooFewCount,
+    rescueSeedUrlTried,
+    rescueSeedUrlApplied,
+    rescueSeedUrlScanned,
+    rescueSeedCandidatesCollected,
+    rescueSeedUrlErrors,
   };
 
   return {
