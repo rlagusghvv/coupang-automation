@@ -171,6 +171,213 @@ function normalizeUrl(u) {
   return s;
 }
 
+function extractDomeggookItemNo(rawUrl) {
+  try {
+    const u = new URL(String(rawUrl || ""));
+    const pathNo = String(u.pathname || "").match(/\/(\d{6,})(?:\/|$)/);
+    if (pathNo && pathNo[1]) return pathNo[1];
+    const qNo = String(u.searchParams.get("no") || "").trim();
+    if (/^\d{6,}$/.test(qNo)) return qNo;
+  } catch {}
+  return "";
+}
+
+function toAbsoluteUrl(raw, baseUrl) {
+  const v = String(raw || "").trim();
+  if (!v) return "";
+  if (v.startsWith("//")) return `https:${v}`;
+  if (/^https?:\/\//i.test(v)) return v;
+  try {
+    return new URL(v, baseUrl).toString();
+  } catch {
+    return "";
+  }
+}
+
+function parsePriceNumber(value) {
+  if (Number.isFinite(Number(value))) return Number(value);
+  const text = String(value || "");
+  if (!text) return null;
+  const nums = text.match(/(\d[\d,]{1,})/g) || [];
+  const parsed = nums
+    .map((x) => Number(String(x).replace(/,/g, "")))
+    .filter((n) => Number.isFinite(n) && n > 0);
+  if (parsed.length === 0) return null;
+  return Math.min(...parsed);
+}
+
+function collectOpenApiSignals(node, state, parentKey = "", baseUrl = "") {
+  const key = String(parentKey || "").toLowerCase();
+  if (node == null) return;
+
+  if (typeof node === "string") {
+    const raw = String(node).trim();
+    if (!raw) return;
+    const text = decodeHtmlEntities(raw);
+    const looksHtml = /<[^>]+>/.test(text);
+    const detailKey = /(detail|contents?|desc|explain|html|editor)/i.test(key);
+    const titleKey = /(title|name)/i.test(key);
+    const imageKey = /(img|image|thumb|thumbnail|photo)/i.test(key);
+    const priceKey = /(price|amount|cost|sell|sale|supply)/i.test(key) && !/(delivery|ship|fee)/i.test(key);
+
+    if ((detailKey || (looksHtml && text.length >= 120)) && /<img|<div|<p|<table|<br/i.test(text)) {
+      state.detailHtmlCandidates.push(text);
+    }
+    if (titleKey && !looksHtml && text.length >= 2 && text.length <= 140) {
+      state.titles.push(text);
+    }
+    if (priceKey) {
+      const n = parsePriceNumber(text);
+      if (Number.isFinite(n) && n > 0) state.prices.push(n);
+    }
+
+    const abs = toAbsoluteUrl(text, baseUrl);
+    if (abs) {
+      const lower = abs.toLowerCase();
+      const looksImage =
+        /\.(?:jpe?g|png|gif|webp|bmp)(?:$|\?)/i.test(lower) ||
+        /\/upload\/|\/image\/|\/img\//i.test(lower);
+      const looksDetailLink = /(detail|contents?|editor|desc)/i.test(key) && !looksImage;
+      if (looksImage || imageKey) state.images.push(abs);
+      if (looksDetailLink) state.detailLinks.push(abs);
+    }
+    return;
+  }
+
+  if (typeof node === "number") {
+    const priceKey = /(price|amount|cost|sell|sale|supply)/i.test(key) && !/(delivery|ship|fee)/i.test(key);
+    if (priceKey && Number.isFinite(node) && node > 0) state.prices.push(Number(node));
+    return;
+  }
+
+  if (Array.isArray(node)) {
+    for (const item of node) collectOpenApiSignals(item, state, parentKey, baseUrl);
+    return;
+  }
+
+  if (typeof node === "object") {
+    for (const [k, v] of Object.entries(node)) {
+      collectOpenApiSignals(v, state, k, baseUrl);
+    }
+  }
+}
+
+function pickBestOpenApiDetailHtml(candidates, baseUrl) {
+  const uniq = Array.from(new Set((candidates || []).map((s) => String(s || "").trim()).filter(Boolean)));
+  if (uniq.length === 0) return "";
+  const scored = uniq
+    .map((html) => {
+      const sanitized = sanitizeHtml(html, baseUrl);
+      const score = scoreDetailHtmlCandidate(sanitized, baseUrl);
+      return { html: sanitized, score };
+    })
+    .sort((a, b) => {
+      if (b.score.usableCount !== a.score.usableCount) return b.score.usableCount - a.score.usableCount;
+      if (a.score.garbageCount !== b.score.garbageCount) return a.score.garbageCount - b.score.garbageCount;
+      return b.score.score - a.score.score;
+    });
+  const best = scored[0];
+  if (!best || best.score.totalCount === 0) return "";
+  return best.html;
+}
+
+function pickBestOpenApiImage(images, baseUrl) {
+  const uniq = Array.from(new Set((images || []).map((u) => toAbsoluteUrl(u, baseUrl)).filter(Boolean)));
+  if (uniq.length === 0) return "";
+  const ranked = uniq
+    .map((url) => {
+      const cls = classifyDetailImageUrl(url);
+      const path = String(url).toLowerCase();
+      let score = 0;
+      if (cls.usable) score += 8;
+      if (cls.esmplus) score += 2;
+      if (/\/upload\/item\//i.test(path)) score += 5;
+      if (/\/upload\/editor\//i.test(path) || /\/contents?\//i.test(path)) score += 4;
+      if (cls.thumb) score -= 8;
+      if (cls.garbage) score -= 4;
+      return { url, score };
+    })
+    .sort((a, b) => b.score - a.score);
+  return ranked[0]?.url || "";
+}
+
+async function fetchDetailHtmlFromLinks(links, baseUrl) {
+  const out = [];
+  const uniq = Array.from(new Set((links || []).map((u) => toAbsoluteUrl(u, baseUrl)).filter(Boolean)));
+  for (const link of uniq.slice(0, 2)) {
+    try {
+      const res = await fetch(link, {
+        headers: {
+          Referer: baseUrl,
+          "User-Agent": "Mozilla/5.0",
+        },
+      });
+      if (!res.ok) continue;
+      const html = await res.text();
+      if (String(html || "").length >= 120) out.push(html);
+    } catch {}
+  }
+  return out;
+}
+
+async function loadOpenApiItemViewCandidate(itemUrl) {
+  const itemNo = extractDomeggookItemNo(itemUrl);
+  if (!itemNo) return { ok: false, reason: "openapi_item_no_missing", itemNo: "" };
+
+  try {
+    const { domeggookOpenApiGetItemView } = await import("../../utils/domeggook_openapi.js");
+    const view = await domeggookOpenApiGetItemView({
+      itemNo,
+      ver: "4.5",
+      om: "json",
+    });
+    const raw = view?.raw;
+    if (!raw || typeof raw !== "object") {
+      return { ok: false, reason: "openapi_empty_response", itemNo };
+    }
+
+    const state = {
+      detailHtmlCandidates: [],
+      detailLinks: [],
+      images: [],
+      titles: [],
+      prices: [],
+    };
+    collectOpenApiSignals(raw, state, "", itemUrl);
+
+    const linkHtml = await fetchDetailHtmlFromLinks(state.detailLinks, itemUrl);
+    const detailHtml = pickBestOpenApiDetailHtml(
+      [...state.detailHtmlCandidates, ...linkHtml],
+      itemUrl,
+    );
+    const imageUrl = pickBestOpenApiImage(state.images, itemUrl);
+    const price = (() => {
+      const nums = state.prices.filter((n) => Number.isFinite(n) && n > 0);
+      if (nums.length === 0) return null;
+      return Math.min(...nums);
+    })();
+    const title = state.titles.find((t) => t && !/<[^>]+>/.test(String(t)));
+
+    return {
+      ok: Boolean(detailHtml || imageUrl || price || title),
+      reason: "",
+      itemNo,
+      detailHtml,
+      imageUrl,
+      price,
+      title: String(title || "").trim(),
+      diagnostics: {
+        detailHtmlCandidates: state.detailHtmlCandidates.length + linkHtml.length,
+        imageCandidates: state.images.length,
+        priceCandidates: state.prices.length,
+      },
+    };
+  } catch (e) {
+    const reason = String(e?.message || e || "openapi_error");
+    return { ok: false, reason, itemNo };
+  }
+}
+
 const OPTION_TEXT_IGNORE = [
   // Global/nav/menu junk (user reports)
   "로그인",
@@ -922,6 +1129,10 @@ export async function parseProductFromDomaeqq(url) {
     // short link(예: domeggook.com/SeznkY)인 경우 실제 상품 URL로 리다이렉트됨
     // 옵션 팝업/리퍼러/상품번호 추출은 최종 URL을 기준으로 해야 정확함
     const refererUrl = page.url();
+    const openApiItemView =
+      !is1688
+        ? await loadOpenApiItemViewCandidate(refererUrl || url)
+        : { ok: false, reason: "not_domeggook_item_view" };
 
     // Best-effort: open option layer if the page hides options behind a button/layer.
     if (!is1688) {
@@ -1090,6 +1301,7 @@ export async function parseProductFromDomaeqq(url) {
       (Number.isFinite(Number(qtyPriceForOne)) ? Number(qtyPriceForOne) : null) ||
       (Number.isFinite(Number(qtyPriceMinQty)) ? Number(qtyPriceMinQty) : null) ||
       (Number.isFinite(Number(priceFromPriceText)) ? Number(priceFromPriceText) : null) ||
+      (Number.isFinite(Number(openApiItemView?.price)) ? Number(openApiItemView.price) : null) ||
       pickPriceFromText(bodyText) ||
       9900;
 
@@ -1141,6 +1353,11 @@ export async function parseProductFromDomaeqq(url) {
           .filter((src) => !/logo|icon|menu|sprite/i.test(src));
         return imgs[0] || null;
       });
+    }
+    let imageFromOpenApi = false;
+    if (!imageUrl && openApiItemView?.imageUrl) {
+      imageUrl = normalizeUrl(openApiItemView.imageUrl);
+      imageFromOpenApi = Boolean(imageUrl);
     }
 
     // ✅ 상세 HTML 추출(스크립트/스타일 제거 + img src 정리 + 업그레이드)
@@ -1218,8 +1435,9 @@ export async function parseProductFromDomaeqq(url) {
     let finalContentHtml = sanitizeHtml(contentHtml, url) || contentHtml || "";
     let finalContentBaseUrl = url;
     let finalContentScore = scoreDetailHtmlCandidate(finalContentHtml, finalContentBaseUrl);
+    let finalContentSource = finalContentHtml ? "page_dom" : "empty";
 
-    const adoptDetailCandidate = (candidateHtml, candidateBaseUrl) => {
+    const adoptDetailCandidate = (candidateHtml, candidateBaseUrl, source = "candidate") => {
       const sanitized = sanitizeHtml(candidateHtml, candidateBaseUrl) || "";
       if (!sanitized) return;
       const score = scoreDetailHtmlCandidate(sanitized, candidateBaseUrl || url);
@@ -1227,8 +1445,14 @@ export async function parseProductFromDomaeqq(url) {
         finalContentHtml = sanitized;
         finalContentBaseUrl = candidateBaseUrl || url;
         finalContentScore = score;
+        finalContentSource = source;
       }
     };
+
+    // API-first: try OpenAPI item view detail before HTML scraping fallbacks.
+    if (openApiItemView?.detailHtml) {
+      adoptDetailCandidate(openApiItemView.detailHtml, refererUrl || url, "openapi_item_view");
+    }
 
     if (detailHtmlUrl) {
       try {
@@ -1245,9 +1469,9 @@ export async function parseProductFromDomaeqq(url) {
           const imgList = extractImageUrlsFromHtml(bodyOnly, detailHtmlUrl);
           const imgHtml = buildImageHtml(imgList);
           if (imgList.length >= 2) {
-            adoptDetailCandidate(imgHtml, detailHtmlUrl);
+            adoptDetailCandidate(imgHtml, detailHtmlUrl, "esmplus_iframe_images");
           } else {
-            adoptDetailCandidate(mainOnly, detailHtmlUrl);
+            adoptDetailCandidate(mainOnly, detailHtmlUrl, "esmplus_iframe_html");
           }
         }
       } catch {
@@ -1269,7 +1493,7 @@ export async function parseProductFromDomaeqq(url) {
         const m = String(raw).match(/<textarea[^>]*id=["']contentsBuffer["'][^>]*>([\s\S]*?)<\/textarea>/i);
         const bufHtml = m && m[1] ? String(m[1]).trim() : "";
         if (bufHtml.length > 200) {
-          adoptDetailCandidate(bufHtml, url);
+          adoptDetailCandidate(bufHtml, url, "raw_contents_buffer");
         }
       }
     } catch {}
@@ -1483,7 +1707,10 @@ export async function parseProductFromDomaeqq(url) {
 
     const draft = makeDraft({
       sourceUrl: url,
-      title: titleText || (await page.title().catch(() => "도매꾹 상품")),
+      title:
+        titleText ||
+        String(openApiItemView?.title || "").trim() ||
+        (await page.title().catch(() => "도매꾹 상품")),
       price,
       imageUrl: imageUrl || "https://via.placeholder.com/1000",
       contentText: finalContentHtml || titleText || "",
@@ -1509,6 +1736,16 @@ export async function parseProductFromDomaeqq(url) {
         picked: price,
         raw: priceRaw,
         qtyTiers: Array.isArray(qtyPriceTiers) ? qtyPriceTiers.slice(0, 10) : [],
+      },
+      detailSource: finalContentSource,
+      openApi: {
+        attempted: !is1688,
+        ok: Boolean(openApiItemView?.ok),
+        reason: String(openApiItemView?.reason || ""),
+        itemNo: String(openApiItemView?.itemNo || ""),
+        diagnostics: openApiItemView?.diagnostics || null,
+        usedDetail: finalContentSource === "openapi_item_view",
+        usedImage: imageFromOpenApi,
       },
     };
 
