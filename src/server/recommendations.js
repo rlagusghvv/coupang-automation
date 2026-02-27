@@ -212,6 +212,7 @@ export async function fetchDomeggookUrlsByKeyword({ keyword, limit = 40, storage
   };
 
   const want = Math.max(1, Math.min(4, Number(maxPages) || 1));
+  let bestFromFetch = [];
 
   // 1) Try plain fetch across pages (best-effort; may be limited by bot mitigation)
   try {
@@ -234,6 +235,9 @@ export async function fetchDomeggookUrlsByKeyword({ keyword, limit = 40, storage
         if (!all.includes(u)) all.push(u);
         if (all.length >= limit) break;
       }
+    }
+    if (all.length > 0) {
+      bestFromFetch = all.slice(0, limit);
     }
     if (all.length >= Math.min(10, limit)) return all.slice(0, limit);
   } catch {}
@@ -262,9 +266,9 @@ export async function fetchDomeggookUrlsByKeyword({ keyword, limit = 40, storage
     }
 
     await browser.close();
-    return all.slice(0, limit);
+    return (all.length > 0 ? all : bestFromFetch).slice(0, limit);
   } catch {
-    return [];
+    return bestFromFetch.slice(0, limit);
   }
 }
 
