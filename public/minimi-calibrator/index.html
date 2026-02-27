@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Minimi Calibrator (App Sync)</title>
+  <style>
+    body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0f172a;color:#e5e7eb;margin:0;padding:16px}
+    .wrap{max-width:1080px;margin:0 auto;display:grid;grid-template-columns:420px 1fr;gap:16px}
+    .card{background:#111827;border:1px solid #263041;border-radius:12px;padding:12px}
+    .preview-shell{display:flex;justify-content:center;align-items:center;min-height:280px;background:#1e293b;border-radius:10px;position:relative}
+    .preview{width:184px;height:184px;background:rgba(15,23,42,.5);border:1px dashed #334155;border-radius:8px;position:relative;overflow:visible;touch-action:none}
+    .layer{position:absolute;left:0;top:0;width:184px;height:184px;transform-origin:92px 92px;user-select:none;pointer-events:none}
+    .row{display:grid;grid-template-columns:120px 1fr 60px;gap:8px;align-items:center;margin:8px 0}
+    input[type=range]{width:100%}
+    select,button{background:#0b1220;border:1px solid #334155;color:#e5e7eb;padding:8px;border-radius:8px}
+    .small{font-size:12px;color:#9ca3af}
+    textarea{width:100%;height:120px;background:#0b1220;color:#d1d5db;border:1px solid #334155;border-radius:8px;padding:8px}
+    .pill{font-size:11px;padding:2px 8px;border:1px solid #334155;border-radius:999px;color:#93c5fd}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <h3 style="margin-top:0">미니미 캘리브레이터 (앱 동기화)</h3>
+      <div class="preview-shell">
+        <div class="preview" id="preview"></div>
+      </div>
+      <p class="small">lib/main.dart의 _buildMinimiRenderLayers/_minimiOffsetFor 계산식과 동일하게 렌더링합니다.</p>
+      <div class="pill">Canvas 184×184 · base/top/hair/acc z-order 동기화</div>
+    </div>
+    <div class="card">
+      <div class="row"><label>Hair</label><select id="hairSel"></select><span></span></div>
+      <div class="row"><label>Top</label><select id="topSel"></select><span></span></div>
+      <div class="row"><label>Acc</label><select id="accSel"></select><span></span></div>
+
+      <div class="row"><label>hairY</label><input id="hairY" type="range" min="-120" max="120" step="1"><span id="hairYv"></span></div>
+      <div class="row"><label>topY</label><input id="topY" type="range" min="-120" max="120" step="1"><span id="topYv"></span></div>
+      <div class="row"><label>topScale</label><input id="topScale" type="range" min="0.70" max="1.40" step="0.01"><span id="topScalev"></span></div>
+      <div class="row"><label>accessoryY</label><input id="accessoryY" type="range" min="-120" max="120" step="1"><span id="accessoryYv"></span></div>
+
+      <div style="display:flex;gap:8px;margin-top:8px">
+        <button id="resetBtn">기본값</button>
+        <button id="copyBtn">Copy JSON</button>
+      </div>
+      <textarea id="jsonOut" readonly></textarea>
+    </div>
+  </div>
+
+  <script>
+    const ASSET_ROOT='./assets/minimi/normalized/';
+    const CANVAS=184;
+
+    const IDS={
+      hair:['hair_basic_black','hair_brown_wave','hair_pink_bob','hair_blue_short','hair_blonde'],
+      top:['top_green_hoodie','top_blue_jersey','top_orange_knit','top_purple_zipup','top_white_shirt'],
+      acc:['acc_none','acc_cap','acc_glass','acc_headphone','acc_star_pin']
+    };
+
+    const ANCHOR_MARKER_BY_ID={
+      base_body:[256,256],
+      hair_basic_black:[256,170],hair_brown_wave:[256,170],hair_pink_bob:[256,170],hair_blue_short:[256,170],hair_blonde:[256,170],
+      top_green_hoodie:[256,258],top_blue_jersey:[256,258],top_orange_knit:[256,258],top_purple_zipup:[256,258],top_white_shirt:[256,258],
+      acc_cap:[256,168],acc_headphone:[256,174],acc_glass:[256,206],acc_star_pin:[228,305]
+    };
+    const BASE_TARGET_BY_CATEGORY={hair:[256,170],top:[256,258],accessory:[256,206]};
+    const ITEM_SCALE_BY_ID={
+      base_body:1,
+      hair_basic_black:1.04,hair_brown_wave:1.05,hair_pink_bob:1.04,hair_blue_short:1.04,hair_blonde:1.05,
+      top_green_hoodie:1.03,top_blue_jersey:1.03,top_orange_knit:1.02,top_purple_zipup:1.03,top_white_shirt:1.03,
+      acc_cap:1.02,acc_headphone:1.01,acc_glass:1.0,acc_star_pin:0.96
+    };
+    const FINE_TUNE_BY_ID={acc_glass:[0,-1.5],acc_star_pin:[2,0.5]};
+    const LAYER_Z={
+      base_body:1,
+      top_green_hoodie:2,top_blue_jersey:2,top_orange_knit:2,top_purple_zipup:2,top_white_shirt:2,
+      hair_basic_black:3,hair_brown_wave:3,hair_pink_bob:3,hair_blue_short:3,hair_blonde:3,
+      acc_cap:4,acc_headphone:4,acc_glass:5,acc_star_pin:5
+    };
+
+    const state={
+      hairId: IDS.hair[0], topId: IDS.top[0], accId: 'acc_none',
+      hairY:-80, topY:-66, topScale:1.15, accessoryY:-80,
+      drag:null
+    };
+
+    const preview=document.getElementById('preview');
+    const layers={};
+    function mkLayer(id){const im=document.createElement('img');im.className='layer';im.dataset.id=id;preview.appendChild(im);return im;}
+    layers.base=mkLayer('base_body'); layers.top=mkLayer('top'); layers.hair=mkLayer('hair'); layers.acc=mkLayer('acc');
+
+    function clamp(n,min,max){return Math.max(min,Math.min(max,n));}
+    function calibrationYFor(category){
+      if(category==='hair') return state.hairY;
+      if(category==='top') return state.topY;
+      return state.accessoryY;
+    }
+    function minimiOffsetFor(category,itemId){
+      const baseTarget=BASE_TARGET_BY_CATEGORY[category]||[256,256];
+      const marker=ANCHOR_MARKER_BY_ID[itemId]||[256,256];
+      const tune=FINE_TUNE_BY_ID[itemId]||[0,0];
+      return {
+        x:(baseTarget[0]-marker[0])+tune[0],
+        y:(baseTarget[1]-marker[1])+tune[1]+calibrationYFor(category)
+      };
+    }
+
+    function buildLayers(){
+      const selected=[
+        {category:null,id:'base_body',el:layers.base},
+        {category:'top',id:state.topId,el:layers.top},
+        {category:'hair',id:state.hairId,el:layers.hair},
+      ];
+      if(state.accId!=='acc_none') selected.push({category:'accessory',id:state.accId,el:layers.acc});
+
+      return selected.map(it=>{
+        const baseScale=ITEM_SCALE_BY_ID[it.id]??1;
+        const scale=it.category==='top' ? baseScale*state.topScale : baseScale;
+        const offset=it.category?minimiOffsetFor(it.category,it.id):{x:0,y:0};
+        return { ...it, z:LAYER_Z[it.id]??99, scale, offset };
+      }).sort((a,b)=>a.z-b.z);
+    }
+
+    function applyLayer(node, layer){
+      node.src=ASSET_ROOT+layer.id+'.png';
+      node.style.display='block';
+      node.style.zIndex=String(layer.z);
+      node.style.transform=`translate(${layer.offset.x}px, ${layer.offset.y}px) scale(${layer.scale})`;
+    }
+
+    function render(){
+      state.hairY=clamp(state.hairY,-120,120);
+      state.topY=clamp(state.topY,-120,120);
+      state.topScale=clamp(state.topScale,0.70,1.40);
+      state.accessoryY=clamp(state.accessoryY,-120,120);
+
+      const ls=buildLayers();
+      const byId={}; ls.forEach(l=>byId[l.id]=l);
+
+      applyLayer(layers.base, byId.base_body);
+      applyLayer(layers.top, ls.find(x=>x.el===layers.top));
+      applyLayer(layers.hair, ls.find(x=>x.el===layers.hair));
+      if(state.accId==='acc_none') layers.acc.style.display='none';
+      else applyLayer(layers.acc, ls.find(x=>x.el===layers.acc));
+
+      for(const k of ['hairY','topY','topScale','accessoryY']){
+        document.getElementById(k+'v').textContent=Number(state[k]).toFixed(k==='topScale'?2:0);
+        document.getElementById(k).value=state[k];
+      }
+      const out={hairY:state.hairY,topY:state.topY,topScale:state.topScale,accessoryY:state.accessoryY};
+      document.getElementById('jsonOut').value=JSON.stringify(out,null,2);
+    }
+
+    function bindRange(id){document.getElementById(id).addEventListener('input',e=>{state[id]=parseFloat(e.target.value);render();});}
+    ['hairY','topY','topScale','accessoryY'].forEach(bindRange);
+
+    function fillSel(id, arr, currentKey){
+      const s=document.getElementById(id); s.innerHTML='';
+      arr.forEach(v=>{const o=document.createElement('option');o.value=v;o.textContent=v;s.appendChild(o);});
+      s.value=state[currentKey];
+      s.onchange=()=>{state[currentKey]=s.value;render();};
+    }
+    fillSel('hairSel',IDS.hair,'hairId');
+    fillSel('topSel',IDS.top,'topId');
+    fillSel('accSel',IDS.acc,'accId');
+
+    document.getElementById('resetBtn').onclick=()=>{
+      Object.assign(state,{hairY:-80,topY:-66,topScale:1.15,accessoryY:-80});
+      render();
+    };
+    document.getElementById('copyBtn').onclick=async()=>{await navigator.clipboard.writeText(document.getElementById('jsonOut').value);};
+
+    let activeLayer='hair';
+    document.getElementById('hairSel').addEventListener('focus',()=>activeLayer='hair');
+    document.getElementById('topSel').addEventListener('focus',()=>activeLayer='top');
+    document.getElementById('accSel').addEventListener('focus',()=>activeLayer='accessory');
+
+    preview.addEventListener('pointerdown',e=>{preview.setPointerCapture(e.pointerId);state.drag={y:e.clientY,layer:activeLayer};});
+    preview.addEventListener('pointermove',e=>{
+      if(!state.drag) return;
+      const dy=e.clientY-state.drag.y;
+      if(state.drag.layer==='hair') state.hairY += dy;
+      if(state.drag.layer==='top') state.topY += dy;
+      if(state.drag.layer==='accessory') state.accessoryY += dy;
+      state.drag.y=e.clientY;
+      render();
+    });
+    preview.addEventListener('pointerup',()=>state.drag=null);
+    preview.addEventListener('pointercancel',()=>state.drag=null);
+
+    render();
+  </script>
+</body>
+</html>
