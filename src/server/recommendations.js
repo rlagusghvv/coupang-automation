@@ -2352,7 +2352,8 @@ export async function refreshRecommendationsForUser({
     const reviewModeSettings = {
       ...(settings || {}),
       recommendationRequireQcPass: false,
-      recommendationAllowQuickFallback: false,
+      // Review rescue is intentionally quality-relaxed to prevent repeated near-empty fills.
+      recommendationAllowQuickFallback: true,
     };
     const reviewBatch = await generateRecommendationsBatch({
       settings: reviewModeSettings,
@@ -2360,7 +2361,7 @@ export async function refreshRecommendationsForUser({
       topN: target,
       excludeUrls: activeExcludeUrls,
       onProgress,
-      candidateSourceMode: 'auto',
+      candidateSourceMode: 'playwright',
     });
     if (reviewBatch.items.length > batch.items.length) {
       batch = reviewBatch;
