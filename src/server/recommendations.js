@@ -815,6 +815,9 @@ function detectRecommendationHint(keywordDiagnostics = []) {
   if (flatErrors.some((e) => e.includes('fetch failed') || e.includes('etimedout') || e.includes('econnreset'))) {
     return '도매꾹 네트워크 연결 또는 차단 이슈로 후보 수집에 실패했습니다.';
   }
+  if (flatErrors.some((e) => e.includes('domeggook_openapi_getitemlist_failed'))) {
+    return '도매꾹 OpenAPI 응답 오류로 후보 수집에 실패했습니다. 잠시 후 다시 시도하세요.';
+  }
   if (rows.length > 0 && rows.every((r) => Number(r?.collected || 0) === 0)) {
     return '키워드 결과가 없거나 수집이 차단되어 추천 후보를 만들지 못했습니다.';
   }
@@ -2121,11 +2124,16 @@ async function generateRecommendationsBatch({
         .sort((a, b) => Number(b?.[1] || 0) - Number(a?.[1] || 0))[0];
       if (topReject && Number(topReject[1] || 0) > 0) {
         diagnostics.hint = `추천 점수 필터에서 모두 제외되었습니다 (${topReject[0]} ${topReject[1]}건).`;
+      } else {
+        diagnostics.hint = detectRecommendationHint(keywordDiagnostics);
       }
     } else if (diagnostics.openApiKeyMissing && !diagnostics.hasDomeggookSessionPath) {
       diagnostics.hint = '도매꾹 OpenAPI 키가 없고 세션 파일 경로도 비어 있어 후보 수집을 시작하지 못했습니다.';
     } else {
       diagnostics.hint = detectRecommendationHint(keywordDiagnostics);
+    }
+    if (!diagnostics.hint) {
+      diagnostics.hint = '후보 수집 단계에서 유효한 상품을 찾지 못했습니다. 잠시 후 다시 시도하세요.';
     }
   }
 

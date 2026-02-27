@@ -1064,7 +1064,16 @@ function formatRecoDiagnosticsHint(diagnostics) {
     .map((e) => String(e || "").trim())
     .find(Boolean);
 
-  if (firstError) return `후보 수집 오류: ${firstError}`;
+  if (firstError) {
+    const lower = firstError.toLowerCase();
+    if (lower.includes("domeggook_openapi_getitemlist_failed")) {
+      return "도매꾹 OpenAPI 응답 오류로 후보 수집이 불안정합니다. 잠시 후 다시 시도하세요.";
+    }
+    if (lower.includes("domeggook_openapi_key_missing")) {
+      return "도매꾹 OpenAPI 키가 없어 후보 수집을 시작하지 못했습니다.";
+    }
+    return `후보 수집 오류: ${firstError}`;
+  }
   if (Number(diagnostics.collectedCandidates || 0) === 0) {
     return "후보가 0개입니다. 키워드/네트워크 상태를 확인하세요.";
   }
