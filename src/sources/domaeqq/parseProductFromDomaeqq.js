@@ -360,6 +360,26 @@ async function fetchDetailHtmlFromLinks(links, baseUrl, opts = {}) {
   return out;
 }
 
+async function fetchTextWithTimeout(url, opts = {}) {
+  const timeoutMs = Math.max(800, Math.min(12000, Number(opts?.timeoutMs) || 5000));
+  const headers = opts?.headers && typeof opts.headers === "object" ? opts.headers : {};
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, {
+      signal: controller.signal,
+      headers,
+    });
+    if (!res.ok) return { ok: false, status: res.status, text: "" };
+    const text = await res.text();
+    return { ok: true, status: res.status, text };
+  } catch (error) {
+    return { ok: false, status: 0, text: "", error: String(error?.message || error || "fetch_error") };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function loadOpenApiItemViewCandidate(itemUrl, opts = {}) {
   const fastMode = Boolean(opts?.fastMode);
   const timeoutMs = Math.max(
@@ -1183,6 +1203,10 @@ export async function parseProductFromDomaeqq(url, opts = {}) {
     1600,
     Math.min(9000, Number(opts?.previewOpenApiTimeoutMs) || 4500),
   );
+  const previewSeedTitle = String(opts?.previewSeedTitle || "").trim();
+  const previewSeedPrice = Number(opts?.previewSeedPrice);
+  const previewSeedImageUrl = normalizeUrl(String(opts?.previewSeedImageUrl || "").trim());
+  const previewPlaywrightFast = mode === "preview" && previewSourceMode === "playwright";
   const is1688 = String(url || "").includes("1688.domeggook.com");
   const isMobile = (() => {
     try {
@@ -1203,9 +1227,12 @@ export async function parseProductFromDomaeqq(url, opts = {}) {
         timeoutMs: previewOpenApiTimeoutMs,
       });
       openApiFailureReason = String(openApiItemView?.reason || "").trim();
-      const fastTitle = String(openApiItemView?.title || "").trim();
-      const fastPrice = Number(openApiItemView?.price);
-      const fastImageUrl = normalizeUrl(openApiItemView?.imageUrl || "");
+      const fastTitle = String(openApiItemView?.title || previewSeedTitle || "").trim();
+      const openApiPrice = Number(openApiItemView?.price);
+      const fastPrice = Number.isFinite(openApiPrice) && openApiPrice > 0
+        ? openApiPrice
+        : previewSeedPrice;
+      const fastImageUrl = normalizeUrl(openApiItemView?.imageUrl || previewSeedImageUrl || "");
       const openApiDetailHtml = stripDomeggookPromoBlocks(
         String(openApiItemView?.detailHtml || "").trim(),
       );
@@ -1246,6 +1273,11 @@ export async function parseProductFromDomaeqq(url, opts = {}) {
             itemNo: String(openApiItemView?.itemNo || ""),
             diagnostics: openApiItemView?.diagnostics || null,
             sourceMode: previewSourceMode,
+            seedFallbackUsed: Boolean(
+              (!String(openApiItemView?.title || "").trim() && previewSeedTitle) ||
+              (!(Number.isFinite(openApiPrice) && openApiPrice > 0) && Number.isFinite(previewSeedPrice)) ||
+              (!normalizeUrl(openApiItemView?.imageUrl || "") && previewSeedImageUrl),
+            ),
             usedDetail: Boolean(fastContentHtml),
             usedImage: true,
           },
@@ -1276,19 +1308,25 @@ export async function parseProductFromDomaeqq(url, opts = {}) {
   const page = await context.newPage();
 
   try {
-    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 90000 });
-    await page.waitForTimeout(2000);
+    await page.goto(url, {
+      waitUntil: "domcontentloaded",
+      timeout: previewPlaywrightFast ? 18000 : 90000,
+    });
+    await page.waitForTimeout(previewPlaywrightFast ? 800 : 2000);
 
     // short link(예: domeggook.com/SeznkY)인 경우 실제 상품 URL로 리다이렉트됨
     // 옵션 팝업/리퍼러/상품번호 추출은 최종 URL을 기준으로 해야 정확함
     const refererUrl = page.url();
     const openApiItemView =
       !is1688
-        ? await loadOpenApiItemViewCandidate(refererUrl || url)
+        ? await loadOpenApiItemViewCandidate(refererUrl || url, {
+            fastMode: previewPlaywrightFast,
+            timeoutMs: previewPlaywrightFast ? Math.min(previewOpenApiTimeoutMs, 2800) : 12000,
+          })
         : { ok: false, reason: "not_domeggook_item_view" };
 
     // Best-effort: open option layer if the page hides options behind a button/layer.
-    if (!is1688) {
+    if (!is1688 && !previewPlaywrightFast) {
       const openOptBtn = page
         .locator("text=/전체\\s*옵션\\s*보기|옵션\\s*보기|옵션\\s*선택|옵션\\s*열기/i")
         .first();
@@ -1406,7 +1444,7 @@ export async function parseProductFromDomaeqq(url, opts = {}) {
       const isDesktopDomeggook = cur.hostname === "domeggook.com";
       const idMatch = (cur.pathname || "").match(/\/(\d{6,})/);
       const productId = idMatch ? idMatch[1] : null;
-      if (isDesktopDomeggook && productId) {
+      if (!previewPlaywrightFast && isDesktopDomeggook && productId) {
         const mobileUrl = `https://mobile.domeggook.com/${productId}`;
         const mobilePage = await context.newPage();
         try {
@@ -1430,7 +1468,7 @@ export async function parseProductFromDomaeqq(url, opts = {}) {
 
     // Domeggook quantity-tier pricing: prefer unit price for minQty=1 when available.
     let qtyPriceTiers = [];
-    if (!is1688) {
+    if (!is1688 && !previewPlaywrightFast) {
       qtyPriceTiers = await extractDomeggookQuantityPriceTiers(page);
     }
     const qtyPriceForOne = Array.isArray(qtyPriceTiers)
@@ -1520,7 +1558,7 @@ export async function parseProductFromDomaeqq(url, opts = {}) {
         const el = document.querySelector('#contentsBuffer');
         const v = el && (el.value || el.textContent || '');
         return v && String(v).trim().length > 200;
-      }, { timeout: 5000 });
+      }, { timeout: previewPlaywrightFast ? 1800 : 5000 });
     } catch {}
 
     const contentHtml = await page.evaluate(() => {
@@ -1609,14 +1647,15 @@ export async function parseProductFromDomaeqq(url, opts = {}) {
 
     if (detailHtmlUrl) {
       try {
-        const res = await fetch(detailHtmlUrl, {
+        const res = await fetchTextWithTimeout(detailHtmlUrl, {
+          timeoutMs: previewPlaywrightFast ? 3000 : 7000,
           headers: {
             Referer: url,
             "User-Agent": "Mozilla/5.0",
           },
         });
         if (res.ok) {
-          const html = await res.text();
+          const html = res.text;
           const bodyOnly = extractBodyHtml(html);
           const mainOnly = extractMainBlock(bodyOnly);
           const imgList = extractImageUrlsFromHtml(bodyOnly, detailHtmlUrl);
@@ -1635,14 +1674,15 @@ export async function parseProductFromDomaeqq(url, opts = {}) {
     // ✅ Raw HTML의 contentsBuffer도 항상 평가한다.
     // 페이지 블럭이 추천상품/썸네일을 많이 포함하는 경우, contentsBuffer가 더 정확한 상세인 경우가 많다.
     try {
-      const res = await fetch(url, {
+      const res = await fetchTextWithTimeout(url, {
+        timeoutMs: previewPlaywrightFast ? 2600 : 6000,
         headers: {
           Referer: "https://domeggook.com/",
           "User-Agent": "Mozilla/5.0",
         },
       });
       if (res.ok) {
-        const raw = await res.text();
+        const raw = res.text;
         const m = String(raw).match(/<textarea[^>]*id=["']contentsBuffer["'][^>]*>([\s\S]*?)<\/textarea>/i);
         const bufHtml = m && m[1] ? String(m[1]).trim() : "";
         if (bufHtml.length > 200) {
@@ -1650,6 +1690,42 @@ export async function parseProductFromDomaeqq(url, opts = {}) {
         }
       }
     } catch {}
+
+    if (previewPlaywrightFast) {
+      const draft = makeDraft({
+        sourceUrl: url,
+        title:
+          titleText ||
+          String(openApiItemView?.title || "").trim() ||
+          (await page.title().catch(() => "도매꾹 상품")),
+        price,
+        imageUrl: imageUrl || "https://via.placeholder.com/1000",
+        contentText: finalContentHtml || titleText || "",
+        categoryText: "",
+        options: [],
+        shippingFee,
+      });
+      draft.__debug = {
+        source: "domeggook",
+        is1688,
+        isMobile,
+        mode,
+        optionStrategy: "preview.playwright_fast",
+        finalOptionsCount: 0,
+        detailSource: finalContentSource,
+        openApi: {
+          attempted: !is1688,
+          ok: Boolean(openApiItemView?.ok),
+          reason: String(openApiItemView?.reason || ""),
+          itemNo: String(openApiItemView?.itemNo || ""),
+          diagnostics: openApiItemView?.diagnostics || null,
+          usedDetail: finalContentSource === "openapi_item_view",
+          usedImage: imageFromOpenApi,
+          sourceMode: previewSourceMode,
+        },
+      };
+      return draft;
+    }
     const categoryText = await page.evaluate(() => {
       const pick = (sel) =>
         Array.from(document.querySelectorAll(sel))

@@ -550,6 +550,9 @@ export async function previewUploadFromUrl(inputUrl, settings = {}) {
     mode: "preview",
     previewSourceMode,
     previewOpenApiTimeoutMs: settings.previewOpenApiTimeoutMs,
+    previewSeedTitle: settings.seedTitle,
+    previewSeedPrice: settings.seedPrice,
+    previewSeedImageUrl: settings.seedImageUrl,
   });
   let rawContentImages = unique(extractImageUrls(draft.contentText));
   rawContentImages = rawContentImages.slice(0, maxContentImages);

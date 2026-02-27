@@ -1887,6 +1887,9 @@ async function generateRecommendationsBatch({
           strictImageMatch: recommendationPreviewSettings.strictImageMatch ? '1' : '0',
           previewSourceMode,
           previewOpenApiTimeoutMs,
+          seedTitle: cand.title,
+          seedPrice: cand.sourcePrice,
+          seedImageUrl: cand.mainImageUrl,
         }),
         timeoutMs,
         'preview_timeout',
@@ -1896,12 +1899,14 @@ async function generateRecommendationsBatch({
       }));
 
     let prev = await requestPreview(previewTimeoutMs, 'openapi');
+    let attemptedPlaywrightPreview = false;
     let usedHtmlPreviewFallback = false;
     const firstPreviewTimedOut = isPreviewTimeoutReason(prev?.reason || prev?.error);
 
     // Primary flow: OpenAPI preview first.
     // If it fails (non-timeout), retry once with Playwright parser.
     if (!prev?.ok && !firstPreviewTimedOut) {
+      attemptedPlaywrightPreview = true;
       const retry = await requestPreview(previewPlaywrightTimeoutMs, 'playwright');
       if (retry?.ok) {
         prev = retry;
@@ -1914,29 +1919,31 @@ async function generateRecommendationsBatch({
 
     if (!prev?.ok && isPreviewTimeoutReason(prev?.reason || prev?.error)) {
       previewTimeoutFallbackUsed += 1;
-      const playwrightFallback = await requestPreview(previewPlaywrightTimeoutMs, 'playwright');
-      if (playwrightFallback?.ok) {
-        prev = playwrightFallback;
-        previewPlaywrightRecovered += 1;
-      } else {
-        previewPlaywrightFailed += 1;
-        prev = playwrightFallback || prev;
-        if (policy.allowQuickFallback) {
-          const fallback = await buildHtmlPreviewFallback({
-            sourceUrl: cand.sourceUrl,
-            seedTitle: cand.title,
-            seedPrice: cand.sourcePrice,
-            seedImageUrl: cand.mainImageUrl,
-            strictImageMatch: recommendationPreviewSettings.strictImageMatch,
-            timeoutMs: Math.max(6000, Math.floor(previewTimeoutMs * 0.9)),
-          });
-          if (fallback?.ok) {
-            prev = fallback;
-            previewFallbackRecovered += 1;
-            usedHtmlPreviewFallback = true;
-          } else {
-            previewFallbackFailed += 1;
-            prev = fallback || prev;
+      if (!attemptedPlaywrightPreview) {
+        const playwrightFallback = await requestPreview(previewPlaywrightTimeoutMs, 'playwright');
+        if (playwrightFallback?.ok) {
+          prev = playwrightFallback;
+          previewPlaywrightRecovered += 1;
+        } else {
+          previewPlaywrightFailed += 1;
+          prev = playwrightFallback || prev;
+          if (policy.allowQuickFallback) {
+            const fallback = await buildHtmlPreviewFallback({
+              sourceUrl: cand.sourceUrl,
+              seedTitle: cand.title,
+              seedPrice: cand.sourcePrice,
+              seedImageUrl: cand.mainImageUrl,
+              strictImageMatch: recommendationPreviewSettings.strictImageMatch,
+              timeoutMs: Math.max(6000, Math.floor(previewTimeoutMs * 0.9)),
+            });
+            if (fallback?.ok) {
+              prev = fallback;
+              previewFallbackRecovered += 1;
+              usedHtmlPreviewFallback = true;
+            } else {
+              previewFallbackFailed += 1;
+              prev = fallback || prev;
+            }
           }
         }
       }
