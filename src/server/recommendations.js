@@ -1302,152 +1302,167 @@ function resolveRecommendationQcSettings(settings = {}) {
   };
 }
 
-async function fetchFastCandidatesFromList({ keyword, limit = 80, storageStatePath = '' }) {
+async function fetchFastCandidatesFromList({
+  keyword,
+  limit = 80,
+  storageStatePath = '',
+  sourceMode = 'auto',
+}) {
   // v2: Prefer Domeggook OpenAPI if available.
   // Fallback: Playwright list scraping (legacy).
   const q = String(keyword || '').trim();
   if (!q) return { items: [], diagnostics: { keyword: '', strategy: 'none', collected: 0, errors: ['empty_keyword'] } };
-  const diagnostics = { keyword: q, strategy: 'none', collected: 0, errors: [] };
+  const modeRaw = String(sourceMode || 'auto').trim().toLowerCase();
+  const mode = modeRaw === 'openapi' || modeRaw === 'playwright' ? modeRaw : 'auto';
+  const diagnostics = { keyword: q, strategy: 'none', collected: 0, errors: [], sourceMode: mode };
 
   // 0) Try OpenAPI (best-effort). If docs/endpoint mismatch, it will throw.
-  try {
-    const { domeggookOpenApiGetItemList } = await import('../utils/domeggook_openapi.js');
-    const r = await domeggookOpenApiGetItemList({
-      keyword: q,
-      market: 'dome',
-      page: 1,
-      pageSize: Math.max(10, Math.min(80, Number(limit) || 40)),
-      sort: q ? 'se' : 'rd',
-      ver: '4.1',
-      om: 'json',
-    });
-
-    const raw = r?.raw || null;
-    const items = raw?.domeggook?.list?.item || raw?.list?.item;
-    const list = Array.isArray(items) ? items : (items ? [items] : []);
-
-    if (list.length) {
-      const out = [];
-      for (const it of list) {
-        const title = String(it?.title || '').trim();
-        const price = Number(it?.price);
-        const url = String(it?.url || '').trim() || '';
-        const no = String(it?.no || '').trim();
-        const imageUrl = normalizeCandidateImageUrl(
-          it?.img ||
-          it?.image ||
-          it?.imageUrl ||
-          it?.img_url ||
-          it?.thumbnail ||
-          it?.thumb ||
-          it?.main_image ||
-          it?.main_image_url ||
-          it?.image_url ||
-          it?.list_img ||
-          it?.photo,
-        );
-        const finalUrl = url || (no ? `https://domeggook.com/${no}` : '');
-        if (!finalUrl || !title || !Number.isFinite(price)) continue;
-        out.push({
-          url: finalUrl.replace(/^http:\/\//, 'https://'),
-          title: title.slice(0, 80),
-          price,
-          imageUrl,
-        });
-        if (out.length >= limit) break;
-      }
-      if (out.length) {
-        diagnostics.strategy = 'openapi';
-        diagnostics.collected = out.length;
-        return { items: out, diagnostics };
-      }
-    }
-  } catch (e) {
-    diagnostics.errors.push(`openapi: ${normalizeErrorMessage(e)}`);
-  }
-
-  // 1) Playwright list-page extraction (legacy)
-  try {
-    const { chromium } = await import('playwright');
-    const fs = await import('node:fs');
-
-    const hasState = storageStatePath && fs.existsSync(storageStatePath);
-    const browser = await chromium.launch();
+  if (mode !== 'playwright') {
     try {
-      const context = hasState ? await browser.newContext({ storageState: storageStatePath }) : await browser.newContext();
-      const page = await context.newPage();
+      const { domeggookOpenApiGetItemList } = await import('../utils/domeggook_openapi.js');
+      const r = await domeggookOpenApiGetItemList({
+        keyword: q,
+        market: 'dome',
+        page: 1,
+        pageSize: Math.max(10, Math.min(80, Number(limit) || 40)),
+        sort: q ? 'se' : 'rd',
+        ver: '4.1',
+        om: 'json',
+      });
 
-      const listUrl = `https://domeggook.com/main/item/itemList.php?sw=${encodeURIComponent(q)}&sf=ttl`;
-      await page.goto(listUrl, { waitUntil: 'domcontentloaded', timeout: 12_000 });
-      await page.waitForTimeout(700);
+      const raw = r?.raw || null;
+      const items = raw?.domeggook?.list?.item || raw?.list?.item;
+      const list = Array.isArray(items) ? items : (items ? [items] : []);
 
-      const rows = await page.evaluate(({ keyword }) => {
-        const kwRaw = String(keyword || '').trim().toLowerCase();
-        const kw = kwRaw.replace(/\s+/g, '');
-
-        const parseWon = (s) => {
-          const m = String(s || '').match(/(\d[\d,]{2,})\s*원/);
-          if (!m) return null;
-          const n = Number(String(m[1]).replace(/,/g, ''));
-          return Number.isFinite(n) ? n : null;
-        };
-
+      if (list.length) {
         const out = [];
-        const seen = new Set();
-        const anchors = [...document.querySelectorAll('a[href^="/"]')];
-
-        for (const a of anchors) {
-          const href = a.getAttribute('href') || '';
-          const m = href.match(/^\/(\d{6,})(?:\?|$)/);
-          if (!m) continue;
-          const id = m[1];
-          if (seen.has(id)) continue;
-
-          const card = a.closest('li, article, div, td') || a.parentElement;
-          const text = (card?.innerText || a.innerText || '').replace(/\s+/g, ' ').trim();
-          const price = parseWon(text);
-          if (!price) continue;
-
-          const title = text.replace(/\d[\d,]{2,}\s*원/g, '').trim();
-          if (!title) continue;
-
-          const hay = (title + ' ' + text).toLowerCase();
-          const hayNorm = hay.replace(/\s+/g, '');
-          if (kw && !hayNorm.includes(kw)) continue;
-
-          seen.add(id);
-          const imgEl = card?.querySelector?.('img');
-          const imageUrlRaw =
-            imgEl?.getAttribute?.('data-src') ||
-            imgEl?.getAttribute?.('src') ||
-            '';
-          let imageUrl = String(imageUrlRaw || '').trim();
-          if (imageUrl.startsWith('//')) imageUrl = `https:${imageUrl}`;
-          else if (imageUrl.startsWith('/')) imageUrl = `${location.origin}${imageUrl}`;
-          imageUrl = imageUrl.replace(/^http:\/\//i, 'https://');
+        for (const it of list) {
+          const title = String(it?.title || '').trim();
+          const price = Number(it?.price);
+          const url = String(it?.url || '').trim() || '';
+          const no = String(it?.no || '').trim();
+          const imageUrl = normalizeCandidateImageUrl(
+            it?.img ||
+            it?.image ||
+            it?.imageUrl ||
+            it?.img_url ||
+            it?.thumbnail ||
+            it?.thumb ||
+            it?.main_image ||
+            it?.main_image_url ||
+            it?.image_url ||
+            it?.list_img ||
+            it?.photo,
+          );
+          const finalUrl = url || (no ? `https://domeggook.com/${no}` : '');
+          if (!finalUrl || !title || !Number.isFinite(price)) continue;
           out.push({
-            url: `https://domeggook.com/${id}`,
+            url: finalUrl.replace(/^http:\/\//, 'https://'),
             title: title.slice(0, 80),
             price,
             imageUrl,
           });
-          if (out.length >= 120) break;
+          if (out.length >= limit) break;
         }
-
-        return out;
-      }, { keyword: q });
-
-      if (rows && rows.length) {
-        const items = rows.slice(0, Math.max(1, Math.min(200, Number(limit) || 80)));
-        diagnostics.strategy = 'playwright';
-        diagnostics.collected = items.length;
-        return { items, diagnostics };
+        if (out.length) {
+          diagnostics.strategy = 'openapi';
+          diagnostics.collected = out.length;
+          return { items: out, diagnostics };
+        }
       }
-    } finally {
-      await browser.close().catch(() => {});
+    } catch (e) {
+      diagnostics.errors.push(`openapi: ${normalizeErrorMessage(e)}`);
     }
-  } catch (e) {
-    diagnostics.errors.push(`playwright: ${normalizeErrorMessage(e)}`);
+  }
+
+  // 1) Playwright list-page extraction (legacy)
+  if (mode !== 'openapi') {
+    try {
+      const { chromium } = await import('playwright');
+      const fs = await import('node:fs');
+
+      const hasState = storageStatePath && fs.existsSync(storageStatePath);
+      const browser = await chromium.launch();
+      try {
+        const context = hasState ? await browser.newContext({ storageState: storageStatePath }) : await browser.newContext();
+        const page = await context.newPage();
+
+        const listUrl = `https://domeggook.com/main/item/itemList.php?sw=${encodeURIComponent(q)}&sf=ttl`;
+        await page.goto(listUrl, { waitUntil: 'domcontentloaded', timeout: 12_000 });
+        await page.waitForTimeout(700);
+
+        const rows = await page.evaluate(({ keyword }) => {
+          const kwRaw = String(keyword || '').trim().toLowerCase();
+          const kw = kwRaw.replace(/\s+/g, '');
+
+          const parseWon = (s) => {
+            const m = String(s || '').match(/(\d[\d,]{2,})\s*원/);
+            if (!m) return null;
+            const n = Number(String(m[1]).replace(/,/g, ''));
+            return Number.isFinite(n) ? n : null;
+          };
+
+          const out = [];
+          const seen = new Set();
+          const anchors = [...document.querySelectorAll('a[href^="/"]')];
+
+          for (const a of anchors) {
+            const href = a.getAttribute('href') || '';
+            const m = href.match(/^\/(\d{6,})(?:\?|$)/);
+            if (!m) continue;
+            const id = m[1];
+            if (seen.has(id)) continue;
+
+            const card = a.closest('li, article, div, td') || a.parentElement;
+            const text = (card?.innerText || a.innerText || '').replace(/\s+/g, ' ').trim();
+            const price = parseWon(text);
+            if (!price) continue;
+
+            const title = text.replace(/\d[\d,]{2,}\s*원/g, '').trim();
+            if (!title) continue;
+
+            const hay = (title + ' ' + text).toLowerCase();
+            const hayNorm = hay.replace(/\s+/g, '');
+            if (kw && !hayNorm.includes(kw)) continue;
+
+            seen.add(id);
+            const imgEl = card?.querySelector?.('img');
+            const imageUrlRaw =
+              imgEl?.getAttribute?.('data-src') ||
+              imgEl?.getAttribute?.('src') ||
+              '';
+            let imageUrl = String(imageUrlRaw || '').trim();
+            if (imageUrl.startsWith('//')) imageUrl = `https:${imageUrl}`;
+            else if (imageUrl.startsWith('/')) imageUrl = `${location.origin}${imageUrl}`;
+            imageUrl = imageUrl.replace(/^http:\/\//i, 'https://');
+            out.push({
+              url: `https://domeggook.com/${id}`,
+              title: title.slice(0, 80),
+              price,
+              imageUrl,
+            });
+            if (out.length >= 120) break;
+          }
+
+          return out;
+        }, { keyword: q });
+
+        if (rows && rows.length) {
+          const items = rows.slice(0, Math.max(1, Math.min(200, Number(limit) || 80)));
+          diagnostics.strategy = 'playwright';
+          diagnostics.collected = items.length;
+          return { items, diagnostics };
+        }
+      } finally {
+        await browser.close().catch(() => {});
+      }
+    } catch (e) {
+      diagnostics.errors.push(`playwright: ${normalizeErrorMessage(e)}`);
+    }
+  } else {
+    diagnostics.strategy = diagnostics.strategy || 'openapi';
+    diagnostics.collected = Number(diagnostics.collected || 0);
+    return { items: [], diagnostics };
   }
 
   // 2) Fallback: get URLs then fetch each item HTML (may hit 429)
@@ -1553,6 +1568,7 @@ async function generateRecommendationsBatch({
   onProgress = null,
   maxRuntimeMs = 110_000,
   previewTimeoutMs = 9_000,
+  candidateSourceMode = 'auto',
 } = {}) {
   const seed = Array.isArray(keywords) && keywords.length > 0 ? keywords : defaultKeywordSet();
   const startedAt = Date.now();
@@ -1584,6 +1600,7 @@ async function generateRecommendationsBatch({
         keyword: kw,
         limit: policy.requireQcPass ? 80 : 40,
         storageStatePath: String(normalizedSettings?.domeggookStorageStatePath || ''),
+        sourceMode: candidateSourceMode,
       });
       list = Array.isArray(result?.items) ? result.items : [];
       if (result?.diagnostics) keywordDiagnostics.push(result.diagnostics);
@@ -2040,6 +2057,7 @@ async function generateRecommendationsBatch({
   }
 
   const diagnostics = {
+    candidateSourceMode,
     keywordsTried: keywordScanLimit,
     collectedCandidates: candidates.length,
     uniqueCandidates: uniq.length,
@@ -2222,6 +2240,12 @@ export async function refreshRecommendationsForUser({
   const initialExcludedCount = excludeUrls.size;
   let finalExcludedCount = excludeUrls.size;
   let usedRelaxedExclusion = false;
+  let activeExcludeUrls = excludeUrls;
+  let rescuePlaywrightTried = false;
+  let rescuePlaywrightApplied = false;
+  let rescueReviewModeTried = false;
+  let rescueReviewModeApplied = false;
+  let rescueDetailTooFewCount = 0;
 
   let batch = await generateRecommendationsBatch({
     settings,
@@ -2256,6 +2280,82 @@ export async function refreshRecommendationsForUser({
       batch = retryBatch;
       usedRelaxedExclusion = true;
       finalExcludedCount = uploadedOnlyExclude.size;
+      activeExcludeUrls = uploadedOnlyExclude;
+    }
+  }
+
+  const reasonCounts = batch?.diagnostics?.qcReasonCounts && typeof batch.diagnostics.qcReasonCounts === 'object'
+    ? batch.diagnostics.qcReasonCounts
+    : {};
+  rescueDetailTooFewCount = Object.entries(reasonCounts).reduce((sum, [reason, count]) => {
+    if (!String(reason || '').includes('상세 이미지가 너무 적습니다')) return sum;
+    return sum + (Number(count) || 0);
+  }, 0);
+
+  // Empty-result rescue #1:
+  // keep QC strict, but switch candidate source to list scraping (playwright).
+  const shouldTryPlaywrightRescue =
+    batch.items.length === 0 &&
+    Number(batch?.diagnostics?.validated || 0) >= 5;
+  if (shouldTryPlaywrightRescue) {
+    rescuePlaywrightTried = true;
+    if (typeof onProgress === 'function') {
+      try {
+        onProgress({
+          stage: 'rescue_playwright',
+          validated: Number(batch?.diagnostics?.validated || 0),
+          qcRejected: Number(batch?.diagnostics?.qcRejected || 0),
+        });
+      } catch {}
+    }
+    const rescueBatch = await generateRecommendationsBatch({
+      settings,
+      keywords: seed,
+      topN: target,
+      excludeUrls: activeExcludeUrls,
+      onProgress,
+      candidateSourceMode: 'playwright',
+    });
+    if (rescueBatch.items.length > batch.items.length) {
+      batch = rescueBatch;
+      rescuePlaywrightApplied = true;
+    }
+  }
+
+  // Empty-result rescue #2:
+  // when detail-image shortage dominates QC rejections, switch to review mode
+  // so operators can still inspect candidates without repetitive reruns.
+  const shouldTryReviewModeRescue =
+    batch.items.length === 0 &&
+    Number(batch?.diagnostics?.qcRejected || 0) > 0 &&
+    rescueDetailTooFewCount > 0;
+  if (shouldTryReviewModeRescue) {
+    rescueReviewModeTried = true;
+    if (typeof onProgress === 'function') {
+      try {
+        onProgress({
+          stage: 'rescue_review_mode',
+          detailTooFew: rescueDetailTooFewCount,
+          qcRejected: Number(batch?.diagnostics?.qcRejected || 0),
+        });
+      } catch {}
+    }
+    const reviewModeSettings = {
+      ...(settings || {}),
+      recommendationRequireQcPass: false,
+      recommendationAllowQuickFallback: false,
+    };
+    const reviewBatch = await generateRecommendationsBatch({
+      settings: reviewModeSettings,
+      keywords: seed,
+      topN: target,
+      excludeUrls: activeExcludeUrls,
+      onProgress,
+      candidateSourceMode: 'auto',
+    });
+    if (reviewBatch.items.length > batch.items.length) {
+      batch = reviewBatch;
+      rescueReviewModeApplied = true;
     }
   }
 
@@ -2267,6 +2367,11 @@ export async function refreshRecommendationsForUser({
     finalExcludedCount,
     relaxedExclusionAllowed: Boolean(policy.allowRelaxedExclusion),
     relaxedExclusionApplied: usedRelaxedExclusion,
+    rescuePlaywrightTried,
+    rescuePlaywrightApplied,
+    rescueReviewModeTried,
+    rescueReviewModeApplied,
+    rescueDetailTooFewCount,
   };
 
   return {
