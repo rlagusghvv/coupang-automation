@@ -1212,14 +1212,13 @@ function resolveRecommendationQcSettings(settings = {}) {
   const relaxEnabled = parseBoolean(settings?.recommendationQcRelaxEnabled, true);
   const relaxStage2Enabled = parseBoolean(settings?.recommendationQcRelaxStage2Enabled, true);
   return {
-    // Recommendation list should stay discoverable even for suppliers
-    // that provide only one usable detail image.
+    // Quality-first default: at least 2 usable detail images.
     qcMinFilteredImages: Math.floor(
       clampNumber(
         settings?.recommendationQcMinFilteredImages ?? settings?.qcMinFilteredImages,
-        1,
+        2,
         6,
-        1,
+        2,
       ),
     ),
     relaxEnabled,

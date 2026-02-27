@@ -644,6 +644,10 @@ const DETAIL_GARBAGE_PATTERNS = [
   /(^|[_\-/])btn([_\-./]|$)/i,
   /sprite/i,
   /facebook|twitter|kakao|share/i,
+  /(^|\/)(notice|guide|policy|faq|qna|cs|service)(\/|[_\-.]|$)/i,
+  /(^|\/)(delivery|shipping|ship|refund|return|exchange|as)([_\-.]?\d+)?\.(?:jpe?g|png|gif|webp)$/i,
+  /(^|[_\-/])(index[_-]?(?:gift|event|notice|info)|print[-_]?top|banner[-_]?top)([_\-./]|$)/i,
+  /배송|교환|반품|환불|안내|공지|문의|고객센터|유의|주의/i,
 ];
 
 function classifyDetailImageUrl(rawUrl) {

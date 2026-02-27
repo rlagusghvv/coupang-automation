@@ -66,6 +66,13 @@ const DETAIL_PATH_BLOCK_PATTERNS = [
   /\/share\//i,
 ];
 
+const NON_PRODUCT_INFO_PATTERNS = [
+  /(^|\/)(notice|guide|policy|faq|qna|cs|service)(\/|[_\-.]|$)/i,
+  /(^|\/)(delivery|shipping|ship|refund|return|exchange|as)([_\-.]?\d+)?\.(?:jpe?g|png|gif|webp)$/i,
+  /(^|[_\-/])(index[_-]?(?:gift|event|notice|info)|print[-_]?top|banner[-_]?top)([_\-./]|$)/i,
+  /배송|교환|반품|환불|안내|공지|문의|고객센터|유의|주의/i,
+];
+
 const SUSPICIOUS_ASSET_PATTERNS = [
   /(^|[_\-/])logo([_\-./]|$)/i,
   /(^|[_\-/])icon([_\-./]|$)/i,
@@ -170,11 +177,13 @@ function inspectImagePath(urlObj) {
   const allowByAlicdn = domain === "alicdn.com" && !isThumb;
   const allowByOwnerclanCopy = domain === "ownerclan.com" && /\/copy\//i.test(path) && !isThumb;
   const blockedByPath = DETAIL_PATH_BLOCK_PATTERNS.some((re) => re.test(path));
+  const blockedByInfoAsset = NON_PRODUCT_INFO_PATTERNS.some((re) => re.test(target));
   const suspiciousByName = SUSPICIOUS_ASSET_PATTERNS.some((re) => re.test(target));
 
   const blocked =
     isThumb ||
     blockedByPath ||
+    blockedByInfoAsset ||
     (
       suspiciousByName &&
       !allowedByPath &&
@@ -182,7 +191,7 @@ function inspectImagePath(urlObj) {
       !allowByAlicdn &&
       !allowByOwnerclanCopy
     );
-  const suspicious = suspiciousByName || blockedByPath || isThumb;
+  const suspicious = suspiciousByName || blockedByPath || blockedByInfoAsset || isThumb;
 
   return {
     allowed: allowedByPath || allowByEsmplus || allowByAlicdn || allowByOwnerclanCopy,
