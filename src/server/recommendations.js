@@ -4,10 +4,12 @@ import { analyzeSameProductImages, previewUploadFromUrl } from '../pipeline/prev
 import { evaluateQcGate } from '../pipeline/qcGate.js';
 import { extractImageUrls } from '../utils/contentImages.js';
 import { stripDomeggookPromoBlocks } from '../utils/domeggookDetailHtml.js';
+import { buildProxyUrl } from '../utils/imageProxy.js';
 import { dbAll, dbRun, openDb } from './storage_sqlite_internal.js';
 
 const DEFAULT_RECOMMENDATION_COOLDOWN_DAYS = 7;
 const RECOMMENDATIONS_SAVED_TABLE = 'recommendations_saved';
+const RECOMMENDATION_IMAGE_PROXY_BASE = '/api/image-proxy?url={url}';
 
 function dbGetOne(db, sql, params = []) {
   return dbAll(db, sql, params).then((rows) => (rows && rows[0]) || null);
@@ -19,6 +21,17 @@ function dbGetOne(db, sql, params = []) {
 
 function nowIso() {
   return new Date().toISOString();
+}
+
+function toRecommendationImageUrl(rawUrl, referer = '') {
+  const u = String(rawUrl || '').trim();
+  if (!u) return '';
+  if (/^data:/i.test(u)) return u;
+  if (u.startsWith('/api/image-proxy?')) return u;
+  if (/^https?:\/\//i.test(u)) {
+    return buildProxyUrl(u, RECOMMENDATION_IMAGE_PROXY_BASE, referer);
+  }
+  return u;
 }
 
 function withTimeout(promise, ms, label = 'timeout') {
@@ -526,6 +539,7 @@ export async function listRecommendations(userId, { limit = 50 } = {}) {
     let payload = {};
     try { payload = JSON.parse(r.payload_json || '{}'); } catch {}
 
+    const sourceUrl = String(r.source_url || '').trim();
     const qc = payload?.qc || null;
     const prev = payload?.preview || null;
     const previewImagesRaw = Array.isArray(prev?.computed?.images)
@@ -534,6 +548,7 @@ export async function listRecommendations(userId, { limit = 50 } = {}) {
     const previewImages = previewImagesRaw
         .map((u) => String(u || '').trim())
         .filter(Boolean)
+        .map((u) => toRecommendationImageUrl(u, sourceUrl))
         .slice(0, 30);
     const detailImageCount = Number(
       qc?.detailImageCount ??
@@ -553,10 +568,10 @@ export async function listRecommendations(userId, { limit = 50 } = {}) {
 
     return {
       id: r.id,
-      sourceUrl: r.source_url,
+      sourceUrl,
       keyword: r.keyword,
       title: r.title,
-      mainImageUrl: r.main_image_url,
+      mainImageUrl: toRecommendationImageUrl(r.main_image_url, sourceUrl),
       sourcePrice,
       shippingFee,
       finalPrice: r.final_price,
@@ -624,6 +639,7 @@ function normalizeRecommendationItemInput(item = {}) {
 function mapSavedRowToItem(r) {
   let payload = {};
   try { payload = JSON.parse(r.payload_json || '{}'); } catch {}
+  const sourceUrl = String(r.source_url || '').trim();
   const qc = payload?.qc || {};
   const prev = payload?.preview || {};
   const previewImagesRaw = Array.isArray(prev?.computed?.images)
@@ -632,6 +648,7 @@ function mapSavedRowToItem(r) {
   const previewImages = previewImagesRaw
     .map((u) => String(u || '').trim())
     .filter(Boolean)
+    .map((u) => toRecommendationImageUrl(u, sourceUrl))
     .slice(0, 30);
   const detailImageCount = Number(
     qc?.detailImageCount ??
@@ -648,10 +665,10 @@ function mapSavedRowToItem(r) {
     : (Number.isFinite(Number(prev?.draft?.shippingFee)) ? Number(prev?.draft?.shippingFee) : null);
   return {
     id: r.id,
-    sourceUrl: r.source_url,
+    sourceUrl,
     keyword: r.keyword,
     title: r.title,
-    mainImageUrl: r.main_image_url,
+    mainImageUrl: toRecommendationImageUrl(r.main_image_url, sourceUrl),
     sourcePrice,
     shippingFee,
     finalPrice: r.final_price,
