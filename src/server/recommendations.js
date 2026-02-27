@@ -2184,16 +2184,108 @@ export async function fillRecommendationsForUser({ userId, settings, keywords, t
     };
   }
 
-  const batch = await generateRecommendationsBatch({
+  const fillTopN = Math.min(Math.max(1, need), Math.max(2, Number(maxAddPerRun) || 6));
+  let batch = await generateRecommendationsBatch({
     settings,
     keywords: [kw],
-    topN: Math.min(Math.max(1, need), Math.max(2, Number(maxAddPerRun) || 6)),
+    topN: fillTopN,
     excludeUrls: exclude,
     onProgress,
   });
+  let fillRescuePlaywrightTried = false;
+  let fillRescuePlaywrightApplied = false;
+  let fillRescueReviewModeTried = false;
+  let fillRescueReviewModeApplied = false;
+  const collectDetailTooFewCount = (diag) => {
+    const reasonMap = diag?.qcReasonCounts && typeof diag.qcReasonCounts === 'object'
+      ? diag.qcReasonCounts
+      : {};
+    return Object.entries(reasonMap).reduce((sum, [reason, count]) => {
+      if (!String(reason || '').includes('상세 이미지가 너무 적습니다')) return sum;
+      return sum + (Number(count) || 0);
+    }, 0);
+  };
+
+  const hasOpenApiListFailure = (diag) => {
+    const rows = Array.isArray(diag?.keywordDiagnostics) ? diag.keywordDiagnostics : [];
+    return rows.some((row) =>
+      (Array.isArray(row?.errors) ? row.errors : []).some((e) =>
+        String(e || '').toLowerCase().includes('domeggook_openapi_getitemlist_failed')
+      ),
+    );
+  };
+
+  const noCandidatesCollected = Number(batch?.diagnostics?.collectedCandidates || 0) === 0;
+  if (batch.items.length === 0 && (noCandidatesCollected || hasOpenApiListFailure(batch?.diagnostics))) {
+    fillRescuePlaywrightTried = true;
+    if (typeof onProgress === 'function') {
+      try {
+        onProgress({
+          stage: 'fill_rescue_playwright',
+          keyword: kw,
+          collectedCandidates: Number(batch?.diagnostics?.collectedCandidates || 0),
+        });
+      } catch {}
+    }
+    const rescueBatch = await generateRecommendationsBatch({
+      settings,
+      keywords: [kw],
+      topN: fillTopN,
+      excludeUrls: exclude,
+      onProgress,
+      candidateSourceMode: 'playwright',
+    });
+    if (rescueBatch.items.length > batch.items.length) {
+      batch = rescueBatch;
+      fillRescuePlaywrightApplied = true;
+    }
+  }
+
+  const detailTooFewCount = collectDetailTooFewCount(batch?.diagnostics);
+  if (
+    batch.items.length === 0 &&
+    Number(batch?.diagnostics?.qcRejected || 0) > 0 &&
+    detailTooFewCount > 0
+  ) {
+    fillRescueReviewModeTried = true;
+    if (typeof onProgress === 'function') {
+      try {
+        onProgress({
+          stage: 'fill_rescue_review_mode',
+          keyword: kw,
+          qcRejected: Number(batch?.diagnostics?.qcRejected || 0),
+          detailTooFew: detailTooFewCount,
+        });
+      } catch {}
+    }
+    const reviewModeSettings = {
+      ...(settings || {}),
+      recommendationRequireQcPass: false,
+      recommendationAllowQuickFallback: true,
+    };
+    const reviewBatch = await generateRecommendationsBatch({
+      settings: reviewModeSettings,
+      keywords: [kw],
+      topN: fillTopN,
+      excludeUrls: exclude,
+      onProgress,
+      candidateSourceMode: 'auto',
+    });
+    if (reviewBatch.items.length > batch.items.length) {
+      batch = reviewBatch;
+      fillRescueReviewModeApplied = true;
+    }
+  }
 
   const up = await upsertRecommendationsForUser({ userId, items: batch.items, maxKeep: Math.max(60, Number(targetCount) || 20) });
-  return { ok: true, ...up, keyword: kw, diagnostics: batch.diagnostics };
+  const diagnostics = {
+    ...(batch?.diagnostics || {}),
+    fillRescuePlaywrightTried,
+    fillRescuePlaywrightApplied,
+    fillRescueReviewModeTried,
+    fillRescueReviewModeApplied,
+  };
+  return { ok: true, ...up, keyword: kw, diagnostics };
 }
 
 
