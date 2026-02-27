@@ -1355,7 +1355,7 @@ export async function parseProductFromDomaeqq(url, opts = {}) {
   try {
     await page.goto(url, {
       waitUntil: "domcontentloaded",
-      timeout: previewPlaywrightFast ? 18000 : 90000,
+      timeout: previewPlaywrightFast ? 12000 : 90000,
     });
     await page.waitForTimeout(previewPlaywrightFast ? 800 : 2000);
 

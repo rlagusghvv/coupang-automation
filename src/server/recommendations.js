@@ -1867,6 +1867,7 @@ async function generateRecommendationsBatch({
   let previewRetryFailed = 0;
   let previewPlaywrightRecovered = 0;
   let previewPlaywrightFailed = 0;
+  let previewPlaywrightAttempts = 0;
   let previewFallbackRecovered = 0;
   let previewFallbackFailed = 0;
   let previewTimeoutFallbackUsed = 0;
@@ -1882,11 +1883,15 @@ async function generateRecommendationsBatch({
     Math.min(9000, Number(normalizedSettings?.recommendationPreviewOpenApiTimeoutMs) || Math.floor(previewTimeoutMs * 0.62)),
   );
   const previewPlaywrightTimeoutMs = Math.max(
-    previewTimeoutMs + 7000,
+    previewTimeoutMs + 3000,
     Math.min(
-      45_000,
-      Math.max(18_000, Number(normalizedSettings?.recommendationPreviewPlaywrightTimeoutMs) || 28_000),
+      30_000,
+      Math.max(12_000, Number(normalizedSettings?.recommendationPreviewPlaywrightTimeoutMs) || 14_000),
     ),
+  );
+  const previewPlaywrightRetryBudget = Math.max(
+    0,
+    Math.min(6, Number(normalizedSettings?.recommendationPreviewPlaywrightRetryBudget) || 2),
   );
   let maxValidate = Math.max(topN * (policy.requireQcPass ? 12 : 2), 24);
   maxValidate = Math.min(maxValidate, policy.requireQcPass ? 220 : 80);
@@ -1923,45 +1928,61 @@ async function generateRecommendationsBatch({
     // Primary flow: OpenAPI preview first.
     // If it fails (non-timeout), retry once with Playwright parser.
     if (!prev?.ok && !firstPreviewTimedOut) {
-      attemptedPlaywrightPreview = true;
-      const retry = await requestPreview(previewPlaywrightTimeoutMs, 'playwright');
-      if (retry?.ok) {
-        prev = retry;
-        previewRetryRecovered += 1;
+      if (previewPlaywrightAttempts < previewPlaywrightRetryBudget) {
+        attemptedPlaywrightPreview = true;
+        previewPlaywrightAttempts += 1;
+        const retry = await requestPreview(previewPlaywrightTimeoutMs, 'playwright');
+        if (retry?.ok) {
+          prev = retry;
+          previewRetryRecovered += 1;
+        } else {
+          prev = retry || prev;
+          previewRetryFailed += 1;
+        }
       } else {
-        prev = retry || prev;
-        previewRetryFailed += 1;
+        prev = {
+          ok: false,
+          reason: 'preview_playwright_budget_exhausted',
+        };
       }
     }
 
     if (!prev?.ok && isPreviewTimeoutReason(prev?.reason || prev?.error)) {
       previewTimeoutFallbackUsed += 1;
       if (!attemptedPlaywrightPreview) {
-        const playwrightFallback = await requestPreview(previewPlaywrightTimeoutMs, 'playwright');
-        if (playwrightFallback?.ok) {
-          prev = playwrightFallback;
-          previewPlaywrightRecovered += 1;
-        } else {
-          previewPlaywrightFailed += 1;
-          prev = playwrightFallback || prev;
-          if (policy.allowQuickFallback) {
-            const fallback = await buildHtmlPreviewFallback({
-              sourceUrl: cand.sourceUrl,
-              seedTitle: cand.title,
-              seedPrice: cand.sourcePrice,
-              seedImageUrl: cand.mainImageUrl,
-              strictImageMatch: recommendationPreviewSettings.strictImageMatch,
-              timeoutMs: Math.max(6000, Math.floor(previewTimeoutMs * 0.9)),
-            });
-            if (fallback?.ok) {
-              prev = fallback;
-              previewFallbackRecovered += 1;
-              usedHtmlPreviewFallback = true;
-            } else {
-              previewFallbackFailed += 1;
-              prev = fallback || prev;
+        if (previewPlaywrightAttempts < previewPlaywrightRetryBudget) {
+          previewPlaywrightAttempts += 1;
+          const playwrightFallback = await requestPreview(previewPlaywrightTimeoutMs, 'playwright');
+          if (playwrightFallback?.ok) {
+            prev = playwrightFallback;
+            previewPlaywrightRecovered += 1;
+          } else {
+            previewPlaywrightFailed += 1;
+            prev = playwrightFallback || prev;
+            if (policy.allowQuickFallback) {
+              const fallback = await buildHtmlPreviewFallback({
+                sourceUrl: cand.sourceUrl,
+                seedTitle: cand.title,
+                seedPrice: cand.sourcePrice,
+                seedImageUrl: cand.mainImageUrl,
+                strictImageMatch: recommendationPreviewSettings.strictImageMatch,
+                timeoutMs: Math.max(6000, Math.floor(previewTimeoutMs * 0.9)),
+              });
+              if (fallback?.ok) {
+                prev = fallback;
+                previewFallbackRecovered += 1;
+                usedHtmlPreviewFallback = true;
+              } else {
+                previewFallbackFailed += 1;
+                prev = fallback || prev;
+              }
             }
           }
+        } else {
+          prev = {
+            ok: false,
+            reason: 'preview_playwright_budget_exhausted',
+          };
         }
       }
     }
@@ -2151,6 +2172,8 @@ async function generateRecommendationsBatch({
     previewRetryFailed,
     previewPlaywrightRecovered,
     previewPlaywrightFailed,
+    previewPlaywrightAttempts,
+    previewPlaywrightRetryBudget,
     previewFallbackRecovered,
     previewFallbackFailed,
     previewTimeoutFallbackUsed,
