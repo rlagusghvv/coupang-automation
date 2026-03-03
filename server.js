@@ -601,6 +601,49 @@ function compactLegacyJob(job) {
   };
 }
 
+function normalizeRecommendationJobProgressPercent(progress = {}, fallbackTarget = 80) {
+  const stage = String(progress?.stage || "").trim().toLowerCase();
+  if (!stage) return null;
+
+  const toInt = (v, d = 0) => {
+    const n = Number(v);
+    if (!Number.isFinite(n)) return d;
+    return Math.floor(n);
+  };
+  const clamp = (n, min = 0, max = 100) => Math.max(min, Math.min(max, n));
+
+  if (stage === "queued") return 1;
+  if (stage === "start") return 3;
+  if (stage === "refresh_start") return 8;
+  if (stage === "done" || stage === "done_empty") return 100;
+  if (stage === "source_switch_playwright" || stage === "relax_exclude") return 46;
+  if (stage === "rescue_playwright" || stage === "fill_rescue_playwright") return 72;
+  if (stage === "rescue_review_mode" || stage === "fill_rescue_review_mode") return 84;
+  if (stage === "rate_limited") return 40;
+
+  if (stage === "collect") {
+    const keywordIndex = toInt(progress?.keywordIndex, 0);
+    const keywordTotal = toInt(progress?.keywordTotal, 0);
+    if (keywordTotal > 0) {
+      const ratio = clamp(Math.round((keywordIndex / keywordTotal) * 100), 0, 100) / 100;
+      return clamp(Math.round(10 + ratio * 35), 10, 45);
+    }
+    return 24;
+  }
+
+  if (stage === "validate") {
+    const target = Math.max(1, toInt(progress?.target ?? progress?.targetCount, fallbackTarget));
+    const kept = Math.max(0, toInt(progress?.kept, 0));
+    const validated = Math.max(0, toInt(progress?.validated, 0));
+    const keepRatio = target > 0 ? Math.min(1, kept / target) : 0;
+    const validateRatio = Math.min(1, validated / Math.max(6, target * 2));
+    const ratio = Math.max(keepRatio, validateRatio);
+    return clamp(Math.round(45 + ratio * 50), 45, 95);
+  }
+
+  return null;
+}
+
 function parseRecommendationRunRequest(req) {
   const userSettings = req?.user?.settings || {};
   const keywords = normalizeStringList(req.body?.keywords, 30);
@@ -648,7 +691,9 @@ function startRecommendationRefreshJob({
     stage: "queued",
     targetCount,
     cooldownDays,
+    percent: 1,
   });
+  job.items = [];
   recommendationRunByUser.set(uid, job.id);
 
   (async () => {
@@ -660,6 +705,7 @@ function startRecommendationRefreshJob({
           targetCount,
           cooldownDays,
           keywordsCount: Array.isArray(keywords) ? keywords.length : 0,
+          percent: 3,
         },
       });
 
@@ -670,12 +716,45 @@ function startRecommendationRefreshJob({
         targetCount,
         cooldownDays,
         onProgress: (progress) => {
+          const nextProgress = {
+            stage: String(progress?.stage || "running"),
+            ...progress,
+          };
+          const normalizedPercent = normalizeRecommendationJobProgressPercent(nextProgress, targetCount);
+          if (Number.isFinite(Number(normalizedPercent))) {
+            nextProgress.percent = Number(normalizedPercent);
+          }
+
+          let nextItems = Array.isArray(job.items) ? [...job.items] : [];
+          const latestItem = progress?.latestItem && typeof progress.latestItem === "object"
+            ? progress.latestItem
+            : null;
+          if (latestItem) {
+            const sourceUrl = String(latestItem?.sourceUrl || "").trim();
+            if (sourceUrl) {
+              const idx = nextItems.findIndex(
+                (it) => String(it?.sourceUrl || "").trim() === sourceUrl,
+              );
+              const normalizedItem = {
+                ...latestItem,
+                sourceUrl,
+              };
+              if (idx >= 0) {
+                nextItems[idx] = { ...nextItems[idx], ...normalizedItem };
+              } else {
+                nextItems.push(normalizedItem);
+              }
+              const keep = Math.max(40, Math.min(200, Number(targetCount) || 80));
+              if (nextItems.length > keep) {
+                nextItems = nextItems.slice(nextItems.length - keep);
+              }
+            }
+          }
+
           patchLegacyJob(job, {
             status: "running",
-            progress: {
-              stage: String(progress?.stage || "running"),
-              ...progress,
-            },
+            progress: nextProgress,
+            items: nextItems,
           });
         },
       });
@@ -708,6 +787,7 @@ function startRecommendationRefreshJob({
           validated,
           qcRejected,
           scoredCandidates,
+          percent: 100,
         },
         fill,
         items,

@@ -131,6 +131,13 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
   }
 
   double? _fillProgressRatio(Map<String, dynamic> progress) {
+    final percent = num.tryParse((progress['percent'] ?? '').toString());
+    if (percent != null) {
+      final bounded = percent.toDouble();
+      if (bounded <= 0) return 0;
+      if (bounded >= 100) return 1;
+      return bounded / 100.0;
+    }
     final stage = (progress['stage'] ?? '').toString();
     if (stage != 'validate') return null;
     final kept = int.tryParse((progress['kept'] ?? 0).toString()) ?? 0;
@@ -214,7 +221,7 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
     });
     try {
       final recoJson = await widget.api.getJson('/api/recommendations', query: {
-        'limit': '50',
+        'limit': '120',
       });
       final savedJson =
           await widget.api.getJson('/api/recommendations/saved', query: {
@@ -242,7 +249,7 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
   Future<void> _reloadListQuietly() async {
     try {
       final recoJson = await widget.api.getJson('/api/recommendations', query: {
-        'limit': '50',
+        'limit': '120',
       });
       final savedJson =
           await widget.api.getJson('/api/recommendations/saved', query: {
@@ -408,6 +415,7 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
           : '마지막 채우기 ${_nowLabel()} · 결과 0개${hint.isNotEmpty ? " ($hint)" : ""}';
       _fillProgress = {
         'stage': count > 0 ? 'done' : 'done_empty',
+        'percent': 100,
         'count': count,
         'removedCount': removed,
         'hint': hint,
@@ -440,6 +448,15 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
       if (mounted) {
         setState(() {
           _fillProgress = progress;
+          final runningItems = (job['items'] as List?) ?? const [];
+          if (runningItems.isNotEmpty) {
+            _items = runningItems
+                .map((e) => (e as Map).cast<String, dynamic>())
+                .toList();
+            _showSavedOnly = false;
+            _selected.removeWhere((u) =>
+                !_items.any((it) => (it['sourceUrl'] ?? '').toString() == u));
+          }
         });
       }
       final status = (job['status'] ?? '').toString().toLowerCase();
@@ -464,18 +481,23 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
   }
 
   Future<void> _runNow() async {
+    const fillTargetCount = 80;
     setState(() {
       _loading = true;
       _error = null;
       _fillStartedAt = DateTime.now();
-      _fillProgress = const {'stage': 'queued'};
+      _fillProgress = const {'stage': 'queued', 'percent': 1};
+      _items = const [];
+      _selected.clear();
+      _showSavedOnly = false;
+      _lastRunSummary = '마지막 채우기 ${_nowLabel()} · 기존 추천 비우고 새 목록 생성 시작';
     });
     try {
       Map<String, dynamic>? startJson;
       try {
         startJson =
             await widget.api.postJson('/api/recommendations/fill/start', {
-          'targetCount': 6,
+          'targetCount': fillTargetCount,
         });
       } on ApiException catch (e) {
         if (e.statusCode != 404) rethrow;
@@ -497,7 +519,7 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
       } else {
         // Fallback for older server runtimes without async fill job endpoint.
         final json = await widget.api.postJson('/api/recommendations/fill', {
-          'targetCount': 6,
+          'targetCount': fillTargetCount,
         });
         await _applyFillResponse(json);
       }
@@ -692,6 +714,7 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
     final fillStage = (_fillProgress?['stage'] ?? '').toString();
     final fillCount =
         int.tryParse((_fillProgress?['count'] ?? 0).toString()) ?? 0;
+    final fillPercent = num.tryParse((_fillProgress?['percent'] ?? '').toString());
     final fillDone = fillStage == 'done' || fillStage == 'done_empty';
     final fillEmptyDone =
         fillStage == 'done_empty' || (fillStage == 'done' && fillCount <= 0);
@@ -855,7 +878,7 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
                       ),
                       if ((_activeFillJobId ?? '').isNotEmpty)
                         Text(
-                          '#${_activeFillJobId!.length > 8 ? _activeFillJobId!.substring(0, 8) : _activeFillJobId!}',
+                          '${fillPercent != null ? '${fillPercent.round()}% · ' : ''}#${_activeFillJobId!.length > 8 ? _activeFillJobId!.substring(0, 8) : _activeFillJobId!}',
                           style: TextStyle(
                             fontSize: 12,
                             color: Theme.of(context)

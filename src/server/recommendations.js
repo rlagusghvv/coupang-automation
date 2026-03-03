@@ -129,7 +129,7 @@ async function readHtmlWithCharset(response) {
 export const DEFAULT_BAN_KEYWORDS = [
   // regulated (food etc)
   '식품', '먹거리', '음료', '건기식', '건강기능', '홍삼', '비타민', '영양',
-  '올리브유', '카놀라', '카놀라유', '식용유', '오일', '식초', '발사믹', '꿀', '차', '커피', '과자', '간식', '스틱',
+  '올리브유', '카놀라', '카놀라유', '식용유', '오일', '식초', '발사믹', '꿀', '커피', '과자', '간식', '스틱',
   '한우', '소고기', '돼지고기', '닭고기', '축산', '수산', '김치', '라면',
   '의약', '의료', '치료', '진단',
   '화장품', '미백', '주름', '탈모',
@@ -322,9 +322,22 @@ export async function fetchDomeggookUrlsByKeyword({ keyword, limit = 40, storage
 }
 
 function containsBanKeyword(text, banList) {
-  const t = String(text || '').toLowerCase();
+  const t = String(text || '').toLowerCase().replace(/\s+/g, ' ').trim();
   if (!t) return false;
-  return (banList || []).some((k) => t.includes(String(k || '').toLowerCase()));
+  const escapeRegex = (raw) => String(raw || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  for (const raw of (banList || [])) {
+    const kw = String(raw || '').toLowerCase().trim();
+    if (!kw) continue;
+    // One-character Korean tokens (e.g. "차") cause severe false positives for discovery.
+    if (kw.length <= 1) continue;
+    if (/^[a-z0-9]+$/i.test(kw)) {
+      const re = new RegExp(`(^|[^a-z0-9])${escapeRegex(kw)}([^a-z0-9]|$)`, 'i');
+      if (re.test(t)) return true;
+      continue;
+    }
+    if (t.includes(kw)) return true;
+  }
+  return false;
 }
 
 function detectRecommendationThemes({ title = '', keyword = '' } = {}) {
@@ -2085,7 +2098,9 @@ async function generateRecommendationsBatch({
   const candidates = [];
   let openApiFailureStreak = 0;
   let openApiCircuitBreakApplied = false;
-  for (const kw of seed.slice(0, keywordScanLimit)) {
+  const keywordsInScope = seed.slice(0, keywordScanLimit);
+  for (const [keywordOffset, kw] of keywordsInScope.entries()) {
+    const keywordIndex = keywordOffset + 1;
     if (Date.now() - startedAt > Math.floor(maxRuntimeMs * 0.45)) break;
     const effectiveSourceMode =
       candidateSourceMode === 'auto' && openApiCircuitBreakApplied
@@ -2119,6 +2134,8 @@ async function generateRecommendationsBatch({
                     stage: 'source_switch_playwright',
                     reason: 'openapi_failed_consecutively',
                     failureStreak: openApiFailureStreak,
+                    keywordIndex,
+                    keywordTotal: keywordsInScope.length,
                   });
                 } catch {}
               }
@@ -2131,7 +2148,15 @@ async function generateRecommendationsBatch({
     } catch (e) {
       if (String(e?.message || e).includes('rate_limited')) {
         if (typeof onProgress === 'function') {
-          try { onProgress({ stage: 'rate_limited', keyword: kw, candidates: candidates.length }); } catch {}
+          try {
+            onProgress({
+              stage: 'rate_limited',
+              keyword: kw,
+              candidates: candidates.length,
+              keywordIndex,
+              keywordTotal: keywordsInScope.length,
+            });
+          } catch {}
         }
         throw e;
       }
@@ -2151,7 +2176,15 @@ async function generateRecommendationsBatch({
       if (candidates.length >= 1800) break;
     }
     if (typeof onProgress === 'function') {
-      try { onProgress({ stage: 'collect', keyword: kw, candidates: candidates.length }); } catch {}
+      try {
+        onProgress({
+          stage: 'collect',
+          keyword: kw,
+          candidates: candidates.length,
+          keywordIndex,
+          keywordTotal: keywordsInScope.length,
+        });
+      } catch {}
     }
     if (candidates.length >= 1800) break;
   }
@@ -2699,8 +2732,43 @@ async function generateRecommendationsBatch({
         },
       },
     });
-    if (typeof onProgress === 'function' && validated % 3 === 0) {
-      try { onProgress({ stage: 'validate', validated, kept: final.length, qcRejected, target: topN }); } catch {}
+    if (typeof onProgress === 'function') {
+      try {
+        const previewImages = Array.isArray(v.previewImages)
+          ? v.previewImages
+              .map((u) => String(u || '').trim())
+              .filter(Boolean)
+              .map((u) => toRecommendationImageUrl(u, cand.sourceUrl))
+              .slice(0, 30)
+          : [];
+        onProgress({
+          stage: 'validate',
+          validated,
+          kept: final.length,
+          qcRejected,
+          target: topN,
+          latestItem: {
+            sourceUrl: cand.sourceUrl,
+            keyword: cand.keyword,
+            title: rescored.title || prevTitle || cand.title,
+            mainImageUrl: toRecommendationImageUrl(prevMainImageUrl || cand.mainImageUrl, cand.sourceUrl),
+            sourcePrice: rescored.sourcePrice,
+            shippingFee: rescored.shippingFee,
+            finalPrice: rescored.finalPrice,
+            profit: rescored.profit,
+            marginRate: rescored.marginRate,
+            score: rescored.score,
+            reason: resolvedReason,
+            contentImageCount: detailDisplayCount,
+            previewImages,
+            qc: {
+              tier,
+              eligibleUpload,
+              detailImageCount: detailDisplayCount,
+            },
+          },
+        });
+      } catch {}
     }
   }
 
@@ -2731,6 +2799,37 @@ async function generateRecommendationsBatch({
         },
       });
       fallbackFilledCount += 1;
+      if (typeof onProgress === 'function') {
+        try {
+          onProgress({
+            stage: 'validate',
+            validated,
+            kept: final.length,
+            qcRejected,
+            target: topN,
+            latestItem: {
+              sourceUrl: cand.sourceUrl,
+              keyword: cand.keyword,
+              title: String(cand.title || '').trim(),
+              mainImageUrl: toRecommendationImageUrl(cand.mainImageUrl, cand.sourceUrl),
+              sourcePrice: Number.isFinite(Number(cand.sourcePrice)) ? Number(cand.sourcePrice) : null,
+              shippingFee: Number.isFinite(Number(cand.shippingFee)) ? Number(cand.shippingFee) : null,
+              finalPrice: Number.isFinite(Number(cand.finalPrice)) ? Number(cand.finalPrice) : null,
+              profit: Number.isFinite(Number(cand.profit)) ? Number(cand.profit) : null,
+              marginRate: Number.isFinite(Number(cand.marginRate)) ? Number(cand.marginRate) : null,
+              score: Number.isFinite(Number(cand.score)) ? Number(cand.score) : null,
+              reason: String(cand.reason || '').trim(),
+              contentImageCount: 0,
+              previewImages: [],
+              qc: {
+                tier: 'C',
+                eligibleUpload: false,
+                detailImageCount: 0,
+              },
+            },
+          });
+        } catch {}
+      }
     }
   }
 
