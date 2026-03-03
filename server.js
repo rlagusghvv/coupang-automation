@@ -598,6 +598,7 @@ function compactLegacyJob(job) {
     updatedAt: job.updatedAt,
     progress: job.progress && typeof job.progress === "object" ? job.progress : {},
     errorMessage: job.errorMessage || null,
+    stopRequested: Boolean(job.stopRequested),
   };
 }
 
@@ -694,6 +695,7 @@ function startRecommendationRefreshJob({
     percent: 1,
   });
   job.items = [];
+  job.stopRequested = false;
   recommendationRunByUser.set(uid, job.id);
 
   (async () => {
@@ -715,6 +717,7 @@ function startRecommendationRefreshJob({
         keywords,
         targetCount,
         cooldownDays,
+        shouldStop: () => Boolean(job.stopRequested),
         onProgress: (progress) => {
           const nextProgress = {
             stage: String(progress?.stage || "running"),
@@ -774,20 +777,25 @@ function startRecommendationRefreshJob({
       const scoredCandidates =
         Number(diagnostics?.scoredCandidates || 0) || 0;
       const progressStage = finalCount > 0 ? "done" : "done_empty";
+      const wasStopped = Boolean(fill?.stopped || job.stopRequested);
+      const finalHint = wasStopped
+        ? (hint || "사용자 요청으로 중단되었습니다.")
+        : hint;
 
       patchLegacyJob(job, {
-        status: "success",
+        status: wasStopped ? "stopped" : "success",
         progress: {
-          stage: progressStage,
+          stage: wasStopped ? "stopped" : progressStage,
           count: finalCount,
           removedCount,
           targetCount,
           cooldownDays,
-          hint,
+          hint: finalHint,
           validated,
           qcRejected,
           scoredCandidates,
           percent: 100,
+          stopRequested: wasStopped,
         },
         fill,
         items,
@@ -878,6 +886,37 @@ app.get('/api/jobs/:id', authRequired, async (req, res) => {
   const job = legacyJobs.get(id);
   if (!job) return res.status(404).json({ ok: false, error: 'job_not_found' });
   return res.json({ ok: true, job });
+});
+
+app.post('/api/jobs/:id/stop', authRequired, async (req, res) => {
+  const id = String(req.params?.id || '').trim();
+  const job = legacyJobs.get(id);
+  if (!job) return res.status(404).json({ ok: false, error: 'job_not_found' });
+
+  const status = String(job.status || '').toLowerCase();
+  if (status !== 'running' && status !== 'queued') {
+    return res.json({ ok: true, stopping: false, alreadyFinished: true, job });
+  }
+
+  const prevProgress = job.progress && typeof job.progress === 'object'
+    ? job.progress
+    : {};
+  const prevPercent = Number(prevProgress?.percent);
+  const nextPercent = Number.isFinite(prevPercent)
+    ? Math.max(1, Math.min(99, Math.floor(prevPercent)))
+    : 1;
+
+  patchLegacyJob(job, {
+    stopRequested: true,
+    progress: {
+      ...prevProgress,
+      stage: 'stopping',
+      percent: nextPercent,
+      stopRequested: true,
+    },
+  });
+
+  return res.json({ ok: true, stopping: true, job });
 });
 
 

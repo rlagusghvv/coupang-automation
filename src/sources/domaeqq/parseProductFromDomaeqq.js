@@ -1446,9 +1446,15 @@ export async function parseProductFromDomaeqq(url, opts = {}) {
         openApiDetailHtml ||
         String(quickDetail?.detailHtml || "").trim() ||
         buildImageHtml(mergedDetailImages.slice(0, 80));
-      const fastShippingFee = Number.isFinite(openApiShippingFee)
-        ? openApiShippingFee
-        : parseShippingFeeFromText(`${fastTitle} ${fastContentHtml}`);
+      const parsedShippingFromFastText = parseShippingFeeFromText(`${fastTitle} ${fastContentHtml}`);
+      const fastShippingFee = (() => {
+        // OpenAPI may return 0/blank shipping even when detail text says paid shipping.
+        // Prefer explicit positive values, then fall back to 0/unknown.
+        if (Number.isFinite(openApiShippingFee) && openApiShippingFee > 0) return openApiShippingFee;
+        if (Number.isFinite(Number(parsedShippingFromFastText))) return Number(parsedShippingFromFastText);
+        if (Number.isFinite(openApiShippingFee)) return openApiShippingFee;
+        return null;
+      })();
       const hasSeedCore =
         Boolean(fastTitle) &&
         Number.isFinite(fastPrice) &&

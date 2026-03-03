@@ -100,6 +100,11 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
             : '품질 검증 중: 검증 $validated건 · 통과 $kept/$target';
       case 'rate_limited':
         return '도매꾹 요청 제한 감지(429) - 잠시 후 자동 재시도 권장';
+      case 'stopping':
+        return '중단 요청됨: 현재 작업 단위(상품/키워드) 마무리 후 멈춥니다.';
+      case 'stopped':
+        final count = int.tryParse((progress['count'] ?? 0).toString()) ?? 0;
+        return '중단됨: 현재까지 $count개 수집';
       case 'done_empty':
         final hint = (progress['hint'] ?? '').toString().trim();
         final validated =
@@ -400,6 +405,7 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
     final removed = int.tryParse((fill['removedCount'] ?? 0).toString()) ?? 0;
     final count =
         int.tryParse((fill['count'] ?? list.length).toString()) ?? list.length;
+    final stopped = fill['stopped'] == true;
     final cooldown = int.tryParse((fill['cooldownDays'] ?? 7).toString()) ?? 7;
     final diagnostics =
         (fill['diagnostics'] as Map?)?.cast<String, dynamic>() ??
@@ -411,10 +417,12 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
       _selected.clear();
       _showSavedOnly = false;
       _lastRunSummary = count > 0
-          ? '마지막 채우기 ${_nowLabel()} · $count개 생성(이전 $removed개 교체)'
+          ? (stopped
+              ? '마지막 채우기 ${_nowLabel()} · 사용자 중단, 현재까지 $count개'
+              : '마지막 채우기 ${_nowLabel()} · $count개 생성(이전 $removed개 교체)')
           : '마지막 채우기 ${_nowLabel()} · 결과 0개${hint.isNotEmpty ? " ($hint)" : ""}';
       _fillProgress = {
-        'stage': count > 0 ? 'done' : 'done_empty',
+        'stage': stopped ? 'stopped' : (count > 0 ? 'done' : 'done_empty'),
         'percent': 100,
         'count': count,
         'removedCount': removed,
@@ -430,7 +438,9 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
-          count > 0
+          stopped
+              ? '추천 채우기 중단: 현재까지 $count개 반영'
+              : count > 0
               ? '추천 채우기 완료: 기존 $removed개 교체, 새 $count개 (재노출 제외 $cooldown일)'
               : '추천 채우기 완료: 새 0개 (재노출 제외 $cooldown일)${hint.isNotEmpty ? " - $hint" : ""}',
         ),
@@ -439,7 +449,7 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
   }
 
   Future<Map<String, dynamic>?> _pollFillJob(String jobId) async {
-    for (var i = 0; i < 180; i += 1) {
+    for (var i = 0; i < 3600; i += 1) {
       await Future<void>.delayed(const Duration(seconds: 1));
       final j = await widget.api.getJson('/api/jobs/$jobId');
       final job = (j['job'] as Map?)?.cast<String, dynamic>() ?? const {};
@@ -470,6 +480,22 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
           'items': items,
         };
       }
+      if (status == 'stopped') {
+        final result = (job['result'] as Map?)?.cast<String, dynamic>() ?? {};
+        if (result.isNotEmpty) return result;
+        final fill = (job['fill'] as Map?)?.cast<String, dynamic>() ??
+            const <String, dynamic>{};
+        final items = (job['items'] as List?) ?? const [];
+        return {
+          'fill': {
+            ...fill,
+            'ok': true,
+            'stopped': true,
+            'count': fill['count'] ?? items.length,
+          },
+          'items': items,
+        };
+      }
       if (status == 'failed') {
         final message = (job['errorMessage'] ?? job['error'] ?? '추천 채우기 실패')
             .toString()
@@ -478,6 +504,30 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
       }
     }
     return null;
+  }
+
+  Future<void> _requestStopFill() async {
+    final jobId = (_activeFillJobId ?? '').trim();
+    if (jobId.isEmpty) return;
+    try {
+      await widget.api.postJson('/api/jobs/$jobId/stop', const {});
+      if (!mounted) return;
+      setState(() {
+        final next = <String, dynamic>{
+          ...(_fillProgress ?? const <String, dynamic>{}),
+          'stage': 'stopping',
+        };
+        _fillProgress = next;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('중단 요청을 보냈습니다. 현재 작업 단위 완료 후 멈춥니다.')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('중단 요청 실패: $e')),
+      );
+    }
   }
 
   Future<void> _runNow() async {
@@ -513,7 +563,17 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
         });
         final result = await _pollFillJob(jobId);
         if (result == null) {
-          throw Exception('추천 채우기 진행시간이 길어져 타임아웃되었습니다. 다시 시도해 주세요.');
+          setState(() {
+            _lastRunSummary = '마지막 채우기 ${_nowLabel()} · 작업이 길어 백그라운드로 계속 진행 중';
+          });
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('작업 시간이 길어 계속 진행 중입니다. 잠시 후 상태를 다시 확인하세요.'),
+              ),
+            );
+          }
+          return;
         }
         await _applyFillResponse(result);
       } else {
@@ -715,9 +775,12 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
     final fillCount =
         int.tryParse((_fillProgress?['count'] ?? 0).toString()) ?? 0;
     final fillPercent = num.tryParse((_fillProgress?['percent'] ?? '').toString());
-    final fillDone = fillStage == 'done' || fillStage == 'done_empty';
+    final fillDone =
+        fillStage == 'done' || fillStage == 'done_empty' || fillStage == 'stopped';
     final fillEmptyDone =
-        fillStage == 'done_empty' || (fillStage == 'done' && fillCount <= 0);
+        fillStage == 'done_empty' ||
+        fillStage == 'stopped' ||
+        (fillStage == 'done' && fillCount <= 0);
     final fillRunning =
         _loading || ((_activeFillJobId ?? '').isNotEmpty && !fillDone);
 
@@ -736,9 +799,11 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
             tooltip: '선택 해제',
           ),
         IconButton(
-          onPressed: _loading ? null : _runNow,
-          icon: const Icon(Icons.autorenew),
-          tooltip: '채우기(기존 목록 교체)',
+          onPressed: fillRunning
+              ? _requestStopFill
+              : (_loading ? null : _runNow),
+          icon: Icon(fillRunning ? Icons.stop_circle_outlined : Icons.autorenew),
+          tooltip: fillRunning ? '중단(현재 작업 단위 마무리 후)' : '채우기(기존 목록 교체)',
         ),
       ],
       child: Column(

@@ -2047,6 +2047,7 @@ async function generateRecommendationsBatch({
   maxRuntimeMs = 110_000,
   previewTimeoutMs = 9_000,
   candidateSourceMode = 'auto',
+  shouldStop = null,
 } = {}) {
   const seed = Array.isArray(keywords) && keywords.length > 0 ? keywords : defaultKeywordSet();
   const startedAt = Date.now();
@@ -2094,12 +2095,18 @@ async function generateRecommendationsBatch({
     policy.requireQcPass ? 80 : 40,
     Math.min(160, Math.ceil(Number(topN || 80) * (policy.requireQcPass ? 1.8 : 1.2))),
   );
+  const isStopRequested = () => (typeof shouldStop === 'function' ? Boolean(shouldStop()) : false);
+  let stopRequested = false;
 
   const candidates = [];
   let openApiFailureStreak = 0;
   let openApiCircuitBreakApplied = false;
   const keywordsInScope = seed.slice(0, keywordScanLimit);
   for (const [keywordOffset, kw] of keywordsInScope.entries()) {
+    if (isStopRequested()) {
+      stopRequested = true;
+      break;
+    }
     const keywordIndex = keywordOffset + 1;
     if (Date.now() - startedAt > Math.floor(maxRuntimeMs * 0.45)) break;
     const effectiveSourceMode =
@@ -2203,6 +2210,10 @@ async function generateRecommendationsBatch({
   const strictRejectCounts = {};
   const scoringPasses = [];
   for (const c of uniq) {
+    if (isStopRequested()) {
+      stopRequested = true;
+      break;
+    }
     if (Date.now() - startedAt > Math.floor(maxRuntimeMs * 0.65)) break;
     if (containsBanKeyword(c.title, DEFAULT_BAN_KEYWORDS)) continue;
     const candidatePrice = parseCandidatePrice(c.price);
@@ -2266,6 +2277,10 @@ async function generateRecommendationsBatch({
       : DEFAULT_BAN_KEYWORDS;
     const existing = new Set(scoredPool.map((x) => String(x?.sourceUrl || '').trim()));
     for (const c of uniq) {
+      if (isStopRequested()) {
+        stopRequested = true;
+        break;
+      }
       if (Date.now() - startedAt > Math.floor(maxRuntimeMs * 0.75)) break;
       const u = String(c?.url || '').trim();
       if (!u || existing.has(u)) continue;
@@ -2332,6 +2347,10 @@ async function generateRecommendationsBatch({
     );
     const existing = new Set(scoredPool.map((x) => String(x?.sourceUrl || '').trim()));
     for (const c of uniq) {
+      if (isStopRequested()) {
+        stopRequested = true;
+        break;
+      }
       if (Date.now() - startedAt > Math.floor(maxRuntimeMs * 0.83)) break;
       const u = String(c?.url || '').trim();
       if (!u || existing.has(u)) continue;
@@ -2447,6 +2466,10 @@ async function generateRecommendationsBatch({
   const maxValidateCap = policy.requireQcPass ? Math.max(220, topN * 5) : Math.max(80, topN * 3);
   maxValidate = Math.min(maxValidate, maxValidateCap);
   for (const cand of scoredPool) {
+    if (isStopRequested()) {
+      stopRequested = true;
+      break;
+    }
     if (final.length >= topN) break;
     if (validated >= maxValidate) break;
     if (Date.now() - startedAt > Math.floor(maxRuntimeMs * 0.92)) break;
@@ -2778,6 +2801,10 @@ async function generateRecommendationsBatch({
   if (policy.allowQuickFallback && final.length < topN) {
     const chosen = new Set(final.map((x) => String(x?.sourceUrl || '')));
     for (const cand of scoredPool) {
+      if (isStopRequested()) {
+        stopRequested = true;
+        break;
+      }
       if (final.length >= topN) break;
       if (excludeUrls.has(cand.sourceUrl)) continue;
       if (chosen.has(cand.sourceUrl)) continue;
@@ -2852,6 +2879,7 @@ async function generateRecommendationsBatch({
 
   const diagnostics = {
     candidateSourceMode,
+    stopped: stopRequested,
     openApiCircuitBreakApplied,
     openApiFailureStreakFinal: openApiFailureStreak,
     keywordsTried: keywordScanLimit,
@@ -3168,8 +3196,10 @@ export async function refreshRecommendationsForUser({
   targetCount = 80,
   cooldownDays,
   onProgress = null,
+  shouldStop = null,
 } = {}) {
   const policy = resolveRecommendationPolicy(settings || {});
+  const isStopRequested = () => (typeof shouldStop === 'function' ? Boolean(shouldStop()) : false);
   const seed = Array.isArray(keywords) && keywords.length > 0 ? keywords : defaultKeywordSet();
   const target = Math.max(5, Math.min(100, Number(targetCount) || 20));
   const cooldown = normalizeCooldownDays(
@@ -3225,12 +3255,13 @@ export async function refreshRecommendationsForUser({
     topN: target,
     excludeUrls,
     onProgress,
+    shouldStop,
   });
 
   // If too few items are found, retry without "recent seen" restriction.
   // Keep uploaded products excluded to avoid duplicate uploads.
   const tooFew = batch.items.length < Math.max(2, Math.floor(target * 0.5));
-  if (policy.allowRelaxedExclusion && tooFew && recentSeenUrls.length > 0) {
+  if (!isStopRequested() && policy.allowRelaxedExclusion && tooFew && recentSeenUrls.length > 0) {
     const uploadedOnlyExclude = new Set(uploadedUrls);
     if (typeof onProgress === 'function') {
       try {
@@ -3247,6 +3278,7 @@ export async function refreshRecommendationsForUser({
       topN: target,
       excludeUrls: uploadedOnlyExclude,
       onProgress,
+      shouldStop,
     });
     if (retryBatch.items.length > batch.items.length) {
       batch = retryBatch;
@@ -3275,6 +3307,7 @@ export async function refreshRecommendationsForUser({
   // Underfilled-result rescue #1:
   // keep QC strict, but switch candidate source to list scraping (playwright).
   const shouldTryPlaywrightRescue =
+    !isStopRequested() &&
     severelyUnderfilled &&
     (validatedCount >= 5 || noCandidatesCollected);
   if (shouldTryPlaywrightRescue) {
@@ -3295,6 +3328,7 @@ export async function refreshRecommendationsForUser({
       excludeUrls: activeExcludeUrls,
       onProgress,
       candidateSourceMode: 'playwright',
+      shouldStop,
     });
     if (rescueBatch.items.length > batch.items.length) {
       batch = rescueBatch;
@@ -3308,6 +3342,7 @@ export async function refreshRecommendationsForUser({
   // when detail-image shortage dominates QC rejections, switch to review mode
   // so operators can still inspect candidates without repetitive reruns.
   const shouldTryReviewModeRescue =
+    !isStopRequested() &&
     allowReviewModeRescue &&
     batch.items.length < underfilledThreshold &&
     Number(batch?.diagnostics?.qcRejected || 0) > 0 &&
@@ -3336,6 +3371,7 @@ export async function refreshRecommendationsForUser({
       excludeUrls: activeExcludeUrls,
       onProgress,
       candidateSourceMode: 'auto',
+      shouldStop,
     });
     if (reviewBatch.items.length > batch.items.length) {
       batch = reviewBatch;
@@ -3347,6 +3383,7 @@ export async function refreshRecommendationsForUser({
 
   const diagnostics = {
     ...batch.diagnostics,
+    stopped: Boolean(isStopRequested() || batch?.diagnostics?.stopped),
     initialExcludedCount,
     finalExcludedCount,
     relaxedExclusionAllowed: Boolean(policy.allowRelaxedExclusion),
@@ -3360,6 +3397,7 @@ export async function refreshRecommendationsForUser({
 
   return {
     ok: true,
+    stopped: Boolean(diagnostics?.stopped),
     count: batch.items.length,
     removedCount: existingUrls.length,
     markedCount,
