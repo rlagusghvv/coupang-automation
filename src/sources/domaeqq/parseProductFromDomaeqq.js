@@ -35,9 +35,9 @@ function parseShippingFeeFromText(allText) {
   };
 
   const patterns = [
-    /(?:기본\s*배송비|택배비|배송정보|배송비|배송\s*비용)\s*[:\-]?\s*(\d[\d,]*)\s*원/g,
-    /(?:배송비|택배비)[^\d]{0,12}(\d[\d,]*)\s*원/g,
-    /(\d[\d,]*)\s*원[^\S\r\n]{0,3}(?:배송비|택배비)/g,
+    /(?:기본\s*배송비|택배비|배송정보|배송비|배송\s*비용|택배)\s*[:\-]?\s*(\d[\d,]*)\s*원/g,
+    /(?:배송비|택배비|택배|배송)[^\d]{0,12}(\d[\d,]*)\s*원/g,
+    /(\d[\d,]*)\s*원[^\S\r\n]{0,3}(?:배송비|택배비|택배)/g,
   ];
   for (const re of patterns) {
     let m;
@@ -61,6 +61,30 @@ function parseShippingFeeFromText(allText) {
   if (hasPaidUnknown) return -1;
 
   return null;
+}
+
+function parseShippingTierTableFee(text) {
+  const t = String(text || "")
+    .replace(/<[^>]*>/g, " ")
+    .replace(/&nbsp;|&#160;/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!t) return null;
+  if (!/[+|]/.test(t)) return null;
+
+  // getItemView deli.*.tbl format example:
+  // "1+2500|20+2350|40+2100"
+  const matches = Array.from(
+    t.matchAll(/(?:^|[|])\s*\d[\d,]*\s*\+\s*(\d[\d,]*)/g),
+  );
+  if (matches.length === 0) return null;
+
+  const fees = matches
+    .map((m) => Number(String(m?.[1] || "").replace(/,/g, "")))
+    .filter((n) => Number.isFinite(n) && n >= 0 && n <= 50000);
+  if (fees.length === 0) return null;
+  // Conservative estimate for recommendation safety.
+  return Math.max(...fees);
 }
 
 async function extractDomeggookQuantityPriceTiers(page) {
@@ -253,7 +277,11 @@ function collectOpenApiSignals(node, state, parentKey = "", baseUrl = "") {
       if (Number.isFinite(n) && n > 0) state.prices.push(n);
     }
     if (shippingKey || /배송|택배|착불/.test(text)) {
-      const ship = parseShippingFeeFromText(text);
+      const shipText = parseShippingFeeFromText(text);
+      const shipTier = parseShippingTierTableFee(text);
+      const ship = Number.isFinite(Number(shipText))
+        ? Number(shipText)
+        : (Number.isFinite(Number(shipTier)) ? Number(shipTier) : null);
       if (Number.isFinite(Number(ship))) {
         const n = Number(ship);
         if (n < 0) state.shippingUnknownPaid = true;
@@ -277,8 +305,11 @@ function collectOpenApiSignals(node, state, parentKey = "", baseUrl = "") {
   if (typeof node === "number") {
     const priceKey = /(price|amount|cost|sell|sale|supply)/i.test(key) && !/(delivery|ship|fee)/i.test(key);
     if (priceKey && Number.isFinite(node) && node > 0) state.prices.push(Number(node));
-    const shippingKey = /(delivery|ship|fee|deli|배송|택배)/i.test(key);
-    if (shippingKey && Number.isFinite(node) && node >= 0 && node <= 50000) {
+    const shippingKey = /(delivery|ship|deli|배송|택배)/i.test(key);
+    const shippingAmountKey =
+      /(fee|cost|amount|price|배송비|택배비)/i.test(key) ||
+      /(^|\.)deli\.(dome|supply|ggook)$/i.test(key);
+    if (shippingKey && shippingAmountKey && Number.isFinite(node) && node >= 0 && node <= 50000) {
       state.shippingFees.push(Math.floor(Number(node)));
     }
     return;
@@ -291,7 +322,8 @@ function collectOpenApiSignals(node, state, parentKey = "", baseUrl = "") {
 
   if (typeof node === "object") {
     for (const [k, v] of Object.entries(node)) {
-      collectOpenApiSignals(v, state, k, baseUrl);
+      const nextKey = key ? `${key}.${k}` : String(k || "");
+      collectOpenApiSignals(v, state, nextKey, baseUrl);
     }
   }
 }
