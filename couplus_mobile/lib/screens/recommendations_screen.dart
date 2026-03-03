@@ -441,8 +441,8 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
           stopped
               ? '추천 채우기 중단: 현재까지 $count개 반영'
               : count > 0
-              ? '추천 채우기 완료: 기존 $removed개 교체, 새 $count개 (재노출 제외 $cooldown일)'
-              : '추천 채우기 완료: 새 0개 (재노출 제외 $cooldown일)${hint.isNotEmpty ? " - $hint" : ""}',
+                  ? '추천 채우기 완료: 기존 $removed개 교체, 새 $count개 (재노출 제외 $cooldown일)'
+                  : '추천 채우기 완료: 새 0개 (재노출 제외 $cooldown일)${hint.isNotEmpty ? " - $hint" : ""}',
         ),
       ),
     );
@@ -774,11 +774,12 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
     final fillStage = (_fillProgress?['stage'] ?? '').toString();
     final fillCount =
         int.tryParse((_fillProgress?['count'] ?? 0).toString()) ?? 0;
-    final fillPercent = num.tryParse((_fillProgress?['percent'] ?? '').toString());
-    final fillDone =
-        fillStage == 'done' || fillStage == 'done_empty' || fillStage == 'stopped';
-    final fillEmptyDone =
+    final fillPercent =
+        num.tryParse((_fillProgress?['percent'] ?? '').toString());
+    final fillDone = fillStage == 'done' ||
         fillStage == 'done_empty' ||
+        fillStage == 'stopped';
+    final fillEmptyDone = fillStage == 'done_empty' ||
         fillStage == 'stopped' ||
         (fillStage == 'done' && fillCount <= 0);
     final fillRunning =
@@ -799,10 +800,10 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
             tooltip: '선택 해제',
           ),
         IconButton(
-          onPressed: fillRunning
-              ? _requestStopFill
-              : (_loading ? null : _runNow),
-          icon: Icon(fillRunning ? Icons.stop_circle_outlined : Icons.autorenew),
+          onPressed:
+              fillRunning ? _requestStopFill : (_loading ? null : _runNow),
+          icon:
+              Icon(fillRunning ? Icons.stop_circle_outlined : Icons.autorenew),
           tooltip: fillRunning ? '중단(현재 작업 단위 마무리 후)' : '채우기(기존 목록 교체)',
         ),
       ],
