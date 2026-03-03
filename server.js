@@ -647,7 +647,7 @@ function normalizeRecommendationJobProgressPercent(progress = {}, fallbackTarget
 function parseRecommendationRunRequest(req) {
   const userSettings = req?.user?.settings || {};
   const keywords = normalizeStringList(req.body?.keywords, 30);
-  const targetCount = Math.max(5, Math.min(100, Number(req.body?.targetCount || 80) || 80));
+  const targetCount = Math.max(50, Math.min(100, Number(req.body?.targetCount || 80) || 80));
   const cooldownDays = Math.max(
     1,
     Math.min(60, Number(req.body?.cooldownDays || userSettings?.recommendationCooldownDays || 7) || 7),
@@ -3063,7 +3063,7 @@ app.post("/api/recommendations/fill/start", authRequired, async (req, res) => {
 app.post("/api/recommendations/fill", authRequired, async (req, res) => {
   try {
     const keywords = normalizeStringList(req.body?.keywords, 30);
-    const targetCount = Math.max(5, Math.min(100, Number(req.body?.targetCount || 80) || 80));
+    const targetCount = Math.max(50, Math.min(100, Number(req.body?.targetCount || 80) || 80));
     const cooldownDays = Math.max(
       1,
       Math.min(60, Number(req.body?.cooldownDays || req.user?.settings?.recommendationCooldownDays || 7) || 7),

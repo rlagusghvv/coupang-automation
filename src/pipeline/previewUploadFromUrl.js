@@ -172,6 +172,41 @@ function parseBoolean(value, fallback = false) {
   return fallback;
 }
 
+function sanitizeOpenApiDetailImages(urls = []) {
+  const out = [];
+  const seen = new Set();
+  for (const raw of urls || []) {
+    const u = toUrl(raw);
+    if (!u) continue;
+    const href = String(u.toString() || "").trim();
+    if (!href) continue;
+
+    const key = normalizeUrlForMatch(href) || href;
+    if (seen.has(key)) continue;
+
+    const pathSignals = inspectImagePath(u);
+    if (pathSignals.blocked) continue;
+
+    const pathname = String(u.pathname || "").toLowerCase();
+    const hasImageExt = /\.(?:jpe?g|png|gif|webp|bmp|svg)$/.test(pathname);
+    const trustedDomain =
+      pathSignals.domain === "esmplus.com" ||
+      pathSignals.domain === "alicdn.com" ||
+      pathSignals.domain === "ownerclan.com" ||
+      pathSignals.domain === "domeggook.com";
+    const keep =
+      pathSignals.allowed ||
+      pathSignals.allowBySupplierProduct ||
+      hasImageExt ||
+      trustedDomain;
+    if (!keep) continue;
+
+    seen.add(key);
+    out.push(href);
+  }
+  return out;
+}
+
 function countOverlap(tokens, referenceSet) {
   let n = 0;
   for (const t of tokens) {
@@ -587,9 +622,18 @@ export async function previewUploadFromUrl(inputUrl, settings = {}) {
   let openApiImagePassthrough = false;
 
   if (isOpenApiDetailSource && openApiIncludeAllImages && rawContentImages.length > 0) {
-    // User request mode: trust OpenAPI detail set first, then tighten later.
+    // OpenAPI passthrough mode: keep broad coverage, but remove obviously bad assets
+    // to reduce broken placeholders in recommendation cards.
     openApiImagePassthrough = true;
-    filteredImages = unique(rawContentImages).slice(0, maxContentImages);
+    const sanitizedOpenApiImages = sanitizeOpenApiDetailImages(rawContentImages);
+    const mergedPreferred = unique([
+      ...analyzed.filteredImageUrls,
+      ...sanitizedOpenApiImages,
+    ]);
+    filteredImages = (mergedPreferred.length > 0
+      ? mergedPreferred
+      : unique(rawContentImages)
+    ).slice(0, maxContentImages);
     rejectedImages = [];
     metrics = {
       ...(metrics || {}),
