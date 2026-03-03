@@ -219,11 +219,10 @@ function sanitizeOpenApiDetailImages(urls = []) {
       pathSignals.domain === "alicdn.com" ||
       pathSignals.domain === "ownerclan.com" ||
       pathSignals.domain === "domeggook.com";
-    const likelyProductFile = looksLikeProductFileName(fileName);
     const keep =
       pathSignals.allowed ||
       pathSignals.allowBySupplierProduct ||
-      (hasImageExt && likelyProductFile) ||
+      hasImageExt ||
       trustedDomain;
     if (!keep) continue;
 
@@ -426,6 +425,14 @@ export function analyzeSameProductImages({
   const sourceTokens = tokenizeUrl(sourceUrl);
   const referenceTokens = new Set([...mainTokens, ...sourceTokens]);
   const mainTokenSet = new Set(mainTokens);
+  const hostImageCountMap = new Map();
+  for (const rawUrl of rawImages) {
+    const parsed = toUrl(rawUrl);
+    if (!parsed) continue;
+    const h = normalizeHost(parsed.hostname);
+    if (!h) continue;
+    hostImageCountMap.set(h, (hostImageCountMap.get(h) || 0) + 1);
+  }
 
   const kept = [];
   const rejected = [];
@@ -463,8 +470,17 @@ export function analyzeSameProductImages({
       const isTrustedCdnDetail =
         pathSignals.domain === "esmplus.com" ||
         pathSignals.domain === "alicdn.com" ||
-        (pathSignals.domain === "ownerclan.com" && pathname.includes("/copy/"));
+        (pathSignals.domain === "ownerclan.com" &&
+          (pathname.includes("/copy/") || pathname.includes("/detail/")));
       const isSupplierProductDetail = Boolean(pathSignals.allowBySupplierProduct);
+      const fileName = pathname.split("/").pop() || "";
+      const hasImageExt = /\.(?:jpe?g|png|gif|webp|bmp)$/i.test(fileName);
+      const hostImageCount = Number(hostImageCountMap.get(host) || 0);
+      const isExternalDetailSeries =
+        hostImageCount >= 3 &&
+        hasImageExt &&
+        !pathSignals.blocked &&
+        !pathSignals.isThumb;
       const looksProductUploadPath =
         pathname.includes("/upload/item/") ||
         pathname.includes("/upload/editor/") ||
@@ -474,13 +490,13 @@ export function analyzeSameProductImages({
         pathname.includes("/attach/") ||
         pathname.includes("/attachment/") ||
         isTrustedCdnDetail ||
-        isSupplierProductDetail;
+        isSupplierProductDetail ||
+        isExternalDetailSeries;
       const looksUiAsset =
         pathname.includes("/image/common/") ||
         pathname.includes("/image/item/") ||
         pathname.includes("/image/event/") ||
         pathSignals.isThumb;
-      const fileName = pathname.split("/").pop() || "";
       const isThumbLike =
         pathSignals.isThumb ||
         /_stt_\d+\.(png|jpe?g|webp)$/i.test(fileName) ||
@@ -521,23 +537,40 @@ export function analyzeSameProductImages({
     const isTrustedCdnDetail =
       pathSignals.domain === "esmplus.com" ||
       pathSignals.domain === "alicdn.com" ||
-      (pathSignals.domain === "ownerclan.com" && pathname.includes("/copy/"));
+      (pathSignals.domain === "ownerclan.com" &&
+        (pathname.includes("/copy/") || pathname.includes("/detail/")));
     const isSupplierProductDetail = Boolean(pathSignals.allowBySupplierProduct);
+    const hostImageCount = Number(hostImageCountMap.get(host) || 0);
+    const fileName = pathname.split("/").pop() || "";
+    const hasImageExt = /\.(?:jpe?g|png|gif|webp|bmp)$/i.test(fileName);
+    const isExternalDetailSeries =
+      mainDomain === "domeggook.com" &&
+      hostImageCount >= 3 &&
+      hasImageExt &&
+      !pathSignals.blocked &&
+      !pathSignals.isThumb;
     const score =
       (exactHost ? 2 : 0) +
       (sameDomain ? 1 : 0) +
       (pathSignals.allowed ? 2 : 0) +
       (isTrustedCdnDetail ? 2 : 0) +
+      (isExternalDetailSeries ? 2 : 0) +
       (isSupplierProductDetail ? 1 : 0) +
       (overlap >= 2 ? 2 : overlap >= 1 ? 1 : 0) +
       (mainOverlap >= 2 ? 2 : mainOverlap >= 1 ? 1 : 0) +
       (tokens.length === 0 ? -1 : 0) +
       (pathSignals.suspicious && !pathSignals.allowed ? -2 : 0);
 
+    const isTrustedExternalDetail =
+      isTrustedCdnDetail || isSupplierProductDetail || isExternalDetailSeries;
     const keepStrict = pathSignals.allowed
       ? score >= 3 && (sameDomain || overlap >= 1 || mainOverlap >= 1 || isTrustedCdnDetail || isSupplierProductDetail)
-      : score >= 5 && (exactHost || overlap >= 2 || mainOverlap >= 2);
-    const keepLoose = pathSignals.allowed ? score >= 2 : score >= 3;
+      : (isTrustedExternalDetail
+          ? score >= 2
+          : score >= 5 && (exactHost || overlap >= 2 || mainOverlap >= 2));
+    const keepLoose = pathSignals.allowed
+      ? score >= 2
+      : (isTrustedExternalDetail ? score >= 1 : score >= 3);
     const keep = strict ? keepStrict : keepLoose;
 
     if (keep) {
@@ -549,7 +582,7 @@ export function analyzeSameProductImages({
       const reasonBits = [];
       if (!sameDomain) reasonBits.push("domain_mismatch");
       if (overlap < 1) reasonBits.push("token_overlap_low");
-      if (!pathSignals.allowed) reasonBits.push("path_allow_missing");
+      if (!pathSignals.allowed && !isTrustedExternalDetail) reasonBits.push("path_allow_missing");
       rejected.push({
         url,
         reason: reasonBits.length > 0 ? reasonBits.join("+") : "unmatched",

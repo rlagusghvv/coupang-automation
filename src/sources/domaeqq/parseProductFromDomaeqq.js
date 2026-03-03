@@ -122,11 +122,14 @@ async function extractDomeggookQuantityPriceTiers(page) {
       const parseMinQty = (t) => {
         const s = String(t || "");
         // examples: "1개 이상", "50개 이상", "100개 이상"
-        const m = s.match(/(\d[\d,]*)\s*개/);
+        const m = s.match(/^\s*(\d[\d,]*)\s*개/);
         if (m) return Number(m[1].replace(/,/g, ""));
-        // sometimes only number
-        const n = parseNum(s);
-        return n;
+        // examples: "1 ~", "10+", "50 이상"
+        const m2 = s.match(/^\s*(\d[\d,]*)\s*(?:~|\+|이상)\b/);
+        if (m2) return Number(m2[1].replace(/,/g, ""));
+        // bare number is allowed only if the cell is quantity-only
+        if (/^\s*\d[\d,]*\s*$/.test(s)) return Number(s.replace(/,/g, ""));
+        return null;
       };
 
       const out = [];
@@ -152,6 +155,8 @@ async function extractDomeggookQuantityPriceTiers(page) {
           const minQty = parseMinQty(cells[0]);
           const unitPrice = parsePrice(cells[1]);
           if (!minQty || !unitPrice) continue;
+          if (/옵션|합본|재고/i.test(cells[0])) continue;
+          if (minQty > 2000) continue;
 
           out.push({ minQty, unitPrice });
         }
@@ -1819,9 +1824,20 @@ export async function parseProductFromDomaeqq(url, opts = {}) {
     const qtyPriceForOne = Array.isArray(qtyPriceTiers)
       ? qtyPriceTiers.find((t) => Number(t.minQty) === 1)?.unitPrice
       : null;
-    const qtyPriceMinQty = Array.isArray(qtyPriceTiers) && qtyPriceTiers.length > 0
-      ? qtyPriceTiers[0].unitPrice
+    const qtyTierFirst = Array.isArray(qtyPriceTiers) && qtyPriceTiers.length > 0
+      ? qtyPriceTiers[0]
       : null;
+    const qtyPriceMinQty = Number.isFinite(Number(qtyTierFirst?.unitPrice))
+      ? Number(qtyTierFirst.unitPrice)
+      : null;
+    const qtyMinQty = Number.isFinite(Number(qtyTierFirst?.minQty))
+      ? Number(qtyTierFirst.minQty)
+      : null;
+    const qtyMinPriceUsable =
+      Number.isFinite(Number(qtyPriceMinQty)) &&
+      Number.isFinite(Number(qtyMinQty)) &&
+      Number(qtyMinQty) > 0 &&
+      Number(qtyMinQty) <= 5;
 
     const priceFromPriceText = (() => {
       const nums = (String(priceText || "").match(/(\d[\d,]*)/g) || [])
@@ -1835,7 +1851,7 @@ export async function parseProductFromDomaeqq(url, opts = {}) {
     const priceRaw =
       (is1688 && Number.isFinite(minVariantPrice) ? minVariantPrice : null) ||
       (Number.isFinite(Number(qtyPriceForOne)) ? Number(qtyPriceForOne) : null) ||
-      (Number.isFinite(Number(qtyPriceMinQty)) ? Number(qtyPriceMinQty) : null) ||
+      (qtyMinPriceUsable ? Number(qtyPriceMinQty) : null) ||
       (Number.isFinite(Number(priceFromPriceText)) ? Number(priceFromPriceText) : null) ||
       (Number.isFinite(Number(openApiItemView?.price)) ? Number(openApiItemView.price) : null) ||
       pickPriceFromText(bodyText) ||
