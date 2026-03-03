@@ -17,27 +17,48 @@ function pickPriceFromText(allText) {
 }
 
 function parseShippingFeeFromText(allText) {
-  const t = String(allText || "").replace(/\s+/g, " ");
+  const t = String(allText || "")
+    .replace(/<[^>]*>/g, " ")
+    .replace(/&nbsp;|&#160;/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
   if (!t) return null;
 
-  // Free shipping
-  if (/무료\s*배송/.test(t)) return 0;
+  const extraShippingContext = /(도서산간|제주|추가\s*배송비|추가배송비|반품\s*배송비|교환\s*배송비|왕복\s*배송비|반품비|교환비)/;
+  const paidCandidates = [];
+  const pushCandidate = (value, contextText = "") => {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return;
+    if (n < 0) return;
+    if (extraShippingContext.test(contextText)) return;
+    paidCandidates.push(Math.floor(n));
+  };
 
-  // Explicit fee
-  const m1 = t.match(/배송비\s*[:\-]?\s*(\d[\d,]*)\s*원/);
-  if (m1) return Number(m1[1].replace(/,/g, ""));
+  const patterns = [
+    /(?:기본\s*배송비|택배비|배송정보|배송비|배송\s*비용)\s*[:\-]?\s*(\d[\d,]*)\s*원/g,
+    /(?:배송비|택배비)[^\d]{0,12}(\d[\d,]*)\s*원/g,
+    /(\d[\d,]*)\s*원[^\S\r\n]{0,3}(?:배송비|택배비)/g,
+  ];
+  for (const re of patterns) {
+    let m;
+    while ((m = re.exec(t))) {
+      const amount = Number(String(m[1] || "").replace(/,/g, ""));
+      const start = Math.max(0, Number(m.index || 0) - 16);
+      const end = Math.min(t.length, Number(m.index || 0) + String(m[0] || "").length + 16);
+      const context = t.slice(start, end);
+      pushCandidate(amount, context);
+    }
+  }
+  const positivePaid = paidCandidates.filter((n) => n > 0);
+  if (positivePaid.length > 0) return Math.min(...positivePaid);
 
-  // "배송정보 3,000원 ~" pattern (mobile domeggook)
-  const mInfo = t.match(/배송정보\s*(\d[\d,]*)\s*원/);
-  if (mInfo) return Number(mInfo[1].replace(/,/g, ""));
+  const hasFreeShipping = /무료\s*배송|배송비\s*무료|택배비\s*무료/.test(t);
+  const hasPaidUnknown = /착불|배송비\s*별도|택배비\s*별도|배송비\s*유료|유료\s*배송|유료\s*택배/.test(t);
+  if (hasFreeShipping && !hasPaidUnknown) return 0;
+  if (paidCandidates.includes(0) && !hasPaidUnknown) return 0;
 
-  // Some listings show patterns like "택배비 3,000원" or "기본배송비 3,000원"
-  const m2 = t.match(/(택배비|기본\s*배송비|배송\s*비용)\s*[:\-]?\s*(\d[\d,]*)\s*원/);
-  if (m2) return Number(m2[2].replace(/,/g, ""));
-
-  // If it mentions shipping is charged but no number (e.g. 착불/배송비별도)
-  // Use -1 as "paid_shipping_unknown"
-  if (/착불|배송비\s*별도|배송비\s*유료|유료\s*배송/.test(t)) return -1;
+  // paid shipping unknown
+  if (hasPaidUnknown) return -1;
 
   return null;
 }
@@ -219,6 +240,7 @@ function collectOpenApiSignals(node, state, parentKey = "", baseUrl = "") {
     const titleKey = /(title|name)/i.test(key);
     const imageKey = /(img|image|thumb|thumbnail|photo)/i.test(key);
     const priceKey = /(price|amount|cost|sell|sale|supply)/i.test(key) && !/(delivery|ship|fee)/i.test(key);
+    const shippingKey = /(delivery|ship|fee|deli|배송|택배)/i.test(key);
 
     if ((detailKey || (looksHtml && text.length >= 120)) && /<img|<div|<p|<table|<br/i.test(text)) {
       state.detailHtmlCandidates.push(text);
@@ -229,6 +251,14 @@ function collectOpenApiSignals(node, state, parentKey = "", baseUrl = "") {
     if (priceKey) {
       const n = parsePriceNumber(text);
       if (Number.isFinite(n) && n > 0) state.prices.push(n);
+    }
+    if (shippingKey || /배송|택배|착불/.test(text)) {
+      const ship = parseShippingFeeFromText(text);
+      if (Number.isFinite(Number(ship))) {
+        const n = Number(ship);
+        if (n < 0) state.shippingUnknownPaid = true;
+        else if (n <= 50000) state.shippingFees.push(Math.floor(n));
+      }
     }
 
     const abs = toAbsoluteUrl(text, baseUrl);
@@ -247,6 +277,10 @@ function collectOpenApiSignals(node, state, parentKey = "", baseUrl = "") {
   if (typeof node === "number") {
     const priceKey = /(price|amount|cost|sell|sale|supply)/i.test(key) && !/(delivery|ship|fee)/i.test(key);
     if (priceKey && Number.isFinite(node) && node > 0) state.prices.push(Number(node));
+    const shippingKey = /(delivery|ship|fee|deli|배송|택배)/i.test(key);
+    if (shippingKey && Number.isFinite(node) && node >= 0 && node <= 50000) {
+      state.shippingFees.push(Math.floor(Number(node)));
+    }
     return;
   }
 
@@ -478,6 +512,8 @@ async function loadOpenApiItemViewCandidate(itemUrl, opts = {}) {
       images: [],
       titles: [],
       prices: [],
+      shippingFees: [],
+      shippingUnknownPaid: false,
     };
     collectOpenApiSignals(raw, state, "", itemUrl);
 
@@ -509,6 +545,38 @@ async function loadOpenApiItemViewCandidate(itemUrl, opts = {}) {
       if (nums.length === 0) return null;
       return Math.min(...nums);
     })();
+    const shippingFromText = parseShippingFeeFromText(
+      [
+        String(detailBundle?.mergedHtml || ""),
+        String(detailBundle?.deliHtml || ""),
+        String(detailHtml || ""),
+      ].join(" "),
+    );
+    const shippingCandidates = state.shippingFees
+      .map((n) => Number(n))
+      .filter((n) => Number.isFinite(n) && n >= 0 && n <= 50000);
+    const shippingPositive = shippingCandidates.filter((n) => n > 0);
+    let shippingFee = null;
+    if (shippingPositive.length > 0) {
+      shippingFee = Math.min(...shippingPositive);
+    } else if (shippingCandidates.includes(0)) {
+      shippingFee = 0;
+    }
+    if (Number.isFinite(Number(shippingFromText))) {
+      const fromText = Number(shippingFromText);
+      if (fromText > 0) {
+        shippingFee = Number.isFinite(Number(shippingFee))
+          ? Math.min(Number(shippingFee), fromText)
+          : fromText;
+      } else if (fromText === 0 && shippingFee == null) {
+        shippingFee = 0;
+      } else if (fromText < 0 && shippingFee == null) {
+        shippingFee = -1;
+      }
+    }
+    if (shippingFee == null && state.shippingUnknownPaid) {
+      shippingFee = -1;
+    }
     const title = state.titles.find((t) => t && !/<[^>]+>/.test(String(t)));
 
     return {
@@ -519,6 +587,7 @@ async function loadOpenApiItemViewCandidate(itemUrl, opts = {}) {
       imageUrl,
       detailImages,
       price,
+      shippingFee,
       title: String(title || "").trim(),
       diagnostics: {
         detailHtmlCandidates: state.detailHtmlCandidates.length + linkHtml.length,
@@ -529,6 +598,8 @@ async function loadOpenApiItemViewCandidate(itemUrl, opts = {}) {
         imageCandidates: state.images.length,
         detailImageCandidates: detailImages.length,
         priceCandidates: state.prices.length,
+        shippingCandidates: shippingCandidates.length,
+        shippingFromText: Number.isFinite(Number(shippingFromText)) ? Number(shippingFromText) : null,
       },
     };
   } catch (e) {
@@ -1318,6 +1389,7 @@ export async function parseProductFromDomaeqq(url, opts = {}) {
         ? openApiPrice
         : previewSeedPrice;
       const fastImageUrl = normalizeUrl(openApiItemView?.imageUrl || previewSeedImageUrl || "");
+      const openApiShippingFee = Number(openApiItemView?.shippingFee);
       const openApiDetailHtml = stripDomeggookPromoBlocks(
         String(openApiItemView?.detailHtml || "").trim(),
       );
@@ -1340,6 +1412,9 @@ export async function parseProductFromDomaeqq(url, opts = {}) {
         openApiDetailHtml ||
         String(quickDetail?.detailHtml || "").trim() ||
         buildImageHtml(mergedDetailImages.slice(0, 80));
+      const fastShippingFee = Number.isFinite(openApiShippingFee)
+        ? openApiShippingFee
+        : parseShippingFeeFromText(`${fastTitle} ${fastContentHtml}`);
       const hasSeedCore =
         Boolean(fastTitle) &&
         Number.isFinite(fastPrice) &&
@@ -1359,7 +1434,7 @@ export async function parseProductFromDomaeqq(url, opts = {}) {
           contentText: fastContentHtml || fastTitle,
           categoryText: "",
           options: [],
-          shippingFee: null,
+          shippingFee: Number.isFinite(Number(fastShippingFee)) ? Number(fastShippingFee) : null,
         });
         draft.__debug = {
           source: "domeggook",
@@ -1389,6 +1464,7 @@ export async function parseProductFromDomaeqq(url, opts = {}) {
               (!(Number.isFinite(openApiPrice) && openApiPrice > 0) && Number.isFinite(previewSeedPrice)) ||
               (!normalizeUrl(openApiItemView?.imageUrl || "") && previewSeedImageUrl),
             ),
+            shippingFee: Number.isFinite(Number(fastShippingFee)) ? Number(fastShippingFee) : null,
             usedDetail: Boolean(fastContentHtml),
             usedImage: true,
           },

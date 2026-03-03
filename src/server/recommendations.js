@@ -355,12 +355,72 @@ function roundToKrw900(p) {
   return Math.max(900, k * 1000 - 100);
 }
 
+function normalizeRecommendationShippingFee(value) {
+  if (value == null) return null;
+  const text = String(value).trim();
+  if (!text) return null;
+  const n = Number(text);
+  if (!Number.isFinite(n)) return null;
+  if (n < 0) return -1;
+  return Math.max(0, Math.floor(n));
+}
+
+function resolveRecommendationShippingCost(rawShippingFee, shipping = {}) {
+  const policyRaw = String(shipping?.policy || 'actual').trim().toLowerCase();
+  const policy = policyRaw === 'none' || policyRaw === 'fixed' ? policyRaw : 'actual';
+  const fixedAmount = Math.max(0, Math.floor(Number(shipping?.fixedAmount) || 0));
+  const unknownAmount = Math.max(0, Math.floor(Number(shipping?.unknownAmount) || fixedAmount));
+  const parsed = normalizeRecommendationShippingFee(rawShippingFee);
+
+  if (policy === 'none') {
+    return { shippingCost: 0, shippingDisplay: 0, estimated: false, source: 'none' };
+  }
+
+  if (policy === 'fixed') {
+    if (parsed === 0) return { shippingCost: 0, shippingDisplay: 0, estimated: false, source: 'fixed_free' };
+    if (parsed != null) {
+      return {
+        shippingCost: fixedAmount,
+        shippingDisplay: parsed > 0 ? parsed : fixedAmount,
+        estimated: parsed < 0,
+        source: parsed > 0 ? 'fixed_paid' : 'fixed_unknown_paid',
+      };
+    }
+    return {
+      shippingCost: unknownAmount,
+      shippingDisplay: unknownAmount,
+      estimated: true,
+      source: 'fixed_missing',
+    };
+  }
+
+  if (parsed === 0) return { shippingCost: 0, shippingDisplay: 0, estimated: false, source: 'actual_free' };
+  if (parsed != null && parsed > 0) {
+    return { shippingCost: parsed, shippingDisplay: parsed, estimated: false, source: 'actual_paid' };
+  }
+  if (parsed != null && parsed < 0) {
+    return {
+      shippingCost: unknownAmount,
+      shippingDisplay: unknownAmount,
+      estimated: true,
+      source: 'actual_unknown_paid',
+    };
+  }
+  return {
+    shippingCost: unknownAmount,
+    shippingDisplay: unknownAmount,
+    estimated: true,
+    source: 'actual_missing',
+  };
+}
+
 export function scoreRecommendation({
   preview,
   minProfit = 3000,
   minMarginRate = 0.30,
   banKeywords = DEFAULT_BAN_KEYWORDS,
   keyword = '',
+  shipping = {},
 } = {}) {
   const draft = preview?.draft || {};
   const computed = preview?.computed || {};
@@ -374,19 +434,21 @@ export function scoreRecommendation({
     return { ok: false, reason: 'bad_price' };
   }
 
+  const shippingEval = resolveRecommendationShippingCost(draft.shippingFee, shipping);
+  const shippingCost = Number(shippingEval.shippingCost) || 0;
+
   // Choose a recommended selling price that satisfies BOTH:
   // - profit >= minProfit
   // - marginRate >= minMarginRate
-  const needByProfit = sourcePrice + Number(minProfit || 0);
-  const needByMargin = sourcePrice / (1 - Number(minMarginRate || 0));
+  const needByProfit = sourcePrice + shippingCost + Number(minProfit || 0);
+  const needByMargin = (sourcePrice + shippingCost) / (1 - Number(minMarginRate || 0));
   const need = Math.max(needByProfit, needByMargin);
   const finalPrice = roundToKrw900(need);
   if (!Number.isFinite(finalPrice) || finalPrice <= 0) {
     return { ok: false, reason: 'bad_price' };
   }
 
-  // Profit heuristic: treat shipping as pass-through.
-  const profit = finalPrice - sourcePrice;
+  const profit = finalPrice - sourcePrice - shippingCost;
   const marginRate = profit / finalPrice;
 
   if (!Number.isFinite(profit) || profit < minProfit) return { ok: false, reason: 'profit_too_low', profit, marginRate };
@@ -401,14 +463,17 @@ export function scoreRecommendation({
   // Score: profit + detail quality + theme preference(car/pet).
   const score = profit + Math.min(2000, contentImageCount * 200) + themeBoost;
   const themeText = themes.length > 0 ? ` / theme=${themes.join('+')}` : '';
-  const reason = `recommend≈${Math.round(finalPrice)} / profit≈${Math.round(profit)} / margin≈${Math.round(marginRate * 100)}% / detailImages=${contentImageCount}${themeText}`;
+  const reason = `recommend≈${Math.round(finalPrice)} / profit≈${Math.round(profit)} / margin≈${Math.round(marginRate * 100)}% / ship≈${Math.round(shippingCost)} / detailImages=${contentImageCount}${themeText}`;
 
   return {
     ok: true,
     title,
     mainImageUrl: String(draft.imageUrl || ''),
     sourcePrice,
-    shippingFee: Number(draft.shippingFee) || 0,
+    shippingFee: shippingEval.shippingDisplay,
+    shippingCost,
+    shippingEstimated: Boolean(shippingEval.estimated),
+    shippingSource: shippingEval.source,
     finalPrice,
     profit,
     marginRate,
@@ -1584,6 +1649,34 @@ function resolveRecommendationThresholds(settings = {}) {
   return { minProfit, minMarginRate };
 }
 
+function resolveRecommendationShippingSettings(settings = {}) {
+  const policyRaw = String(
+    settings?.recommendationShippingPolicy ??
+      settings?.shippingPolicy ??
+      'actual',
+  )
+    .trim()
+    .toLowerCase();
+  const policy = policyRaw === 'none' || policyRaw === 'fixed' ? policyRaw : 'actual';
+  const fixedAmount = Math.floor(
+    clampNumber(
+      settings?.recommendationShippingFixedAmount ?? settings?.shippingFixedAmount,
+      0,
+      50000,
+      3000,
+    ),
+  );
+  const unknownAmount = Math.floor(
+    clampNumber(
+      settings?.recommendationUnknownShippingAmount,
+      0,
+      50000,
+      fixedAmount,
+    ),
+  );
+  return { policy, fixedAmount, unknownAmount };
+}
+
 function resolveRecommendationPreviewSettings(settings = {}) {
   return {
     // Recommendation cards should show more detail images for operator review.
@@ -1946,6 +2039,7 @@ async function generateRecommendationsBatch({
   const recommendationPreviewSettings = resolveRecommendationPreviewSettings(normalizedSettings);
   const qcSettings = { ...normalizedSettings, ...recommendationQcSettings };
   const thresholds = resolveRecommendationThresholds(normalizedSettings);
+  const shippingSettings = resolveRecommendationShippingSettings(normalizedSettings);
   const policy = resolveRecommendationPolicy(normalizedSettings);
   const keywordScanLimit = Math.max(
     1,
@@ -2069,6 +2163,7 @@ async function generateRecommendationsBatch({
       minMarginRate: thresholds.minMarginRate,
       banKeywords: DEFAULT_BAN_KEYWORDS,
       keyword: c.keyword,
+      shipping: shippingSettings,
     });
     if (!s.ok) {
       const reason = String(s.reason || 'unknown');
@@ -2081,7 +2176,13 @@ async function generateRecommendationsBatch({
       keyword: c.keyword,
       ...s,
       mainImageUrl: normalizeCandidateImageUrl(c.imageUrl || s.mainImageUrl),
-      payload: { fast: true },
+      payload: {
+        fast: true,
+        thresholds: {
+          minProfit: thresholds.minProfit,
+          minMarginRate: thresholds.minMarginRate,
+        },
+      },
     });
 
     if (scoredPool.length >= 500) break;
@@ -2125,6 +2226,7 @@ async function generateRecommendationsBatch({
         minMarginRate: relaxedMinMarginRate,
         banKeywords: relaxedBanKeywords,
         keyword: c.keyword,
+        shipping: shippingSettings,
       });
       if (!s.ok) {
         const reason = String(s.reason || 'unknown');
@@ -2190,6 +2292,7 @@ async function generateRecommendationsBatch({
         minMarginRate: rescueMinMarginRate,
         banKeywords: rescueBanKeywords,
         keyword: c.keyword,
+        shipping: shippingSettings,
       });
       if (!s.ok) {
         const reason = String(s.reason || 'unknown');
@@ -2480,26 +2583,71 @@ async function generateRecommendationsBatch({
     const prevTitle = String(v.title || '').trim();
     const prevMainImageUrl = String(v.mainImageUrl || '').trim();
     const prevPrice = Number(v.sourcePrice);
-    const prevShip = v.shippingFee;
-    const finalPriceNum = Number(cand.finalPrice);
-    const profitNum = Number(cand.profit);
-    const marginNum = Number(cand.marginRate);
-    const resolvedReason =
-      Number.isFinite(finalPriceNum) &&
-      Number.isFinite(profitNum) &&
-      Number.isFinite(marginNum)
-        ? `recommend≈${Math.round(finalPriceNum)} / profit≈${Math.round(profitNum)} / margin≈${Math.round(marginNum * 100)}% / detailImages=${detailDisplayCount}`
-        : String(cand.reason || '').trim();
+    const resolvedSourcePrice = Number.isFinite(prevPrice) ? prevPrice : Number(cand.sourcePrice);
+    const resolvedShippingFee = v.shippingFee == null ? cand.shippingFee : v.shippingFee;
+    const candPayload = cand?.payload && typeof cand.payload === 'object' ? cand.payload : {};
+    const candThresholds =
+      candPayload?.thresholds && typeof candPayload.thresholds === 'object'
+        ? candPayload.thresholds
+        : {};
+    const minProfitForItem = Number.isFinite(Number(candThresholds.minProfit))
+      ? Number(candThresholds.minProfit)
+      : thresholds.minProfit;
+    const minMarginRateForItem = Number.isFinite(Number(candThresholds.minMarginRate))
+      ? Number(candThresholds.minMarginRate)
+      : thresholds.minMarginRate;
+    const rescored = scoreRecommendation({
+      preview: {
+        draft: {
+          title: prevTitle || cand.title,
+          price: resolvedSourcePrice,
+          shippingFee: resolvedShippingFee,
+          imageUrl: prevMainImageUrl || cand.mainImageUrl,
+        },
+        computed: {
+          contentImageCount: detailDisplayCount,
+        },
+      },
+      minProfit: minProfitForItem,
+      minMarginRate: minMarginRateForItem,
+      banKeywords: DEFAULT_BAN_KEYWORDS,
+      keyword: cand.keyword,
+      shipping: shippingSettings,
+    });
+    if (!rescored.ok) {
+      const rescoredReason = `after_preview_${String(rescored.reason || 'unknown')}`;
+      scoreRejectCounts[rescoredReason] = Number(scoreRejectCounts[rescoredReason] || 0) + 1;
+      continue;
+    }
+    const resolvedReason = String(rescored.reason || cand.reason || '').trim();
 
     final.push({
       ...cand,
-      title: prevTitle || cand.title,
+      title: rescored.title || prevTitle || cand.title,
       mainImageUrl: prevMainImageUrl || cand.mainImageUrl,
-      sourcePrice: Number.isFinite(prevPrice) ? prevPrice : cand.sourcePrice,
-      shippingFee: (prevShip == null ? cand.shippingFee : prevShip),
+      sourcePrice: rescored.sourcePrice,
+      shippingFee: rescored.shippingFee,
+      finalPrice: rescored.finalPrice,
+      profit: rescored.profit,
+      marginRate: rescored.marginRate,
+      score: rescored.score,
       reason: resolvedReason,
       payload: {
-        ...cand.payload,
+        ...candPayload,
+        pricing: {
+          ...(candPayload?.pricing && typeof candPayload.pricing === 'object' ? candPayload.pricing : {}),
+          sourcePrice: rescored.sourcePrice,
+          shippingFee: rescored.shippingFee,
+          shippingCost: rescored.shippingCost,
+          shippingEstimated: Boolean(rescored.shippingEstimated),
+          shippingSource: rescored.shippingSource,
+          shippingPolicy: shippingSettings.policy,
+          minProfit: minProfitForItem,
+          minMarginRate: minMarginRateForItem,
+          finalPrice: rescored.finalPrice,
+          profit: rescored.profit,
+          marginRate: rescored.marginRate,
+        },
         preview: {
           url: prev?.url || cand.sourceUrl,
           draft: prev?.draft || null,
@@ -2587,6 +2735,7 @@ async function generateRecommendationsBatch({
     scoringPasses,
     thresholds,
     policy,
+    shippingSettings,
     qcSettings: recommendationQcSettings,
     validated,
     kept: finalItems.length,
