@@ -21,6 +21,9 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
   String? _lastUploadSummary;
   DateTime? _lastUploadAt;
   List<Map<String, dynamic>> _lastUploadRows = const [];
+  int _autoLimit = 5;
+  bool _autoOnlyEligible = true;
+  bool _autoForce = false;
   String? _activeFillJobId;
   Map<String, dynamic>? _fillProgress;
   DateTime? _fillStartedAt;
@@ -509,6 +512,83 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
     }
   }
 
+  Future<void> _autoUpload() async {
+    final limit = _autoLimit.clamp(1, 30).toInt();
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final json =
+          await widget.api.postJson('/api/recommendations/auto-upload', {
+        'limit': limit,
+        'onlyEligible': _autoOnlyEligible ? '1' : '0',
+        'force': _autoForce ? '1' : '0',
+      });
+
+      final summary =
+          (json['summary'] as Map?)?.cast<String, dynamic>() ?? const {};
+      final items = (json['items'] as List?) ?? const [];
+
+      int asInt(dynamic v) {
+        return int.tryParse((v ?? 0).toString()) ?? 0;
+      }
+
+      final requested = asInt(summary['requested']);
+      final candidates = asInt(summary['candidates']);
+      final uploaded = asInt(summary['uploaded']);
+      final skipped = asInt(summary['skipped']);
+      final failed = asInt(summary['failed']);
+      final reasonCounts = <String, int>{};
+
+      for (final raw in items) {
+        final row = (raw as Map).cast<String, dynamic>();
+        if (row['skipped'] == true || row['ok'] == false) {
+          final reasonRaw = (row['skipReason'] ?? row['error'] ?? 'unknown')
+              .toString()
+              .trim();
+          final reason = _humanizeSkipReason(reasonRaw);
+          if (reason.isEmpty) continue;
+          reasonCounts[reason] = (reasonCounts[reason] ?? 0) + 1;
+        }
+      }
+
+      final reasonPreview = reasonCounts.entries.toList()
+        ..sort((a, b) => b.value.compareTo(a.value));
+      final reasonText = reasonPreview
+          .take(3)
+          .map((entry) => '${entry.key} ${entry.value}건')
+          .join(', ');
+
+      setState(() {
+        _lastUploadAt = DateTime.now();
+        _lastUploadSummary =
+            '자동 업로드 완료: 성공 $uploaded / 스킵 $skipped / 실패 $failed'
+            ' (요청 $requested, 후보 $candidates)'
+            '${reasonText.isNotEmpty ? ' · $reasonText' : ''}';
+        _lastUploadRows = items
+            .map((raw) => (raw as Map).cast<String, dynamic>())
+            .take(12)
+            .toList();
+        _selected.clear();
+      });
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('자동 업로드 완료: 성공 $uploaded / 스킵 $skipped / 실패 $failed'),
+          ),
+        );
+      }
+
+      await _reloadListQuietly();
+    } catch (e) {
+      setState(() => _error = e.toString());
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
   // Upload is done from the detail preview screen.
 
   Future<void> _uploadSelected() async {
@@ -641,6 +721,96 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          AppCard(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Icon(
+                      Icons.flash_on,
+                      size: 18,
+                      color: Theme.of(context).colorScheme.primary,
+                    ),
+                    const SizedBox(width: 8),
+                    const Expanded(
+                      child: Text(
+                        '자동 업로드',
+                        style: TextStyle(fontWeight: FontWeight.w800),
+                      ),
+                    ),
+                    FilledButton.tonalIcon(
+                      onPressed: _loading ? null : _autoUpload,
+                      icon: const Icon(Icons.cloud_upload_outlined, size: 18),
+                      label: const Text('실행'),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                Wrap(
+                  spacing: 10,
+                  runSpacing: 8,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Text('대상 수'),
+                        const SizedBox(width: 8),
+                        DropdownButton<int>(
+                          value: _autoLimit,
+                          onChanged: _loading
+                              ? null
+                              : (value) {
+                                  if (value == null) return;
+                                  setState(() => _autoLimit = value);
+                                },
+                          items: const [3, 5, 10, 20, 30]
+                              .map(
+                                (n) => DropdownMenuItem<int>(
+                                  value: n,
+                                  child: Text('$n개'),
+                                ),
+                              )
+                              .toList(),
+                        ),
+                      ],
+                    ),
+                    FilterChip(
+                      label: const Text('적합상품만'),
+                      selected: _autoOnlyEligible,
+                      onSelected: _loading
+                          ? null
+                          : (v) {
+                              setState(() => _autoOnlyEligible = v);
+                            },
+                    ),
+                    FilterChip(
+                      label: const Text('중복 강행(force)'),
+                      selected: _autoForce,
+                      onSelected: _loading
+                          ? null
+                          : (v) {
+                              setState(() => _autoForce = v);
+                            },
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  '추천 목록 상위 항목을 즉시 업로드합니다.',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Theme.of(context)
+                        .colorScheme
+                        .onSurface
+                        .withValues(alpha: 0.65),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 10),
           if (selectedCount > 0) ...[
             AppCard(
               child: Row(
