@@ -69,6 +69,7 @@ const DETAIL_PATH_BLOCK_PATTERNS = [
 const NON_PRODUCT_INFO_PATTERNS = [
   /(^|\/)(notice|info|guide|policy|faq|qna|cs|service)(\/|[_\-.]|$)/i,
   /(^|\/)(delivery|shipping|ship|refund|return|exchange|as)([_\-.]?\d+)?\.(?:jpe?g|png|gif|webp)$/i,
+  /(^|[_\-/])(up[_-]?)?(delivery|shipping|ship|refund|return|exchange|policy|privacy|notice|guide|cs|qna)([_\-/]|$)/i,
   /(^|[_\-/])(index[_-]?(?:gift|event|notice|info)|print[-_]?top|banner[-_]?top)([_\-./]|$)/i,
   /배송|교환|반품|환불|안내|공지|문의|고객센터|유의|주의/i,
 ];
@@ -81,6 +82,11 @@ const SUSPICIOUS_ASSET_PATTERNS = [
   /facebook|twitter|kakao|naver|share/i,
   /(^|[_\-/])btn([_\-./]|$)/i,
   /sprite/i,
+];
+
+const BLANK_IMAGE_PATTERNS = [
+  /(^|[_\-/])(blank|spacer|pixel|transparent|empty|loading|noimg|no-image|placeholder)([_\-./]|$)/i,
+  /1x1/i,
 ];
 
 const SUPPLIER_PRODUCT_PATH_RE = /\/(?:image\/product|productimgs?)\//i;
@@ -162,6 +168,20 @@ function unique(arr) {
   return Array.from(new Set((arr || []).filter(Boolean)));
 }
 
+function looksLikeProductFileName(fileName = "") {
+  const name = String(fileName || "").toLowerCase();
+  if (!name) return false;
+  if (NON_PRODUCT_INFO_PATTERNS.some((re) => re.test(name))) return false;
+  if (SUSPICIOUS_ASSET_PATTERNS.some((re) => re.test(name))) return false;
+  if (BLANK_IMAGE_PATTERNS.some((re) => re.test(name))) return false;
+
+  // product assets often contain long numeric ids/hash-like chunks
+  if (/[a-z0-9]{8,}/i.test(name)) return true;
+  if (/\d{5,}/.test(name)) return true;
+  if (/[_-](?:d\d{2,}|img[_-]?\d+|detail[_-]?\d+)/i.test(name)) return true;
+  return false;
+}
+
 function parseBoolean(value, fallback = false) {
   if (value == null) return fallback;
   if (typeof value === "boolean") return value;
@@ -187,17 +207,23 @@ function sanitizeOpenApiDetailImages(urls = []) {
     const pathSignals = inspectImagePath(u);
     if (pathSignals.blocked) continue;
 
+    const target = `${u.hostname || ""}${u.pathname || ""}${u.search || ""}`.toLowerCase();
+    if (NON_PRODUCT_INFO_PATTERNS.some((re) => re.test(target))) continue;
+    if (BLANK_IMAGE_PATTERNS.some((re) => re.test(target))) continue;
+
     const pathname = String(u.pathname || "").toLowerCase();
     const hasImageExt = /\.(?:jpe?g|png|gif|webp|bmp|svg)$/.test(pathname);
+    const fileName = pathname.split("/").pop() || "";
     const trustedDomain =
       pathSignals.domain === "esmplus.com" ||
       pathSignals.domain === "alicdn.com" ||
       pathSignals.domain === "ownerclan.com" ||
       pathSignals.domain === "domeggook.com";
+    const likelyProductFile = looksLikeProductFileName(fileName);
     const keep =
       pathSignals.allowed ||
       pathSignals.allowBySupplierProduct ||
-      hasImageExt ||
+      (hasImageExt && likelyProductFile) ||
       trustedDomain;
     if (!keep) continue;
 

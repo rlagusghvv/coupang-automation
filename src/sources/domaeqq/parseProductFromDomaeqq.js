@@ -89,6 +89,23 @@ function parseShippingTierTableFee(text) {
   return Math.max(...fees);
 }
 
+function parseShippingFeeFromAnyText(text) {
+  const direct = parseShippingFeeFromText(text);
+  const tierFee = parseShippingTierTableFee(text);
+  if (Number.isFinite(Number(direct))) return Number(direct);
+  if (Number.isFinite(Number(tierFee))) return Number(tierFee);
+  return null;
+}
+
+function hasExplicitFreeShippingText(text) {
+  const t = String(text || "");
+  if (!t) return false;
+  const free = /무료\s*배송|배송비\s*무료|택배비\s*무료/i.test(t);
+  if (!free) return false;
+  const paid = /착불|배송비\s*별도|택배비\s*별도|유료\s*배송|유료\s*택배/i.test(t);
+  return !paid;
+}
+
 async function extractDomeggookQuantityPriceTiers(page) {
   // Returns tiers like: [{ minQty: 1, unitPrice: 96500 }, ...]
   // Domeggook often shows range prices (e.g. 87,000원 ~ 96,500원) and a quantity table.
@@ -517,6 +534,74 @@ async function loadQuickDetailHtmlCandidate(itemUrl, opts = {}) {
   };
 }
 
+async function loadQuickShippingFeeCandidate(itemUrl, opts = {}) {
+  const timeoutMs = Math.max(1200, Math.min(9000, Number(opts?.timeoutMs) || 3000));
+  const productId = extractDomeggookItemNo(itemUrl);
+  const fetchTargets = [
+    { url: itemUrl, source: "desktop" },
+    ...(productId ? [{ url: `https://mobile.domeggook.com/${productId}`, source: "mobile" }] : []),
+  ];
+
+  let unknownPaidDetected = false;
+  let explicitFreeDetected = false;
+  let lastError = "";
+
+  for (const target of fetchTargets) {
+    const res = await fetchTextWithTimeout(target.url, {
+      timeoutMs,
+      headers: {
+        Referer: "https://domeggook.com/",
+        "User-Agent": "Mozilla/5.0",
+      },
+    });
+    if (!res.ok) {
+      lastError = `quick_shipping_fetch_failed_${target.source}_${Number(res.status || 0) || 0}`;
+      continue;
+    }
+
+    const raw = String(res.text || "");
+    if (!raw) continue;
+
+    const bodyOnly = extractBodyHtml(raw);
+    const mainOnly = extractMainBlock(bodyOnly);
+    const candidates = [
+      raw,
+      bodyOnly,
+      mainOnly,
+      ...(Array.from(
+        raw.matchAll(
+          /<textarea[^>]*id=["']contentsBuffer["'][^>]*>([\s\S]*?)<\/textarea>/gi,
+        ),
+      ).map((m) => String(m?.[1] || ""))),
+    ].filter(Boolean);
+
+    for (const candidate of candidates) {
+      const fee = parseShippingFeeFromAnyText(candidate);
+      if (!Number.isFinite(Number(fee))) {
+        if (hasExplicitFreeShippingText(candidate)) explicitFreeDetected = true;
+        continue;
+      }
+      const n = Number(fee);
+      if (n > 0) {
+        return { ok: true, fee: n, source: target.source, reason: "" };
+      }
+      if (n < 0) {
+        unknownPaidDetected = true;
+      } else if (n === 0 && hasExplicitFreeShippingText(candidate)) {
+        explicitFreeDetected = true;
+      }
+    }
+  }
+
+  if (unknownPaidDetected) {
+    return { ok: true, fee: -1, source: "text", reason: "shipping_unknown_paid" };
+  }
+  if (explicitFreeDetected) {
+    return { ok: true, fee: 0, source: "text", reason: "" };
+  }
+  return { ok: false, fee: null, source: "", reason: lastError || "shipping_not_found" };
+}
+
 async function loadOpenApiItemViewCandidate(itemUrl, opts = {}) {
   const fastMode = Boolean(opts?.fastMode);
   const includeDeli = opts?.includeDeli !== false;
@@ -579,13 +664,13 @@ async function loadOpenApiItemViewCandidate(itemUrl, opts = {}) {
       if (nums.length === 0) return null;
       return Math.min(...nums);
     })();
-    const shippingFromText = parseShippingFeeFromText(
-      [
-        String(detailBundle?.mergedHtml || ""),
-        String(detailBundle?.deliHtml || ""),
-        String(detailHtml || ""),
-      ].join(" "),
-    );
+    const shippingSignalText = [
+      String(detailBundle?.mergedHtml || ""),
+      String(detailBundle?.deliHtml || ""),
+      String(detailHtml || ""),
+    ].join(" ");
+    const shippingFromText = parseShippingFeeFromAnyText(shippingSignalText);
+    const explicitFreeShipping = hasExplicitFreeShippingText(shippingSignalText);
     const shippingCandidates = state.shippingFees
       .map((n) => Number(n))
       .filter((n) => Number.isFinite(n) && n >= 0 && n <= 50000);
@@ -593,7 +678,7 @@ async function loadOpenApiItemViewCandidate(itemUrl, opts = {}) {
     let shippingFee = null;
     if (shippingPositive.length > 0) {
       shippingFee = Math.min(...shippingPositive);
-    } else if (shippingCandidates.includes(0)) {
+    } else if (shippingCandidates.includes(0) && explicitFreeShipping) {
       shippingFee = 0;
     }
     if (Number.isFinite(Number(shippingFromText))) {
@@ -602,7 +687,7 @@ async function loadOpenApiItemViewCandidate(itemUrl, opts = {}) {
         shippingFee = Number.isFinite(Number(shippingFee))
           ? Math.min(Number(shippingFee), fromText)
           : fromText;
-      } else if (fromText === 0 && shippingFee == null) {
+      } else if (fromText === 0 && explicitFreeShipping && shippingFee == null) {
         shippingFee = 0;
       } else if (fromText < 0 && shippingFee == null) {
         shippingFee = -1;
@@ -1446,13 +1531,41 @@ export async function parseProductFromDomaeqq(url, opts = {}) {
         openApiDetailHtml ||
         String(quickDetail?.detailHtml || "").trim() ||
         buildImageHtml(mergedDetailImages.slice(0, 80));
-      const parsedShippingFromFastText = parseShippingFeeFromText(`${fastTitle} ${fastContentHtml}`);
-      const fastShippingFee = (() => {
-        // OpenAPI may return 0/blank shipping even when detail text says paid shipping.
-        // Prefer explicit positive values, then fall back to 0/unknown.
-        if (Number.isFinite(openApiShippingFee) && openApiShippingFee > 0) return openApiShippingFee;
-        if (Number.isFinite(Number(parsedShippingFromFastText))) return Number(parsedShippingFromFastText);
-        if (Number.isFinite(openApiShippingFee)) return openApiShippingFee;
+      const shippingSignalText = `${fastTitle} ${fastContentHtml}`;
+      const parsedShippingFromFastText = parseShippingFeeFromAnyText(shippingSignalText);
+      const explicitFreeFromFastText = hasExplicitFreeShippingText(shippingSignalText);
+      let quickShippingProbe = { ok: false, fee: null, source: "", reason: "not_needed" };
+      const fastShippingFee = await (async () => {
+        const openApiPositive = Number.isFinite(openApiShippingFee) && openApiShippingFee > 0
+          ? openApiShippingFee
+          : null;
+        const textParsed = Number.isFinite(Number(parsedShippingFromFastText))
+          ? Number(parsedShippingFromFastText)
+          : null;
+        const textPositive = Number.isFinite(textParsed) && textParsed > 0 ? textParsed : null;
+        const positiveCandidates = [textPositive, openApiPositive].filter((n) => Number.isFinite(n) && n > 0);
+        if (positiveCandidates.length > 0) {
+          return Math.min(...positiveCandidates);
+        }
+
+        // OpenAPI often returns "0" as a weak default. Verify via quick page fetch first.
+        quickShippingProbe = await loadQuickShippingFeeCandidate(url, {
+          timeoutMs: Math.min(5000, previewOpenApiTimeoutMs + 1200),
+        });
+        if (Number.isFinite(Number(quickShippingProbe?.fee))) {
+          const quickFee = Number(quickShippingProbe.fee);
+          if (quickFee > 0) return quickFee;
+          if (quickFee < 0) return -1;
+          if (quickFee === 0) return 0;
+        }
+
+        if (Number.isFinite(textParsed) && textParsed < 0) return -1;
+        if (Number.isFinite(openApiShippingFee) && openApiShippingFee < 0) return -1;
+
+        // Only accept zero-shipping when free-shipping text is explicit.
+        if (Number.isFinite(textParsed) && textParsed === 0 && explicitFreeFromFastText) return 0;
+        if (Number.isFinite(openApiShippingFee) && openApiShippingFee === 0 && explicitFreeFromFastText) return 0;
+
         return null;
       })();
       const hasSeedCore =
@@ -1504,6 +1617,11 @@ export async function parseProductFromDomaeqq(url, opts = {}) {
               (!(Number.isFinite(openApiPrice) && openApiPrice > 0) && Number.isFinite(previewSeedPrice)) ||
               (!normalizeUrl(openApiItemView?.imageUrl || "") && previewSeedImageUrl),
             ),
+            shippingFeeRaw: Number.isFinite(openApiShippingFee) ? openApiShippingFee : null,
+            shippingFromFastText: Number.isFinite(Number(parsedShippingFromFastText))
+              ? Number(parsedShippingFromFastText)
+              : null,
+            quickShippingProbe,
             shippingFee: Number.isFinite(Number(fastShippingFee)) ? Number(fastShippingFee) : null,
             usedDetail: Boolean(fastContentHtml),
             usedImage: true,
