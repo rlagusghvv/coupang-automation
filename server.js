@@ -2271,16 +2271,20 @@ async function runRecommendationAutoRunForUser({
     try {
       await withUploadLock(async () => {
         for (const cand of candidates) {
+          const overrides = resolveRecommendationUploadOverrides(cand);
           const outcome = await executeUploadForUrl({
             url: cand.sourceUrl,
             user: runUser,
             force: runOptions.force,
+            overrides,
           });
           appendUploadHistoryFromOutcome(cand.sourceUrl, outcome);
           uploadRows.push({
             recommendationId: cand.id || null,
             title: cand.title || "",
+            seoTitle: cand.seoTitle || cand.title || "",
             url: cand.sourceUrl,
+            categoryOverrideCode: overrides.categoryOverrideCode || null,
             ok: Boolean(outcome?.ok),
             skipped: Boolean(outcome?.skipped),
             skipReason: normalizeSkipReason(outcome),
@@ -2433,6 +2437,21 @@ function normalizeSkipReason(result) {
   if (raw === "duplicate_fingerprint") return "duplicate_fingerprint";
   if (raw === "qc_gate_failed") return "qc_gate_failed";
   return raw;
+}
+
+function resolveRecommendationUploadOverrides(item = {}) {
+  const payload = item?.payload && typeof item.payload === "object" ? item.payload : {};
+  const seo = payload?.seo && typeof payload.seo === "object" ? payload.seo : {};
+  const category = payload?.category && typeof payload.category === "object" ? payload.category : {};
+
+  const titleOverrideRaw = pickFirstNonEmpty(item?.seoTitle, seo?.title, item?.title);
+  const titleOverride = String(titleOverrideRaw || "").trim();
+  const categoryOverrideCode = toPositiveIntOrNull(item?.categoryCode ?? category?.code);
+
+  const overrides = {};
+  if (titleOverride) overrides.titleOverride = titleOverride;
+  if (categoryOverrideCode) overrides.categoryOverrideCode = categoryOverrideCode;
+  return overrides;
 }
 
 function resolveOutcomeSellerProductId(outcome) {
@@ -3060,17 +3079,21 @@ app.post("/api/recommendations/auto-upload", authRequired, async (req, res) => {
 
       const items = [];
       for (const cand of candidates) {
+        const overrides = resolveRecommendationUploadOverrides(cand);
         const outcome = await executeUploadForUrl({
           url: cand.sourceUrl,
           user: req.user,
           force,
+          overrides,
         });
         appendUploadHistoryFromOutcome(cand.sourceUrl, outcome);
 
         items.push({
           recommendationId: cand.id || null,
           title: cand.title || "",
+          seoTitle: cand.seoTitle || cand.title || "",
           url: cand.sourceUrl,
+          categoryOverrideCode: overrides.categoryOverrideCode || null,
           ok: Boolean(outcome?.ok),
           skipped: Boolean(outcome?.skipped),
           skipReason: normalizeSkipReason(outcome),

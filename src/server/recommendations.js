@@ -5,6 +5,9 @@ import { evaluateQcGate } from '../pipeline/qcGate.js';
 import { extractImageUrls } from '../utils/contentImages.js';
 import { stripDomeggookPromoBlocks } from '../utils/domeggookDetailHtml.js';
 import { buildProxyUrl } from '../utils/imageProxy.js';
+import { resolveDisplayCategoryCode } from '../utils/categoryMap.js';
+import { buildCoupangSeoTitle } from '../utils/titleSuggest.js';
+import { recommendCategory } from '../coupang/api/recommendCategory.js';
 import { dbAll, dbRun, openDb } from './storage_sqlite_internal.js';
 
 const DEFAULT_RECOMMENDATION_COOLDOWN_DAYS = 7;
@@ -565,12 +568,22 @@ export async function listRecommendations(userId, { limit = 50 } = {}) {
     const shippingFee = Number.isFinite(Number(r.shipping_fee))
       ? Number(r.shipping_fee)
       : (Number.isFinite(Number(prev?.draft?.shippingFee)) ? Number(prev?.draft?.shippingFee) : null);
+    const seoTitleRaw = String(payload?.seo?.title || r.title || '').trim();
+    const seoTitle = seoTitleRaw || String(r.title || '').trim();
+    const originalTitleRaw = String(payload?.seo?.originalTitle || r.title || '').trim();
+    const categoryCode = toPositiveInt(payload?.category?.code);
+    const categorySourceRaw = String(payload?.category?.source || '').trim();
+    const categorySource = categorySourceRaw || (categoryCode ? 'payload' : null);
 
     return {
       id: r.id,
       sourceUrl,
       keyword: r.keyword,
-      title: r.title,
+      title: seoTitle || r.title,
+      seoTitle: seoTitle || r.title,
+      originalTitle: originalTitleRaw || seoTitle || r.title,
+      categoryCode,
+      categorySource,
       mainImageUrl: toRecommendationImageUrl(r.main_image_url, sourceUrl),
       sourcePrice,
       shippingFee,
@@ -593,6 +606,7 @@ function normalizeRecommendationItemInput(item = {}) {
   const it = item && typeof item === 'object' ? item : {};
   const sourceUrl = String(it.sourceUrl || '').trim();
   const payload = it.payload && typeof it.payload === 'object' ? it.payload : {};
+  const seoTitleInput = String(it.seoTitle || '').trim();
   const qc = it.qc && typeof it.qc === 'object' ? it.qc : {};
   const previewImages = Array.isArray(it.previewImages)
     ? it.previewImages.map((u) => String(u || '').trim()).filter(Boolean).slice(0, 30)
@@ -623,7 +637,7 @@ function normalizeRecommendationItemInput(item = {}) {
   return {
     sourceUrl,
     keyword: String(it.keyword || '').trim(),
-    title: String(it.title || '').trim(),
+    title: String(it.title || seoTitleInput || '').trim(),
     mainImageUrl: String(it.mainImageUrl || '').trim(),
     sourcePrice: Number.isFinite(Number(it.sourcePrice)) ? Number(it.sourcePrice) : null,
     shippingFee: Number.isFinite(Number(it.shippingFee)) ? Number(it.shippingFee) : null,
@@ -663,11 +677,21 @@ function mapSavedRowToItem(r) {
   const shippingFee = Number.isFinite(Number(r.shipping_fee))
     ? Number(r.shipping_fee)
     : (Number.isFinite(Number(prev?.draft?.shippingFee)) ? Number(prev?.draft?.shippingFee) : null);
+  const seoTitleRaw = String(payload?.seo?.title || r.title || '').trim();
+  const seoTitle = seoTitleRaw || String(r.title || '').trim();
+  const originalTitleRaw = String(payload?.seo?.originalTitle || r.title || '').trim();
+  const categoryCode = toPositiveInt(payload?.category?.code);
+  const categorySourceRaw = String(payload?.category?.source || '').trim();
+  const categorySource = categorySourceRaw || (categoryCode ? 'payload' : null);
   return {
     id: r.id,
     sourceUrl,
     keyword: r.keyword,
-    title: r.title,
+    title: seoTitle || r.title,
+    seoTitle: seoTitle || r.title,
+    originalTitle: originalTitleRaw || seoTitle || r.title,
+    categoryCode,
+    categorySource,
     mainImageUrl: toRecommendationImageUrl(r.main_image_url, sourceUrl),
     sourcePrice,
     shippingFee,
@@ -1220,6 +1244,251 @@ function parseBoolean(value, fallback = false) {
   if (['1', 'true', 'yes', 'y', 'on'].includes(text)) return true;
   if (['0', 'false', 'no', 'n', 'off'].includes(text)) return false;
   return fallback;
+}
+
+function toPositiveInt(value) {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : null;
+}
+
+function parsePredictCategoryBody(rawBody) {
+  if (!rawBody) return {};
+  if (typeof rawBody === 'object') return rawBody;
+  try {
+    return JSON.parse(rawBody);
+  } catch {
+    return {};
+  }
+}
+
+function pickPredictedCategoryCode(rawBody) {
+  const body = parsePredictCategoryBody(rawBody);
+  return (
+    toPositiveInt(body?.data?.predictedCategoryId) ||
+    toPositiveInt(body?.predictedCategoryId) ||
+    toPositiveInt(body?.data?.displayCategoryCode) ||
+    toPositiveInt(body?.displayCategoryCode) ||
+    null
+  );
+}
+
+function resolveRecommendationUploadSettings(settings = {}) {
+  return {
+    seoEnabled: parseBoolean(settings?.recommendationAutoSeoTitle ?? settings?.autoSeoTitle, true),
+    seoMaxLen: Math.floor(
+      clampNumber(
+        settings?.recommendationSeoTitleMaxLen,
+        20,
+        80,
+        45,
+      ),
+    ),
+    categoryOverrideCode: toPositiveInt(settings?.categoryOverrideCode),
+    categoryDefaultCode: toPositiveInt(settings?.defaultDisplayCategoryCode),
+    categoryPredictEnabled: parseBoolean(
+      settings?.recommendationAutoCategoryPredict ?? settings?.autoCategoryRecommend,
+      true,
+    ),
+    categoryPredictLimit: Math.floor(
+      clampNumber(
+        settings?.recommendationCategoryPredictLimit,
+        0,
+        30,
+        8,
+      ),
+    ),
+    categoryPredictTimeoutMs: Math.floor(
+      clampNumber(
+        settings?.recommendationCategoryPredictTimeoutMs,
+        1200,
+        9000,
+        2800,
+      ),
+    ),
+  };
+}
+
+async function predictRecommendationCategoryCode({
+  title,
+  description = '',
+  imageUrl = '',
+  accessKey = '',
+  secretKey = '',
+  timeoutMs = 2800,
+} = {}) {
+  const productName = String(title || '').trim();
+  if (!productName) return { code: null, status: null, error: 'empty_title' };
+  const ak = String(accessKey || '').trim();
+  const sk = String(secretKey || '').trim();
+  if (!ak || !sk) return { code: null, status: null, error: 'missing_keys' };
+
+  try {
+    const rec = await withTimeout(
+      recommendCategory({
+        productName,
+        productDescription: String(description || '').slice(0, 2000),
+        productImageUrl: String(imageUrl || '').trim(),
+        accessKey: ak,
+        secretKey: sk,
+      }),
+      Math.max(1200, Math.min(9000, Number(timeoutMs) || 2800)),
+      'recommend_category_timeout',
+    );
+    const code = pickPredictedCategoryCode(rec?.body);
+    return {
+      code: toPositiveInt(code),
+      status: Number(rec?.status) || null,
+      error: null,
+    };
+  } catch (e) {
+    return {
+      code: null,
+      status: null,
+      error: normalizeErrorMessage(e),
+    };
+  }
+}
+
+function extractRecommendationPreviewDraft(item = {}) {
+  const payload = item?.payload && typeof item.payload === 'object' ? item.payload : {};
+  const preview = payload?.preview && typeof payload.preview === 'object' ? payload.preview : {};
+  const draft = preview?.draft && typeof preview.draft === 'object' ? preview.draft : {};
+  return {
+    categoryText: String(draft?.categoryText || payload?.categoryText || '').trim(),
+    contentText: String(draft?.contentText || '').trim(),
+    imageUrl: String(item?.mainImageUrl || draft?.imageUrl || '').trim(),
+  };
+}
+
+async function enrichRecommendationsForUpload({ items = [], settings = {} } = {}) {
+  const list = Array.isArray(items) ? items : [];
+  if (list.length === 0) {
+    return {
+      items: [],
+      diagnostics: {
+        total: 0,
+        seoApplied: 0,
+        categoryResolved: 0,
+        categoryPredicted: 0,
+        categoryPredictFailed: 0,
+      },
+    };
+  }
+
+  const uploadSettings = resolveRecommendationUploadSettings(settings);
+  const accessKey = String(settings?.coupangAccessKey || process.env.COUPANG_ACCESS_KEY || '').trim();
+  const secretKey = String(settings?.coupangSecretKey || process.env.COUPANG_SECRET_KEY || '').trim();
+  const canPredict =
+    !uploadSettings.categoryOverrideCode &&
+    uploadSettings.categoryPredictEnabled &&
+    uploadSettings.categoryPredictLimit > 0 &&
+    Boolean(accessKey && secretKey);
+
+  const out = [];
+  let seoApplied = 0;
+  let categoryResolved = 0;
+  let categoryPredicted = 0;
+  let categoryPredictFailed = 0;
+
+  for (let i = 0; i < list.length; i += 1) {
+    const item = list[i] && typeof list[i] === 'object' ? list[i] : {};
+    const currentTitle = String(item?.title || '').trim();
+    const draftMeta = extractRecommendationPreviewDraft(item);
+
+    const seoTitle = uploadSettings.seoEnabled
+      ? buildCoupangSeoTitle(currentTitle, { maxLen: uploadSettings.seoMaxLen })
+      : '';
+    const resolvedTitle = String(seoTitle || currentTitle).trim();
+    if (resolvedTitle && currentTitle && resolvedTitle !== currentTitle) {
+      seoApplied += 1;
+    }
+
+    let categoryCode = null;
+    let categorySource = 'unresolved';
+    if (uploadSettings.categoryOverrideCode) {
+      categoryCode = uploadSettings.categoryOverrideCode;
+      categorySource = 'override';
+    } else {
+      const ruleCode = toPositiveInt(
+        resolveDisplayCategoryCode({
+          title: resolvedTitle || currentTitle,
+          categoryText: draftMeta.categoryText,
+          fallback: uploadSettings.categoryDefaultCode || 0,
+        }),
+      );
+      if (ruleCode) {
+        categoryCode = ruleCode;
+        categorySource = 'rule';
+      } else if (uploadSettings.categoryDefaultCode) {
+        categoryCode = uploadSettings.categoryDefaultCode;
+        categorySource = 'fallback';
+      }
+    }
+
+    let predictedCode = null;
+    if (canPredict && i < uploadSettings.categoryPredictLimit) {
+      const predicted = await predictRecommendationCategoryCode({
+        title: resolvedTitle || currentTitle,
+        description: draftMeta.contentText,
+        imageUrl: draftMeta.imageUrl,
+        accessKey,
+        secretKey,
+        timeoutMs: uploadSettings.categoryPredictTimeoutMs,
+      });
+      predictedCode = toPositiveInt(predicted?.code);
+      if (predictedCode) {
+        categoryCode = predictedCode;
+        categorySource = 'predict';
+        categoryPredicted += 1;
+      } else if (predicted?.error && predicted.error !== 'missing_keys') {
+        categoryPredictFailed += 1;
+      }
+    }
+
+    if (categoryCode) categoryResolved += 1;
+
+    const payload = item?.payload && typeof item.payload === 'object' ? item.payload : {};
+    const nextPayload = {
+      ...payload,
+      seo: {
+        ...(payload?.seo && typeof payload.seo === 'object' ? payload.seo : {}),
+        title: resolvedTitle || currentTitle,
+        originalTitle: currentTitle || '',
+        applied: Boolean(resolvedTitle && currentTitle && resolvedTitle !== currentTitle),
+        source: uploadSettings.seoEnabled ? 'rule' : 'original',
+        maxLen: uploadSettings.seoMaxLen,
+      },
+      category: {
+        ...(payload?.category && typeof payload.category === 'object' ? payload.category : {}),
+        code: categoryCode || null,
+        source: categorySource,
+        predictedCode: predictedCode || null,
+        fallbackCode: uploadSettings.categoryDefaultCode || null,
+        categoryText: draftMeta.categoryText || '',
+      },
+    };
+
+    out.push({
+      ...item,
+      title: resolvedTitle || currentTitle,
+      seoTitle: resolvedTitle || currentTitle,
+      originalTitle: currentTitle || '',
+      categoryCode: categoryCode || null,
+      categorySource,
+      payload: nextPayload,
+    });
+  }
+
+  return {
+    items: out,
+    diagnostics: {
+      total: list.length,
+      seoApplied,
+      categoryResolved,
+      categoryPredicted,
+      categoryPredictFailed,
+    },
+  };
 }
 
 function resolveRecommendationPolicy(settings = {}) {
@@ -2221,6 +2490,12 @@ async function generateRecommendationsBatch({
     }
   }
 
+  const uploadMeta = await enrichRecommendationsForUpload({
+    items: final,
+    settings: normalizedSettings,
+  });
+  const finalItems = Array.isArray(uploadMeta?.items) ? uploadMeta.items : final;
+
   const strictRejectedTotal = sumCountValues(strictRejectCounts);
   const strictRejectTop = toSortedCountEntries(strictRejectCounts, 5).map(([reason, count]) => ({
     reason,
@@ -2247,7 +2522,7 @@ async function generateRecommendationsBatch({
     policy,
     qcSettings: recommendationQcSettings,
     validated,
-    kept: final.length,
+    kept: finalItems.length,
     qcRejected,
     qcReasonCounts,
     qcRejectedSamples,
@@ -2275,6 +2550,7 @@ async function generateRecommendationsBatch({
     qcRelaxAttemptStage2,
     qcRelaxPassStage2,
     fallbackFilledCount,
+    uploadMeta: uploadMeta?.diagnostics || {},
     keywordDiagnostics: keywordDiagnostics.slice(0, keywordScanLimit).map((d) => ({
       keyword: d.keyword,
       strategy: d.strategy || 'none',
@@ -2331,7 +2607,7 @@ async function generateRecommendationsBatch({
       },
       qc: {
         rejected: qcRejected,
-        kept: final.length,
+        kept: finalItems.length,
         relaxAttemptStage1: qcRelaxAttemptStage1,
         relaxPassStage1: qcRelaxPassStage1,
         relaxAttemptStage2: qcRelaxAttemptStage2,
@@ -2342,7 +2618,7 @@ async function generateRecommendationsBatch({
     strictRejectTop,
     hint: '',
   };
-  if (final.length === 0) {
+  if (finalItems.length === 0) {
     if (qcRejected > 0) {
       const topQcReason = Object.entries(qcReasonCounts)
         .sort((a, b) => Number(b?.[1] || 0) - Number(a?.[1] || 0))[0];
@@ -2387,7 +2663,7 @@ async function generateRecommendationsBatch({
     }
   }
 
-  return { ok: true, items: final, validated, diagnostics };
+  return { ok: true, items: finalItems, validated, diagnostics };
 }
 
 export async function generateRecommendationsForUser({ userId, settings, keywords, topN = 20, onProgress = null }) {

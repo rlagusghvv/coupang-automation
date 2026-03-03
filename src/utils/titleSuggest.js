@@ -69,6 +69,23 @@ const PRODUCT_HEAD_HINTS = [
   "배터리",
 ];
 
+const COUPANG_TITLE_NOISE = [
+  "무료배송",
+  "당일출고",
+  "당일",
+  "출고",
+  "특가",
+  "최저가",
+  "인기",
+  "추천",
+  "신상",
+  "도매",
+  "도매꾹",
+  "도매매",
+  "재고",
+  "땡처리",
+];
+
 export function cleanTitle(raw) {
   return String(raw || "")
     .replace(TAG_RE, " ")
@@ -154,6 +171,86 @@ function fit15(s) {
   const t = String(s || "").replace(/\s+/g, " ").trim();
   if (t.length <= 15) return t;
   return t.slice(0, 15).trimEnd();
+}
+
+function uniqueTokens(tokens = []) {
+  const out = [];
+  for (const token of tokens) {
+    const t = String(token || "").trim();
+    if (!t) continue;
+    if (out.includes(t)) continue;
+    out.push(t);
+  }
+  return out;
+}
+
+function truncateAtWordBoundary(text, maxLen) {
+  const t = String(text || "").replace(/\s+/g, " ").trim();
+  const m = Number(maxLen);
+  if (!Number.isFinite(m) || m <= 0) return t;
+  if (t.length <= m) return t;
+  let cut = t.slice(0, m).trimEnd();
+  const lastSpace = cut.lastIndexOf(" ");
+  if (lastSpace >= Math.floor(m * 0.55)) {
+    cut = cut.slice(0, lastSpace).trimEnd();
+  }
+  return cut;
+}
+
+function extractSpecTokens(title = "") {
+  const base = String(title || "");
+  const out = [];
+  const patterns = [
+    /\b\d{1,4}\s*(?:개|입|팩|세트|매|장|롤|포|병|캡슐|p|P|pcs|PCS)\b/g,
+    /\b\d{1,4}(?:cm|mm|m|ml|l|L|g|kg|oz|인치|호)\b/gi,
+  ];
+  for (const re of patterns) {
+    let m;
+    while ((m = re.exec(base))) {
+      const token = String(m[0] || "").replace(/\s+/g, "").trim();
+      if (!token) continue;
+      if (!out.includes(token)) out.push(token);
+      if (out.length >= 4) break;
+    }
+    if (out.length >= 4) break;
+  }
+  return out;
+}
+
+export function buildCoupangSeoTitle(rawTitle, { maxLen = 45, minLen = 6 } = {}) {
+  const max = Number.isFinite(Number(maxLen))
+    ? Math.max(20, Math.min(80, Math.floor(Number(maxLen))))
+    : 45;
+  const min = Number.isFinite(Number(minLen))
+    ? Math.max(4, Math.min(max - 2, Math.floor(Number(minLen))))
+    : 6;
+
+  const base = cleanTitle(String(rawTitle || "").split("|")[0]);
+  if (!base) return "";
+
+  const head = pickProductHead(base);
+  const specTokens = extractSpecTokens(base);
+  const baseTokens = base
+    .split(" ")
+    .map((t) => t.trim())
+    .filter(Boolean)
+    .filter((t) => t.length >= 2)
+    .filter((t) => !COUPANG_TITLE_NOISE.some((w) => t.includes(w)));
+
+  const ordered = uniqueTokens([
+    head,
+    ...baseTokens,
+    ...specTokens,
+  ]);
+
+  let out = truncateAtWordBoundary(ordered.join(" "), max);
+  if (!out || out.length < min) {
+    out = truncateAtWordBoundary(base, max);
+  }
+  if (!out || out.length < min) {
+    out = String(base).slice(0, max).trim();
+  }
+  return out.replace(/\s+/g, " ").trim();
 }
 
 function normalizePhraseWords(s) {

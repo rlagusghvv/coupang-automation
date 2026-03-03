@@ -1099,7 +1099,8 @@ function renderRecoList(items) {
 
   recoListEl.innerHTML = list
     .map((it) => {
-      const title = it.title || "(제목 없음)";
+      const title = it.seoTitle || it.title || "(제목 없음)";
+      const originalTitle = it.originalTitle || "";
       const keyword = it.keyword || "";
       const img = it.mainImageUrl || "";
       const finalPrice = formatWon(it.finalPrice);
@@ -1107,6 +1108,12 @@ function renderRecoList(items) {
       const margin = Number(it.marginRate);
       const marginText = Number.isFinite(margin) ? `${Math.round(margin * 100)}%` : "-";
       const sourceUrl = it.sourceUrl || "";
+      const categoryCode = Number(it.categoryCode);
+      const categorySource = String(it.categorySource || "").trim();
+      const categoryChip =
+        Number.isFinite(categoryCode) && categoryCode > 0
+          ? `카테고리: ${categoryCode}${categorySource ? ` (${categorySource})` : ""}`
+          : "";
 
       return `
         <div class="reco-item" style="display:flex; gap:12px; padding:10px 0; border-bottom:1px solid var(--line,#eee);">
@@ -1115,8 +1122,14 @@ function renderRecoList(items) {
           </div>
           <div style="flex:1 1 auto; min-width:0;">
             <div style="font-weight:700; line-height:1.25;">${escapeHtml(title)}</div>
+            ${
+              originalTitle && originalTitle !== title
+                ? `<div class="hint" style="margin-top:2px;">원본: ${escapeHtml(originalTitle)}</div>`
+                : ""
+            }
             <div class="hint" style="margin-top:4px; display:flex; flex-wrap:wrap; gap:8px;">
               ${keyword ? `<span class="chip">키워드: ${escapeHtml(keyword)}</span>` : ""}
+              ${categoryChip ? `<span class="chip">${escapeHtml(categoryChip)}</span>` : ""}
               <span class="chip">예상가: ${escapeHtml(finalPrice)}</span>
               <span class="chip">예상이익: ${escapeHtml(profit)}</span>
               <span class="chip">마진: ${escapeHtml(marginText)}</span>
