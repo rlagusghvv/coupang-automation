@@ -193,7 +193,8 @@ class _MoreScreenState extends State<MoreScreen> {
       SensitiveSettingsStore.coupangAccessKey: _coupangAccessKey.text.trim(),
       SensitiveSettingsStore.coupangSecretKey: _coupangSecretKey.text.trim(),
       SensitiveSettingsStore.coupangVendorId: _coupangVendorId.text.trim(),
-      SensitiveSettingsStore.coupangVendorUserId: _coupangVendorUserId.text.trim(),
+      SensitiveSettingsStore.coupangVendorUserId:
+          _coupangVendorUserId.text.trim(),
       SensitiveSettingsStore.coupangDeliveryCompanyCode:
           _coupangDeliveryCompanyCode.text.trim(),
       SensitiveSettingsStore.pagesApiToken: _pagesApiToken.text.trim(),
@@ -206,7 +207,8 @@ class _MoreScreenState extends State<MoreScreen> {
       'shippingPolicy': _shippingPolicy,
       'shippingFixedAmount':
           double.tryParse(_shippingFixedAmount.text.trim()) ?? 2500,
-      'categoryOverrideCode': int.tryParse(_categoryOverrideCode.text.trim()) ?? 0,
+      'categoryOverrideCode':
+          int.tryParse(_categoryOverrideCode.text.trim()) ?? 0,
       'autoCategoryPredict': _autoCategoryPredict ? '1' : '0',
     };
   }
@@ -214,10 +216,12 @@ class _MoreScreenState extends State<MoreScreen> {
   Future<void> _refreshPresets() async {
     setState(() => _loadingPresets = true);
     try {
-      final json = await widget.api.getJson('/api/presets', query: {'limit': '200'});
+      final json =
+          await widget.api.getJson('/api/presets', query: {'limit': '200'});
       final list = (json['presets'] as List?) ?? const [];
       if (mounted) {
-        setState(() => _presets = list.map((e) => (e as Map).cast<String, dynamic>()).toList());
+        setState(() => _presets =
+            list.map((e) => (e as Map).cast<String, dynamic>()).toList());
       }
     } catch (_) {
       // ignore
@@ -246,7 +250,8 @@ class _MoreScreenState extends State<MoreScreen> {
               child: const Text('취소'),
             ),
             FilledButton(
-              onPressed: () => Navigator.of(ctx).pop(nameController.text.trim()),
+              onPressed: () =>
+                  Navigator.of(ctx).pop(nameController.text.trim()),
               child: const Text('저장'),
             ),
           ],
@@ -298,8 +303,12 @@ class _MoreScreenState extends State<MoreScreen> {
           title: const Text('프리셋 삭제'),
           content: const Text('정말 삭제할까요?'),
           actions: [
-            TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('취소')),
-            FilledButton(onPressed: () => Navigator.of(ctx).pop(true), child: const Text('삭제')),
+            TextButton(
+                onPressed: () => Navigator.of(ctx).pop(false),
+                child: const Text('취소')),
+            FilledButton(
+                onPressed: () => Navigator.of(ctx).pop(true),
+                child: const Text('삭제')),
           ],
         );
       },
@@ -457,7 +466,6 @@ class _MoreScreenState extends State<MoreScreen> {
             ErrorBanner(message: _error!, onRetry: _refreshMe),
             const SizedBox(height: 12),
           ],
-
           AppCard(
             onTap: () {
               Navigator.of(context).push(
@@ -475,8 +483,9 @@ class _MoreScreenState extends State<MoreScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text('추천',
-                          style: TextStyle(fontWeight: FontWeight.w900)),
+                      Text('추천', style: TextStyle(fontWeight: FontWeight.w900)),
+                      SizedBox(height: 2),
+                      Text('추천 채우기/자동업로드 실행', style: TextStyle(fontSize: 12)),
                       SizedBox(height: 2),
                       Text('매일 오전 9시, 순마진≥3,000 / 마진율≥35% 기준',
                           style: TextStyle(fontSize: 12)),
@@ -488,7 +497,6 @@ class _MoreScreenState extends State<MoreScreen> {
             ),
           ),
           const SizedBox(height: 12),
-
           AppCard(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -510,7 +518,8 @@ class _MoreScreenState extends State<MoreScreen> {
                         ? '-'
                         : 'Received'),
                 if (PushTokenService.instance.lastError != null)
-                  KvRow(k: 'APNs error', v: PushTokenService.instance.lastError!),
+                  KvRow(
+                      k: 'APNs error', v: PushTokenService.instance.lastError!),
                 KvRow(k: 'Signed in', v: authedEmail.isEmpty ? 'No' : 'Yes'),
                 if (authedEmail.isNotEmpty) KvRow(k: 'Email', v: authedEmail),
                 const Divider(height: 24),
@@ -926,16 +935,19 @@ class _MoreScreenState extends State<MoreScreen> {
                           Expanded(
                             child: Text(
                               name.isEmpty ? id : name,
-                              style: const TextStyle(fontWeight: FontWeight.w800),
+                              style:
+                                  const TextStyle(fontWeight: FontWeight.w800),
                             ),
                           ),
                           TextButton(
-                            onPressed: (_me == null) ? null : () => _applyPreset(id),
+                            onPressed:
+                                (_me == null) ? null : () => _applyPreset(id),
                             child: const Text('적용'),
                           ),
                           IconButton(
                             tooltip: '삭제',
-                            onPressed: (_me == null) ? null : () => _deletePreset(id),
+                            onPressed:
+                                (_me == null) ? null : () => _deletePreset(id),
                             icon: const Icon(Icons.delete_outline),
                           ),
                         ],
