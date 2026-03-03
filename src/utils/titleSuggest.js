@@ -67,6 +67,24 @@ const PRODUCT_HEAD_HINTS = [
   "충전기",
   "거치대",
   "배터리",
+  // organize
+  "정리함",
+  "수납함",
+  "트레이",
+  "칸막이",
+  "파티션",
+  // car
+  "송풍구",
+  "컵홀더",
+  "콘솔",
+  "트렁크",
+  // pet
+  "하네스",
+  "리드줄",
+  "목줄",
+  "급수기",
+  "스크래쳐",
+  "배변패드",
 ];
 
 const COUPANG_TITLE_NOISE = [
@@ -84,6 +102,93 @@ const COUPANG_TITLE_NOISE = [
   "도매매",
   "재고",
   "땡처리",
+];
+
+const SEO_PRIORITY_TERMS = [
+  "차량용",
+  "송풍구",
+  "거치대",
+  "트렁크",
+  "컵홀더",
+  "시트백",
+  "콘솔",
+  "멀티탭",
+  "전선정리",
+  "케이블정리",
+  "정리함",
+  "수납함",
+  "트레이",
+  "칸막이",
+  "파티션",
+  "강아지",
+  "고양이",
+  "반려동물",
+  "하네스",
+  "리드줄",
+  "배변패드",
+  "배변봉투",
+  "급수기",
+  "스크래쳐",
+  "카시트",
+];
+
+const CAR_TOKENS = [
+  "차량",
+  "차량용",
+  "자동차",
+  "송풍구",
+  "대시보드",
+  "컵홀더",
+  "콘솔",
+  "트렁크",
+  "시트",
+  "시트백",
+  "차박",
+];
+
+const PET_TOKENS = [
+  "반려",
+  "반려동물",
+  "애견",
+  "강아지",
+  "고양이",
+  "펫",
+  "하네스",
+  "리드줄",
+  "목줄",
+  "배변",
+  "급수기",
+  "스크래쳐",
+  "산책",
+];
+
+const SEO_SPLIT_HINTS = [
+  "반려동물",
+  "차량용",
+  "휴대폰",
+  "멀티탭",
+  "전선정리",
+  "케이블정리",
+  "정리함",
+  "수납함",
+  "칸막이",
+  "파티션",
+  "거치대",
+  "송풍구",
+  "대시보드",
+  "트렁크",
+  "시트백",
+  "컵홀더",
+  "강아지",
+  "고양이",
+  "하네스",
+  "리드줄",
+  "배변패드",
+  "배변봉투",
+  "급수기",
+  "스크래쳐",
+  "특대형",
+  "대형",
 ];
 
 export function cleanTitle(raw) {
@@ -173,12 +278,38 @@ function fit15(s) {
   return t.slice(0, 15).trimEnd();
 }
 
-function uniqueTokens(tokens = []) {
+function toCanonicalSeoToken(token = "") {
+  const t = String(token || "").replace(/\s+/g, "").toLowerCase();
+  if (!t) return "";
+  if (/^(차량용|차량|자동차|자동차용)$/.test(t)) return "차량용";
+  if (/^(강아지|애견)$/.test(t)) return "강아지";
+  if (/^(고양이|캣)$/.test(t)) return "고양이";
+  if (/^(반려동물|반려|펫)$/.test(t)) return "반려동물";
+  if (/(정리함|수납함|정리대|수납박스|정리박스)/.test(t)) return "정리함";
+  if (/(멀티탭|전선정리|케이블정리)/.test(t)) return "멀티탭정리";
+  if (/(거치대|홀더)/.test(t)) return "거치대";
+  if (/(하네스|가슴줄)/.test(t)) return "하네스";
+  if (/(리드줄|산책줄|목줄)/.test(t)) return "리드줄";
+  if (/(배변패드|배변봉투|배변)/.test(t)) return "배변";
+  if (/(급수기|물병|물그릇)/.test(t)) return "급수기";
+  if (/(스크래쳐|스크래처)/.test(t)) return "스크래쳐";
+  return t;
+}
+
+function escapeRegExp(value = "") {
+  return String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function uniqueTokens(tokens = [], canonicalizer = (x) => String(x || "").trim()) {
   const out = [];
+  const seen = new Set();
   for (const token of tokens) {
-    const t = String(token || "").trim();
+    const t = String(token || "").replace(/\s+/g, " ").trim();
     if (!t) continue;
-    if (out.includes(t)) continue;
+    const key = String(canonicalizer(t) || t).trim();
+    if (!key) continue;
+    if (seen.has(key)) continue;
+    seen.add(key);
     out.push(t);
   }
   return out;
@@ -201,8 +332,9 @@ function extractSpecTokens(title = "") {
   const base = String(title || "");
   const out = [];
   const patterns = [
-    /\b\d{1,4}\s*(?:개|입|팩|세트|매|장|롤|포|병|캡슐|p|P|pcs|PCS)\b/g,
-    /\b\d{1,4}(?:cm|mm|m|ml|l|L|g|kg|oz|인치|호)\b/gi,
+    /(\d{1,4})\s*(개|입|팩|세트|매|장|롤|포|병|캡슐|p|P|pcs|PCS)/g,
+    /(\d{1,3})\s*구/g,
+    /(\d{1,4})(cm|mm|m|ml|l|L|g|kg|oz|인치|호)/gi,
   ];
   for (const re of patterns) {
     let m;
@@ -217,13 +349,67 @@ function extractSpecTokens(title = "") {
   return out;
 }
 
-export function buildCoupangSeoTitle(rawTitle, { maxLen = 45, minLen = 6 } = {}) {
+function detectSeoTheme(base = "") {
+  const hay = String(base || "").toLowerCase();
+  if (CAR_TOKENS.some((k) => hay.includes(String(k).toLowerCase()))) return "car";
+  if (PET_TOKENS.some((k) => hay.includes(String(k).toLowerCase()))) return "pet";
+  return "general";
+}
+
+function explodeSeoTokens(raw = "") {
+  let text = String(raw || "").trim();
+  if (!text) return [];
+
+  text = text
+    .replace(/(\d{1,3}\s*구)(?=[가-힣a-zA-Z])/g, "$1 ")
+    .replace(
+      /(\d{1,4}\s*(?:개|입|팩|세트|매|장|롤|포|병|캡슐|cm|mm|ml|l|L|g|kg|인치|호))(?=[가-힣a-zA-Z])/g,
+      "$1 ",
+    );
+
+  for (const hint of SEO_SPLIT_HINTS) {
+    const re = new RegExp(`(${escapeRegExp(hint)})`, "gi");
+    text = text.replace(re, " $1 ");
+  }
+
+  return text
+    .split(" ")
+    .map((t) => t.trim())
+    .filter(Boolean);
+}
+
+function pickThemePrefix(base = "", tokens = []) {
+  const theme = detectSeoTheme(base);
+  const list = Array.isArray(tokens) ? tokens : [];
+  if (theme === "car") return "차량용";
+  if (theme === "pet") {
+    if (list.some((t) => String(t).includes("강아지") || String(t).includes("애견"))) return "강아지";
+    if (list.some((t) => String(t).includes("고양이") || String(t).includes("캣"))) return "고양이";
+    return "반려동물";
+  }
+  return "";
+}
+
+function pickPriorityTokens(tokens = []) {
+  const list = Array.isArray(tokens) ? tokens : [];
+  const out = [];
+  for (const term of SEO_PRIORITY_TERMS) {
+    const hit = list.find((t) => {
+      const token = String(t || "");
+      return token.includes(term) || term.includes(token);
+    });
+    if (hit) out.push(hit);
+  }
+  return uniqueTokens(out, toCanonicalSeoToken);
+}
+
+export function buildCoupangSeoTitle(rawTitle, { maxLen = 55, minLen = 8 } = {}) {
   const max = Number.isFinite(Number(maxLen))
     ? Math.max(20, Math.min(80, Math.floor(Number(maxLen))))
-    : 45;
+    : 55;
   const min = Number.isFinite(Number(minLen))
     ? Math.max(4, Math.min(max - 2, Math.floor(Number(minLen))))
-    : 6;
+    : 8;
 
   const base = cleanTitle(String(rawTitle || "").split("|")[0]);
   if (!base) return "";
@@ -234,16 +420,46 @@ export function buildCoupangSeoTitle(rawTitle, { maxLen = 45, minLen = 6 } = {})
     .split(" ")
     .map((t) => t.trim())
     .filter(Boolean)
+    .flatMap((t) => explodeSeoTokens(t))
     .filter((t) => t.length >= 2)
+    .map((t) => t.replace(/하기$/g, "").replace(/정리하기$/g, "정리"))
     .filter((t) => !COUPANG_TITLE_NOISE.some((w) => t.includes(w)));
 
-  const ordered = uniqueTokens([
-    head,
-    ...baseTokens,
-    ...specTokens,
-  ]);
+  const cleanedTokens = baseTokens.filter((t) => !["정리", "수납"].includes(t));
+  const themePrefix = pickThemePrefix(base, baseTokens);
+  const priorityTokens = pickPriorityTokens(cleanedTokens);
+  const contextTokens = [];
+  if (cleanedTokens.some((t) => t.includes("멀티탭")) && !cleanedTokens.some((t) => t.includes("전선정리"))) {
+    contextTokens.push("전선정리");
+  }
+  if (cleanedTokens.some((t) => t.includes("서랍")) && !cleanedTokens.some((t) => t.includes("칸막이"))) {
+    contextTokens.push("칸막이");
+  }
 
-  let out = truncateAtWordBoundary(ordered.join(" "), max);
+  const ordered = uniqueTokens(
+    [
+      themePrefix,
+      head,
+      ...priorityTokens,
+      ...contextTokens,
+      ...cleanedTokens,
+      ...specTokens,
+    ],
+    toCanonicalSeoToken,
+  );
+
+  const titleParts = [];
+  for (const token of ordered) {
+    const candidate = [...titleParts, token].join(" ").replace(/\s+/g, " ").trim();
+    if (!candidate) continue;
+    if (candidate.length > max) break;
+    titleParts.push(token);
+  }
+
+  let out = titleParts.join(" ").replace(/\s+/g, " ").trim();
+  if (out.length > max) {
+    out = truncateAtWordBoundary(out, max);
+  }
   if (!out || out.length < min) {
     out = truncateAtWordBoundary(base, max);
   }

@@ -155,23 +155,56 @@ const RELAXABLE_RECO_BAN_KEYWORDS = new Set([
   '스틱',
 ]);
 
+const RECOMMENDATION_THEME_HINTS = {
+  car: [
+    '차량', '자동차', '차량용', '송풍구', '대시보드', '컵홀더', '콘솔', '트렁크',
+    '시트', '시트백', '틈새', '햇빛가리개', '썬바이저', '룸미러', '차박',
+  ],
+  pet: [
+    '반려', '반려동물', '애견', '강아지', '고양이', '펫', '캣', '독',
+    '하네스', '리드줄', '산책줄', '목줄', '배변', '급수기', '스크래쳐',
+    '장난감', '브러쉬', '빗', '카시트',
+  ],
+  organize: [
+    '정리', '수납', '트레이', '칸막이', '파티션', '서랍', '멀티탭', '전선',
+  ],
+};
+
 export function defaultKeywordSet() {
-  // v0: focus on pet + car/desk convenience items (higher perceived value, lower brand lock-in)
+  // Focus: pet + car first, desk organization as secondary.
   return [
     // car
-    '차량 수납', '차량 정리', '차량 거치대', '차량 핸드폰 거치대', '차량 송풍구 거치대',
-    '차량 틈새 수납', '차량 시트 훅', '차량 케이블 정리', '차량 컵홀더',
-    // desk/office
-    '책상 정리', '케이블 정리', '멀티탭 정리', '노트북 거치대', '모니터 받침대',
-    '서랍 정리', '정리 트레이',
+    '차량용 수납함',
+    '차량 틈새 수납',
+    '차량 시트백 수납',
+    '차량 트렁크 정리함',
+    '차량 송풍구 거치대',
+    '차량 휴대폰 거치대',
+    '차량 컵홀더 수납',
+    '차량 콘솔 정리',
+    '차량용 쓰레기통',
+    '차량 햇빛가리개',
+    '차량 케이블 정리',
+    '차량 논슬립 패드',
     // pet (avoid food/medicine)
-    '강아지 장난감', '고양이 장난감', '고양이 낚시대', '노즈워크',
-    '배변 봉투', '배변패드', '펫 브러쉬', '고양이 빗',
-    '강아지 목줄', '리드줄', '하네스', '가슴줄',
-    '급수기', '물병', '물그릇',
-    '스크래쳐', '캣닢 장난감',
-    // general organizing (still useful)
-    '수납', '정리', '후크', '클립', '라벨 스티커',
+    '강아지 장난감',
+    '고양이 장난감',
+    '강아지 하네스',
+    '강아지 리드줄',
+    '강아지 산책줄',
+    '고양이 스크래쳐',
+    '반려동물 배변봉투',
+    '반려동물 배변패드',
+    '반려동물 급수기',
+    '펫 브러쉬',
+    '고양이 빗',
+    '반려동물 카시트',
+    // desk/organize (secondary)
+    '멀티탭 정리함',
+    '전선 정리함',
+    '서랍 칸막이',
+    '서랍 정리 트레이',
+    '책상 수납 정리',
   ];
 }
 
@@ -294,6 +327,26 @@ function containsBanKeyword(text, banList) {
   return (banList || []).some((k) => t.includes(String(k || '').toLowerCase()));
 }
 
+function detectRecommendationThemes({ title = '', keyword = '' } = {}) {
+  const hay = `${String(title || '').toLowerCase()} ${String(keyword || '').toLowerCase()}`;
+  const themes = [];
+  for (const [name, hints] of Object.entries(RECOMMENDATION_THEME_HINTS)) {
+    if (Array.isArray(hints) && hints.some((h) => hay.includes(String(h || '').toLowerCase()))) {
+      themes.push(name);
+    }
+  }
+  return themes;
+}
+
+function computeThemeBoost(themes = []) {
+  const list = Array.isArray(themes) ? themes : [];
+  let boost = 0;
+  if (list.includes('car')) boost += 1400;
+  if (list.includes('pet')) boost += 1400;
+  if (list.includes('organize')) boost += 300;
+  return Math.min(3200, boost);
+}
+
 function roundToKrw900(p) {
   const x = Number(p);
   if (!Number.isFinite(x)) return null;
@@ -302,7 +355,13 @@ function roundToKrw900(p) {
   return Math.max(900, k * 1000 - 100);
 }
 
-export function scoreRecommendation({ preview, minProfit = 3000, minMarginRate = 0.30, banKeywords = DEFAULT_BAN_KEYWORDS }) {
+export function scoreRecommendation({
+  preview,
+  minProfit = 3000,
+  minMarginRate = 0.30,
+  banKeywords = DEFAULT_BAN_KEYWORDS,
+  keyword = '',
+} = {}) {
   const draft = preview?.draft || {};
   const computed = preview?.computed || {};
 
@@ -337,9 +396,12 @@ export function scoreRecommendation({ preview, minProfit = 3000, minMarginRate =
   // v0: allow 1+ detail images (some listings have short descriptions).
   if (contentImageCount < 1) return { ok: false, reason: 'detail_images_too_few', contentImageCount };
 
-  // Simple score: favor higher profit and sufficient detail images.
-  const score = profit + Math.min(2000, contentImageCount * 200);
-  const reason = `recommend≈${Math.round(finalPrice)} / profit≈${Math.round(profit)} / margin≈${Math.round(marginRate * 100)}% / detailImages=${contentImageCount}`;
+  const themes = detectRecommendationThemes({ title, keyword });
+  const themeBoost = computeThemeBoost(themes);
+  // Score: profit + detail quality + theme preference(car/pet).
+  const score = profit + Math.min(2000, contentImageCount * 200) + themeBoost;
+  const themeText = themes.length > 0 ? ` / theme=${themes.join('+')}` : '';
+  const reason = `recommend≈${Math.round(finalPrice)} / profit≈${Math.round(profit)} / margin≈${Math.round(marginRate * 100)}% / detailImages=${contentImageCount}${themeText}`;
 
   return {
     ok: true,
@@ -352,6 +414,8 @@ export function scoreRecommendation({ preview, minProfit = 3000, minMarginRate =
     marginRate,
     score,
     reason,
+    themes,
+    themeBoost,
   };
 }
 
@@ -1280,7 +1344,7 @@ function resolveRecommendationUploadSettings(settings = {}) {
         settings?.recommendationSeoTitleMaxLen,
         20,
         80,
-        45,
+        55,
       ),
     ),
     categoryOverrideCode: toPositiveInt(settings?.categoryOverrideCode),
@@ -1294,7 +1358,7 @@ function resolveRecommendationUploadSettings(settings = {}) {
         settings?.recommendationCategoryPredictLimit,
         0,
         30,
-        8,
+        16,
       ),
     ),
     categoryPredictTimeoutMs: Math.floor(
@@ -1302,7 +1366,7 @@ function resolveRecommendationUploadSettings(settings = {}) {
         settings?.recommendationCategoryPredictTimeoutMs,
         1200,
         9000,
-        2800,
+        3200,
       ),
     ),
   };
@@ -2004,6 +2068,7 @@ async function generateRecommendationsBatch({
       minProfit: thresholds.minProfit,
       minMarginRate: thresholds.minMarginRate,
       banKeywords: DEFAULT_BAN_KEYWORDS,
+      keyword: c.keyword,
     });
     if (!s.ok) {
       const reason = String(s.reason || 'unknown');
@@ -2059,6 +2124,7 @@ async function generateRecommendationsBatch({
         minProfit: relaxedMinProfit,
         minMarginRate: relaxedMinMarginRate,
         banKeywords: relaxedBanKeywords,
+        keyword: c.keyword,
       });
       if (!s.ok) {
         const reason = String(s.reason || 'unknown');
@@ -2123,6 +2189,7 @@ async function generateRecommendationsBatch({
         minProfit: rescueMinProfit,
         minMarginRate: rescueMinMarginRate,
         banKeywords: rescueBanKeywords,
+        keyword: c.keyword,
       });
       if (!s.ok) {
         const reason = String(s.reason || 'unknown');
