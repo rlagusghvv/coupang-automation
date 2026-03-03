@@ -2222,6 +2222,14 @@ const recommendationDailyAutoRunState = {
   lastResults: [],
 };
 
+const recommendationDailyAutoSchedulerState = {
+  enabled: false,
+  hour: 9,
+  minute: 0,
+  intervalMs: 60_000,
+  startedAt: "",
+};
+
 async function runRecommendationAutoRunForUser({
   user,
   options = {},
@@ -3101,10 +3109,20 @@ app.post("/api/recommendations/auto-run", authRequired, async (req, res) => {
   }
 });
 
-app.get("/api/recommendations/auto-run/status", authRequired, async (_req, res) => {
+app.get("/api/recommendations/auto-run/status", authRequired, async (req, res) => {
+  const userSettings = req.user?.settings || {};
+  const userOptions = resolveRecommendationAutoRunOptions({}, userSettings);
   return res.json({
     ok: true,
     state: recommendationDailyAutoRunState,
+    scheduler: recommendationDailyAutoSchedulerState,
+    user: {
+      id: String(req.user?.id || ""),
+      email: String(req.user?.email || ""),
+      enabled: parseBooleanFlag(userSettings.recommendationDailyAutoEnabled, false),
+      options: userOptions,
+    },
+    serverNow: new Date().toISOString(),
   });
 });
 
@@ -3399,20 +3417,26 @@ app.listen(PORT, "127.0.0.1", () => {
     process.env.RECOMMENDATION_DAILY_AUTO_ENABLED,
     false,
   );
+  const hour = clampInt(process.env.RECOMMENDATION_DAILY_AUTO_HOUR, 0, 23, 9);
+  const minute = clampInt(
+    process.env.RECOMMENDATION_DAILY_AUTO_MINUTE,
+    0,
+    59,
+    0,
+  );
+  const intervalMs = clampInt(
+    process.env.RECOMMENDATION_DAILY_AUTO_INTERVAL_MS,
+    10_000,
+    600_000,
+    60_000,
+  );
+  recommendationDailyAutoSchedulerState.enabled = dailyAutoEnabled;
+  recommendationDailyAutoSchedulerState.hour = hour;
+  recommendationDailyAutoSchedulerState.minute = minute;
+  recommendationDailyAutoSchedulerState.intervalMs = intervalMs;
+  recommendationDailyAutoSchedulerState.startedAt = new Date().toISOString();
+
   if (dailyAutoEnabled) {
-    const hour = clampInt(process.env.RECOMMENDATION_DAILY_AUTO_HOUR, 0, 23, 9);
-    const minute = clampInt(
-      process.env.RECOMMENDATION_DAILY_AUTO_MINUTE,
-      0,
-      59,
-      0,
-    );
-    const intervalMs = clampInt(
-      process.env.RECOMMENDATION_DAILY_AUTO_INTERVAL_MS,
-      10_000,
-      600_000,
-      60_000,
-    );
     const started = startRecommendationDailyAutoRunLoop({
       hour,
       minute,

@@ -109,6 +109,16 @@
                   <input id="recoAutoCount" type="number" min="1" max="30" value="5" style="width:88px" aria-label="자동 업로드 개수" />
                   <button id="recoAutoUpload" type="button">추천 자동 업로드</button>
                 </div>
+                <div class="mini-card">
+                  <div class="mini-title">일일 자동 업로드 상태</div>
+                  <div class="mini-kv" id="recoAutoRunStatusHome">
+                    <div class="hint">상태 조회 전</div>
+                  </div>
+                  <div class="btn-row" style="margin-top: 8px;">
+                    <button id="recoAutoRunNowHome" type="button" class="ghost">지금 1회 실행</button>
+                    <button id="recoAutoRunRefreshHome" type="button" class="ghost">상태 새로고침</button>
+                  </div>
+                </div>
                 <p class="hint">‘후보 채우기’는 캐시에 쌓아두는 방식이라 안정적입니다. 각 후보는 ‘미리보기’로 확인 후 업로드하세요.</p>
                 <div class="mini-card" id="recoList"></div>
               </div>
@@ -393,6 +403,49 @@
                         <input id="soundOnComplete" type="checkbox" />
                         <span>완료 알림 소리</span>
                       </label>
+                    </div>
+
+                    <div class="divider"></div>
+                    <div class="grid">
+                      <div>
+                        <label>일일 자동 업로드 사용</label>
+                        <input id="recommendationDailyAutoEnabled" type="checkbox" />
+                      </div>
+                      <div>
+                        <label>일일 목표 추천 수</label>
+                        <input id="recommendationDailyAutoTargetCount" type="number" min="1" max="100" value="6" />
+                      </div>
+                      <div>
+                        <label>일일 업로드 최대 개수</label>
+                        <input id="recommendationDailyAutoUploadLimit" type="number" min="1" max="30" value="3" />
+                      </div>
+                      <div>
+                        <label>재노출 제외일</label>
+                        <input id="recommendationDailyAutoCooldownDays" type="number" min="1" max="60" value="7" />
+                      </div>
+                      <div>
+                        <label>QC 통과만 업로드</label>
+                        <input id="recommendationDailyAutoOnlyEligible" type="checkbox" checked />
+                      </div>
+                      <div>
+                        <label>중복 무시 강제 업로드</label>
+                        <input id="recommendationDailyAutoForce" type="checkbox" />
+                      </div>
+                      <div style="grid-column: 1 / -1;">
+                        <label>일일 자동 업로드 전용 키워드 (쉼표/줄바꿈 구분)</label>
+                        <textarea id="recommendationDailyAutoKeywords" rows="3" placeholder="비우면 기본 키워드셋"></textarea>
+                      </div>
+                    </div>
+                    <p class="hint">일일 실행 시각은 서버 환경변수(RECOMMENDATION_DAILY_AUTO_HOUR/MINUTE) 기준입니다.</p>
+                    <div class="mini-card">
+                      <div class="mini-title">일일 자동 업로드 상태</div>
+                      <div class="mini-kv" id="recoAutoRunStatusSettings">
+                        <div class="hint">상태 조회 전</div>
+                      </div>
+                      <div class="btn-row" style="margin-top: 8px;">
+                        <button id="recoAutoRunNowSettings" type="button" class="ghost">지금 1회 실행</button>
+                        <button id="recoAutoRunRefreshSettings" type="button" class="ghost">상태 새로고침</button>
+                      </div>
                     </div>
                   </details>
 

@@ -60,6 +60,13 @@ const settingsEls = {
   priceMin: $("priceMin"),
   roundUnit: $("roundUnit"),
   autoRequest: $("autoRequest"),
+  recommendationDailyAutoEnabled: $("recommendationDailyAutoEnabled"),
+  recommendationDailyAutoTargetCount: $("recommendationDailyAutoTargetCount"),
+  recommendationDailyAutoUploadLimit: $("recommendationDailyAutoUploadLimit"),
+  recommendationDailyAutoCooldownDays: $("recommendationDailyAutoCooldownDays"),
+  recommendationDailyAutoOnlyEligible: $("recommendationDailyAutoOnlyEligible"),
+  recommendationDailyAutoForce: $("recommendationDailyAutoForce"),
+  recommendationDailyAutoKeywords: $("recommendationDailyAutoKeywords"),
 };
 
 const badgeDomeggook = $("badgeDomeggook");
@@ -96,6 +103,12 @@ const recoRefreshBtn = $("recoRefresh");
 const recoAutoCountEl = $("recoAutoCount");
 const recoAutoUploadBtn = $("recoAutoUpload");
 const recoListEl = $("recoList");
+const recoAutoRunStatusHomeEl = $("recoAutoRunStatusHome");
+const recoAutoRunStatusSettingsEl = $("recoAutoRunStatusSettings");
+const recoAutoRunNowHomeBtn = $("recoAutoRunNowHome");
+const recoAutoRunNowSettingsBtn = $("recoAutoRunNowSettings");
+const recoAutoRunRefreshHomeBtn = $("recoAutoRunRefreshHome");
+const recoAutoRunRefreshSettingsBtn = $("recoAutoRunRefreshSettings");
 
 const domeggookSessionBtn = $("createDomeggookSession");
 const domeggookSessionSaveBtn = $("saveDomeggookSession");
@@ -114,6 +127,9 @@ const currentIpEl = $("currentIp");
 const refreshIpBtn = $("refreshIp");
 const historyTableEl = $("historyTable");
 const refreshHistoryBtn = $("refreshHistory");
+let currentUserEmail = "";
+let recoAutoRunStatusTimer = null;
+let lastManualAutoRunResult = null;
 
 // Dev-only dummy orders
 const devOrdersRow = $("devOrdersRow");
@@ -485,6 +501,35 @@ function clearSettingsUI() {
   });
 }
 
+function parseBoolLike(value, fallback = false) {
+  if (value == null) return fallback;
+  if (typeof value === "boolean") return value;
+  if (value === 1) return true;
+  if (value === 0) return false;
+  const text = String(value).trim().toLowerCase();
+  if (!text) return fallback;
+  if (["1", "true", "yes", "y", "on"].includes(text)) return true;
+  if (["0", "false", "no", "n", "off"].includes(text)) return false;
+  return fallback;
+}
+
+function toIntInRange(value, min, max, fallback) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  const i = Math.floor(n);
+  if (i < min) return min;
+  if (i > max) return max;
+  return i;
+}
+
+function formatDateTimeLabel(iso) {
+  const text = String(iso || "").trim();
+  if (!text) return "-";
+  const dt = new Date(text);
+  if (Number.isNaN(dt.getTime())) return text;
+  return dt.toLocaleString();
+}
+
 
 function lockSensitiveField(id) {
   const input = document.getElementById(id);
@@ -578,11 +623,51 @@ async function loadSettings() {
   settingsEls.priceMin.value = s.priceMin ?? "";
   settingsEls.roundUnit.value = s.roundUnit ?? "";
   settingsEls.autoRequest.checked = String(s.autoRequest || "") === "1";
+  if (settingsEls.recommendationDailyAutoEnabled) {
+    settingsEls.recommendationDailyAutoEnabled.checked = parseBoolLike(
+      s.recommendationDailyAutoEnabled,
+      false,
+    );
+  }
+  if (settingsEls.recommendationDailyAutoTargetCount) {
+    settingsEls.recommendationDailyAutoTargetCount.value = String(
+      toIntInRange(s.recommendationDailyAutoTargetCount, 1, 100, 6),
+    );
+  }
+  if (settingsEls.recommendationDailyAutoUploadLimit) {
+    settingsEls.recommendationDailyAutoUploadLimit.value = String(
+      toIntInRange(s.recommendationDailyAutoUploadLimit, 1, 30, 3),
+    );
+  }
+  if (settingsEls.recommendationDailyAutoCooldownDays) {
+    settingsEls.recommendationDailyAutoCooldownDays.value = String(
+      toIntInRange(s.recommendationDailyAutoCooldownDays, 1, 60, 7),
+    );
+  }
+  if (settingsEls.recommendationDailyAutoOnlyEligible) {
+    settingsEls.recommendationDailyAutoOnlyEligible.checked = parseBoolLike(
+      s.recommendationDailyAutoOnlyEligible,
+      true,
+    );
+  }
+  if (settingsEls.recommendationDailyAutoForce) {
+    settingsEls.recommendationDailyAutoForce.checked = parseBoolLike(
+      s.recommendationDailyAutoForce,
+      false,
+    );
+  }
+  if (settingsEls.recommendationDailyAutoKeywords) {
+    const keywords = Array.isArray(s.recommendationDailyAutoKeywords)
+      ? s.recommendationDailyAutoKeywords
+      : parseKeywords(s.recommendationDailyAutoKeywords || "");
+    settingsEls.recommendationDailyAutoKeywords.value = keywords.join("\n");
+  }
 
   // Re-evaluate upload availability after settings load
   await loadCurrentIp();
   evaluateUploadGate();
   updateSensitiveMasks();
+  await loadRecoAutoRunStatus();
 }
 
 
@@ -711,6 +796,32 @@ async function saveSettings() {
     priceMin: Number(settingsEls.priceMin.value || 0),
     roundUnit: Number(settingsEls.roundUnit.value || 0),
     autoRequest: settingsEls.autoRequest.checked ? "1" : "",
+    recommendationDailyAutoEnabled: settingsEls.recommendationDailyAutoEnabled?.checked ? "1" : "",
+    recommendationDailyAutoTargetCount: toIntInRange(
+      settingsEls.recommendationDailyAutoTargetCount?.value,
+      1,
+      100,
+      6,
+    ),
+    recommendationDailyAutoUploadLimit: toIntInRange(
+      settingsEls.recommendationDailyAutoUploadLimit?.value,
+      1,
+      30,
+      3,
+    ),
+    recommendationDailyAutoCooldownDays: toIntInRange(
+      settingsEls.recommendationDailyAutoCooldownDays?.value,
+      1,
+      60,
+      7,
+    ),
+    recommendationDailyAutoOnlyEligible: settingsEls.recommendationDailyAutoOnlyEligible?.checked
+      ? "1"
+      : "0",
+    recommendationDailyAutoForce: settingsEls.recommendationDailyAutoForce?.checked ? "1" : "",
+    recommendationDailyAutoKeywords: parseKeywords(
+      settingsEls.recommendationDailyAutoKeywords?.value || "",
+    ),
   };
   const res = await fetch("/api/settings", {
     method: "POST",
@@ -720,6 +831,7 @@ async function saveSettings() {
   const json = await res.json();
   if (json.ok) {
     setStatus("설정 저장 완료", "ok");
+    await loadRecoAutoRunStatus();
   } else {
     setStatus("설정 저장 실패", "bad");
   }
@@ -729,10 +841,12 @@ async function updateAuthStatus() {
   const res = await fetch("/api/me");
   if (!res.ok) {
     authEls.status.textContent = "로그인 필요";
+    currentUserEmail = "";
     return false;
   }
   const json = await res.json();
   const label = json?.user?.email || json?.user?.id || "알 수 없음";
+  currentUserEmail = String(json?.user?.email || "").trim().toLowerCase();
   authEls.status.textContent = `로그인됨: ${label}`;
   return true;
 }
@@ -803,6 +917,8 @@ async function signup() {
     setStatus("회원가입 완료", "ok");
     await updateAuthStatus();
     await loadSettings();
+    await loadRecoAutoRunStatus();
+    startRecoAutoRunStatusPolling();
   } else {
     setStatus("회원가입 실패", "bad");
     log(json);
@@ -823,6 +939,8 @@ async function login() {
     setStatus("로그인 완료", "ok");
     await updateAuthStatus();
     await loadSettings();
+    await loadRecoAutoRunStatus();
+    startRecoAutoRunStatusPolling();
   } else {
     setStatus("로그인 실패", "bad");
     log(json);
@@ -832,9 +950,10 @@ async function login() {
 async function logout() {
   await fetch("/api/logout", { method: "POST" });
   authEls.status.textContent = "로그인 필요";
-  Object.values(settingsEls).forEach((el) => {
-    el.value = "";
-  });
+  currentUserEmail = "";
+  stopRecoAutoRunStatusPolling();
+  clearSettingsUI();
+  renderRecoAutoRunStatusCard({ ok: false, unauthorized: true });
 }
 
 async function fetchUploadPreviewData(url) {
@@ -1213,6 +1332,194 @@ async function autoUploadRecommendations() {
     log(String(e?.message || e));
   } finally {
     if (recoAutoUploadBtn) recoAutoUploadBtn.disabled = false;
+  }
+}
+
+function setRecoAutoRunButtonsDisabled(disabled) {
+  [recoAutoRunNowHomeBtn, recoAutoRunNowSettingsBtn, recoAutoRunRefreshHomeBtn, recoAutoRunRefreshSettingsBtn]
+    .forEach((btn) => {
+      if (!btn) return;
+      btn.disabled = Boolean(disabled);
+    });
+}
+
+function renderRecoAutoRunStatusCard(payload = {}) {
+  const targets = [recoAutoRunStatusHomeEl, recoAutoRunStatusSettingsEl].filter(Boolean);
+  if (!targets.length) return;
+
+  if (payload?.unauthorized) {
+    const html = `<div class="hint">로그인 후 일일 자동 업로드 상태를 확인할 수 있습니다.</div>`;
+    targets.forEach((el) => {
+      el.innerHTML = html;
+    });
+    return;
+  }
+
+  if (payload?.error) {
+    const html = `<div class="hint">상태 조회 실패: ${escapeHtml(String(payload.error || "unknown"))}</div>`;
+    targets.forEach((el) => {
+      el.innerHTML = html;
+    });
+    return;
+  }
+
+  const scheduler = payload?.scheduler && typeof payload.scheduler === "object" ? payload.scheduler : {};
+  const state = payload?.state && typeof payload.state === "object" ? payload.state : {};
+  const user = payload?.user && typeof payload.user === "object" ? payload.user : {};
+  const options = user?.options && typeof user.options === "object" ? user.options : {};
+  const results = Array.isArray(state.lastResults) ? state.lastResults : [];
+
+  const schedulerEnabled = parseBoolLike(scheduler.enabled, false);
+  const hour = toIntInRange(scheduler.hour, 0, 23, 9);
+  const minute = toIntInRange(scheduler.minute, 0, 59, 0);
+  const schedulerLabel = schedulerEnabled
+    ? `ON (매일 ${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")})`
+    : "OFF (서버 환경변수 비활성)";
+  const runningLabel = parseBoolLike(state.running, false) ? "실행 중" : "대기";
+  const lastRunLabel = formatDateTimeLabel(state.lastRunAt);
+  const lastError = String(state.lastError || "").trim();
+
+  const total = results.reduce(
+    (acc, row) => {
+      acc.uploaded += Number(row?.upload?.uploaded || 0);
+      acc.skipped += Number(row?.upload?.skipped || 0);
+      acc.failed += Number(row?.upload?.failed || 0);
+      if (row?.ok === false) acc.userErrors += 1;
+      return acc;
+    },
+    { uploaded: 0, skipped: 0, failed: 0, userErrors: 0 },
+  );
+
+  const currentEmail = String(currentUserEmail || user.email || "").trim().toLowerCase();
+  const myResult = results.find(
+    (row) => String(row?.userEmail || "").trim().toLowerCase() === currentEmail,
+  );
+  const mySummary = myResult
+    ? `성공 ${Number(myResult?.upload?.uploaded || 0)} / 스킵 ${Number(myResult?.upload?.skipped || 0)} / 실패 ${Number(myResult?.upload?.failed || 0)}`
+    : "최근 스케줄 실행 이력 없음";
+
+  const manualResult = lastManualAutoRunResult?.result || null;
+  const manualAt = formatDateTimeLabel(lastManualAutoRunResult?.ranAt);
+  const manualSummary = manualResult
+    ? `성공 ${Number(manualResult?.upload?.uploaded || 0)} / 스킵 ${Number(manualResult?.upload?.skipped || 0)} / 실패 ${Number(manualResult?.upload?.failed || 0)}`
+    : "-";
+
+  const keywords = Array.isArray(options.keywords)
+    ? options.keywords
+    : parseKeywords(options.keywords || "");
+  const html = `
+    <div class="kv-row"><span class="k">서버 스케줄</span><span class="v">${escapeHtml(schedulerLabel)}</span></div>
+    <div class="kv-row"><span class="k">내 계정 설정</span><span class="v">${parseBoolLike(user.enabled, false) ? "켜짐" : "꺼짐"} / 업로드 ${Number(options.uploadLimit || 3)}개 / 후보 ${Number(options.targetCount || 6)}개 / 키워드 ${keywords.length || 0}개</span></div>
+    <div class="kv-row"><span class="k">스케줄 상태</span><span class="v">${escapeHtml(runningLabel)}</span></div>
+    <div class="kv-row"><span class="k">최근 스케줄</span><span class="v">${escapeHtml(lastRunLabel)} / 전체 성공 ${total.uploaded} / 스킵 ${total.skipped} / 실패 ${total.failed}</span></div>
+    <div class="kv-row"><span class="k">내 최근 결과</span><span class="v">${escapeHtml(mySummary)}</span></div>
+    <div class="kv-row"><span class="k">수동 1회 실행</span><span class="v">${escapeHtml(manualAt)} / ${escapeHtml(manualSummary)}</span></div>
+    ${lastError ? `<div class="kv-row"><span class="k">최근 에러</span><span class="v">${escapeHtml(lastError)}</span></div>` : ""}
+  `;
+
+  targets.forEach((el) => {
+    el.innerHTML = html;
+  });
+}
+
+async function loadRecoAutoRunStatus() {
+  try {
+    const res = await fetch("/api/recommendations/auto-run/status");
+    if (res.status === 401) {
+      renderRecoAutoRunStatusCard({ ok: false, unauthorized: true });
+      return;
+    }
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok || !json.ok) {
+      renderRecoAutoRunStatusCard({ ok: false, error: json?.error || `http_${res.status}` });
+      return;
+    }
+    renderRecoAutoRunStatusCard(json);
+  } catch (e) {
+    renderRecoAutoRunStatusCard({ ok: false, error: String(e?.message || e) });
+  }
+}
+
+function startRecoAutoRunStatusPolling() {
+  if (recoAutoRunStatusTimer) {
+    clearInterval(recoAutoRunStatusTimer);
+    recoAutoRunStatusTimer = null;
+  }
+  recoAutoRunStatusTimer = setInterval(() => {
+    loadRecoAutoRunStatus().catch(() => {});
+  }, 30_000);
+}
+
+function stopRecoAutoRunStatusPolling() {
+  if (!recoAutoRunStatusTimer) return;
+  clearInterval(recoAutoRunStatusTimer);
+  recoAutoRunStatusTimer = null;
+}
+
+function buildRecoAutoRunRequestBody() {
+  const uploadLimit = toIntInRange(
+    settingsEls.recommendationDailyAutoUploadLimit?.value,
+    1,
+    30,
+    3,
+  );
+  const body = {
+    targetCount: toIntInRange(settingsEls.recommendationDailyAutoTargetCount?.value, 1, 100, 6),
+    cooldownDays: toIntInRange(settingsEls.recommendationDailyAutoCooldownDays?.value, 1, 60, 7),
+    uploadLimit,
+    limit: uploadLimit,
+    onlyEligible: settingsEls.recommendationDailyAutoOnlyEligible?.checked ? "1" : "0",
+    force: settingsEls.recommendationDailyAutoForce?.checked ? "1" : "0",
+  };
+  const keywords = parseKeywords(settingsEls.recommendationDailyAutoKeywords?.value || "");
+  if (keywords.length > 0) body.keywords = keywords;
+  return body;
+}
+
+async function runRecoAutoRunNow() {
+  setRecoAutoRunButtonsDisabled(true);
+  setStatus("일일 자동 업로드 1회 실행 중...", "");
+  try {
+    const res = await fetch("/api/recommendations/auto-run", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(buildRecoAutoRunRequestBody()),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok || !json.ok) {
+      setStatus("일일 자동 업로드 1회 실행 실패", "bad");
+      log(json);
+      return;
+    }
+
+    const result = json.result || {};
+    const uploaded = Number(result?.upload?.uploaded || 0);
+    const skipped = Number(result?.upload?.skipped || 0);
+    const failed = Number(result?.upload?.failed || 0);
+    const fillCount = Number(result?.fill?.count || 0);
+    lastManualAutoRunResult = {
+      ranAt: new Date().toISOString(),
+      result,
+    };
+
+    setStatus(
+      `일일 자동 업로드 1회 완료 (추천 ${fillCount} / 업로드 성공 ${uploaded} / 스킵 ${skipped} / 실패 ${failed})`,
+      failed > 0 ? "bad" : "ok",
+    );
+    log(json);
+
+    if (uploaded > 0) {
+      playSuccessSound();
+    }
+
+    await loadRecommendations();
+    await loadUploadHistory();
+    await loadRecoAutoRunStatus();
+  } catch (e) {
+    setStatus("일일 자동 업로드 1회 실행 에러", "bad");
+    log(String(e?.message || e));
+  } finally {
+    setRecoAutoRunButtonsDisabled(false);
   }
 }
 
@@ -1879,6 +2186,10 @@ refreshIpBtn?.addEventListener("click", loadCurrentIp);
 refreshIpBtn?.addEventListener("click", evaluateUploadGate);
 refreshHistoryBtn?.addEventListener("click", loadUploadHistory);
 settingsEls.allowedIps?.addEventListener("input", evaluateUploadGate);
+recoAutoRunNowHomeBtn?.addEventListener("click", runRecoAutoRunNow);
+recoAutoRunNowSettingsBtn?.addEventListener("click", runRecoAutoRunNow);
+recoAutoRunRefreshHomeBtn?.addEventListener("click", loadRecoAutoRunStatus);
+recoAutoRunRefreshSettingsBtn?.addEventListener("click", loadRecoAutoRunStatus);
 
 // Dev-only UI: seed dummy orders when URL has ?dev=1
 try {
@@ -1978,8 +2289,13 @@ domemeSessionSaveBtn?.addEventListener("click", async () => {
 
 (async () => {
   const authed = await updateAuthStatus();
-  if (authed) await loadSettings();
-  else clearSettingsUI();
+  if (authed) {
+    await loadSettings();
+    startRecoAutoRunStatusPolling();
+  } else {
+    clearSettingsUI();
+    renderRecoAutoRunStatusCard({ ok: false, unauthorized: true });
+  }
   await loadVersionInfo();
   await loadCurrentIp();
   await refreshDomeggookSessionStatus();
