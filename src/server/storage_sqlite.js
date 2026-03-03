@@ -274,6 +274,33 @@ export async function verifyUser({ email, password }) {
   return { id: user.id, email: user.email };
 }
 
+export async function listUsersWithSettings({ limit = 500 } = {}) {
+  const safeLimit = Math.max(1, Math.min(2000, Number(limit) || 500));
+  const db = openDb();
+  try {
+    const rows = await dbAll(
+      db,
+      "SELECT id, email, settings_json FROM users ORDER BY created_at ASC LIMIT ?",
+      [safeLimit],
+    );
+    return rows.map((row) => {
+      let settings = {};
+      try {
+        settings = JSON.parse(row?.settings_json || "{}");
+      } catch {
+        settings = {};
+      }
+      return {
+        id: row?.id,
+        email: row?.email,
+        settings,
+      };
+    });
+  } finally {
+    db.close();
+  }
+}
+
 export async function createSession(userId) {
   if (!userId) throw new Error("userId required");
   const db = openDb();

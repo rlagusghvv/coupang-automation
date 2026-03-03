@@ -23,6 +23,7 @@ import {
   findDuplicateUpload,
   recordUploadedProduct,
   listUploadedProducts,
+  listUsersWithSettings,
   getUploadedProductById,
   getUploadedProductBySourceUrl,
   getUploadedProductBySellerProductId,
@@ -2120,6 +2121,292 @@ function parseForceFlag(value) {
   return text === "1" || text === "true" || text === "yes";
 }
 
+function parseBooleanFlag(value, fallback = false) {
+  if (value == null) return fallback;
+  if (typeof value === "boolean") return value;
+  if (value === 1) return true;
+  if (value === 0) return false;
+  const text = String(value).trim().toLowerCase();
+  if (!text) return fallback;
+  if (["1", "true", "yes", "y", "on"].includes(text)) return true;
+  if (["0", "false", "no", "n", "off"].includes(text)) return false;
+  return fallback;
+}
+
+function clampInt(value, min, max, fallback) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  const asInt = Math.floor(n);
+  if (asInt < min) return min;
+  if (asInt > max) return max;
+  return asInt;
+}
+
+function normalizeKeywordInput(value) {
+  if (Array.isArray(value)) return normalizeStringList(value, 30);
+  const text = String(value || "").trim();
+  if (!text) return [];
+  return text
+    .split(/\n|,/)
+    .map((v) => v.trim())
+    .filter(Boolean)
+    .slice(0, 30);
+}
+
+function resolveRecommendationAutoRunOptions(input = {}, userSettings = {}) {
+  const raw = input && typeof input === "object" ? input : {};
+  return {
+    targetCount: clampInt(
+      raw.targetCount ?? userSettings.recommendationDailyAutoTargetCount,
+      1,
+      100,
+      6,
+    ),
+    cooldownDays: clampInt(
+      raw.cooldownDays ??
+        userSettings.recommendationDailyAutoCooldownDays ??
+        userSettings.recommendationCooldownDays,
+      1,
+      60,
+      7,
+    ),
+    uploadLimit: clampInt(
+      raw.limit ?? raw.uploadLimit ?? userSettings.recommendationDailyAutoUploadLimit,
+      1,
+      30,
+      3,
+    ),
+    onlyEligible: parseBooleanFlag(
+      raw.onlyEligible ?? userSettings.recommendationDailyAutoOnlyEligible,
+      true,
+    ),
+    force: parseForceFlag(raw.force ?? userSettings.recommendationDailyAutoForce),
+    keywords: normalizeKeywordInput(raw.keywords ?? userSettings.recommendationDailyAutoKeywords),
+  };
+}
+
+function buildAutoRecommendationSettings(baseSettings = {}) {
+  const base = baseSettings && typeof baseSettings === "object" ? baseSettings : {};
+  return {
+    ...base,
+    // Auto mode should stay bounded even if test-mode relax flags are enabled in UI.
+    recommendationDisablePreviewTimeout: false,
+    recommendationDisablePreviewPlaywrightRetryBudget: false,
+    recommendationDisablePreviewPlaywrightBudget: false,
+    recommendationPreviewPlaywrightRetryBudget: clampInt(
+      base.recommendationPreviewPlaywrightRetryBudget,
+      1,
+      12,
+      4,
+    ),
+    recommendationPreviewOpenApiTimeoutMs: clampInt(
+      base.recommendationPreviewOpenApiTimeoutMs,
+      1800,
+      9000,
+      4500,
+    ),
+    recommendationPreviewPlaywrightTimeoutMs: clampInt(
+      base.recommendationPreviewPlaywrightTimeoutMs,
+      12000,
+      30000,
+      14000,
+    ),
+  };
+}
+
+const recommendationDailyAutoRunState = {
+  running: false,
+  lastRunAt: "",
+  lastRunDateKey: "",
+  lastError: "",
+  lastResults: [],
+};
+
+async function runRecommendationAutoRunForUser({
+  user,
+  options = {},
+  reason = "manual",
+} = {}) {
+  const userId = String(user?.id || "").trim();
+  if (!userId) {
+    return { ok: false, error: "missing_user_id", reason };
+  }
+
+  const userSettings = user?.settings || {};
+  const runOptions = resolveRecommendationAutoRunOptions(options, userSettings);
+  const runSettings = buildAutoRecommendationSettings(userSettings);
+  const runUser = { ...user, settings: runSettings };
+
+  const fill = await refreshRecommendationsForUser({
+    userId,
+    settings: runSettings,
+    keywords: runOptions.keywords,
+    targetCount: runOptions.targetCount,
+    cooldownDays: runOptions.cooldownDays,
+  });
+
+  const recoItems = await listRecommendations(userId, {
+    limit: Math.max(50, runOptions.uploadLimit * 4),
+  });
+  const candidates = recoItems
+    .filter((it) => {
+      const url = String(it?.sourceUrl || "").trim();
+      if (!url) return false;
+      if (!runOptions.onlyEligible) return true;
+      return Boolean(it?.qc?.eligibleUpload);
+    })
+    .slice(0, runOptions.uploadLimit);
+
+  const uploadRows = [];
+  let uploadLockSkipped = false;
+  if (candidates.length > 0) {
+    try {
+      await withUploadLock(async () => {
+        for (const cand of candidates) {
+          const outcome = await executeUploadForUrl({
+            url: cand.sourceUrl,
+            user: runUser,
+            force: runOptions.force,
+          });
+          appendUploadHistoryFromOutcome(cand.sourceUrl, outcome);
+          uploadRows.push({
+            recommendationId: cand.id || null,
+            title: cand.title || "",
+            url: cand.sourceUrl,
+            ok: Boolean(outcome?.ok),
+            skipped: Boolean(outcome?.skipped),
+            skipReason: normalizeSkipReason(outcome),
+            error: outcome?.error || null,
+            sellerProductId: resolveOutcomeSellerProductId(outcome),
+          });
+        }
+      });
+    } catch (e) {
+      if (String(e?.code || "").toLowerCase() === "upload_in_progress") {
+        uploadLockSkipped = true;
+      } else {
+        throw e;
+      }
+    }
+  }
+
+  const uploadSummary = {
+    requested: runOptions.uploadLimit,
+    candidates: candidates.length,
+    uploaded: uploadRows.filter((x) => x.ok && !x.skipped).length,
+    skipped: uploadRows.filter((x) => x.skipped).length,
+    failed: uploadRows.filter((x) => !x.ok && !x.skipped).length,
+    lockSkipped: uploadLockSkipped,
+    onlyEligible: runOptions.onlyEligible,
+    force: runOptions.force,
+  };
+
+  return {
+    ok: true,
+    reason,
+    userId,
+    userEmail: String(user?.email || "").trim(),
+    options: runOptions,
+    fill,
+    upload: uploadSummary,
+    items: uploadRows,
+  };
+}
+
+async function runRecommendationDailyAutoRunOnce({ reason = "scheduler" } = {}) {
+  if (recommendationDailyAutoRunState.running) {
+    return { ok: false, skipped: true, reason: "already_running" };
+  }
+  recommendationDailyAutoRunState.running = true;
+  recommendationDailyAutoRunState.lastError = "";
+
+  try {
+    const users = await listUsersWithSettings({ limit: 1000 });
+    const enabledUsers = users.filter((u) =>
+      parseBooleanFlag(u?.settings?.recommendationDailyAutoEnabled, false),
+    );
+
+    const results = [];
+    for (const user of enabledUsers) {
+      try {
+        const result = await runRecommendationAutoRunForUser({ user, reason });
+        results.push(result);
+      } catch (e) {
+        results.push({
+          ok: false,
+          reason,
+          userId: String(user?.id || "").trim(),
+          userEmail: String(user?.email || "").trim(),
+          error: String(e?.message || e),
+        });
+      }
+    }
+
+    const now = new Date();
+    const dateKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+    recommendationDailyAutoRunState.lastRunAt = now.toISOString();
+    recommendationDailyAutoRunState.lastRunDateKey = dateKey;
+    recommendationDailyAutoRunState.lastResults = results.slice(0, 50);
+
+    return {
+      ok: true,
+      reason,
+      ranAt: recommendationDailyAutoRunState.lastRunAt,
+      dateKey,
+      totalUsers: users.length,
+      enabledUsers: enabledUsers.length,
+      results,
+    };
+  } catch (e) {
+    recommendationDailyAutoRunState.lastError = String(e?.message || e);
+    return {
+      ok: false,
+      reason,
+      error: recommendationDailyAutoRunState.lastError,
+    };
+  } finally {
+    recommendationDailyAutoRunState.running = false;
+  }
+}
+
+function startRecommendationDailyAutoRunLoop({
+  hour = 9,
+  minute = 0,
+  intervalMs = 60_000,
+} = {}) {
+  const runHour = clampInt(hour, 0, 23, 9);
+  const runMinute = clampInt(minute, 0, 59, 0);
+  const tickIntervalMs = clampInt(intervalMs, 10_000, 600_000, 60_000);
+
+  const tick = async () => {
+    try {
+      const now = new Date();
+      if (now.getHours() !== runHour || now.getMinutes() !== runMinute) return;
+      const dateKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+      if (recommendationDailyAutoRunState.lastRunDateKey === dateKey) return;
+
+      const run = await runRecommendationDailyAutoRunOnce({ reason: "scheduler" });
+      if (!run?.ok) {
+        log("[reco-auto] daily run failed", run);
+      } else {
+        const uploaded = (Array.isArray(run.results) ? run.results : []).reduce(
+          (acc, row) => acc + Number(row?.upload?.uploaded || 0),
+          0,
+        );
+        log(
+          `[reco-auto] daily run done users=${run.enabledUsers}/${run.totalUsers} uploaded=${uploaded}`,
+        );
+      }
+    } catch (e) {
+      log("[reco-auto] scheduler tick error", String(e?.message || e));
+    }
+  };
+
+  const t = setInterval(tick, tickIntervalMs);
+  t.unref?.();
+  return { timer: t, hour: runHour, minute: runMinute, intervalMs: tickIntervalMs };
+}
+
 function parseBulkUrls(value) {
   if (Array.isArray(value)) {
     return value.map((v) => String(v || "").trim()).filter(Boolean);
@@ -2429,15 +2716,28 @@ async function executeUploadForUrl({ url, user, force = false, overrides = {} })
   };
 }
 
-async function runUploadLocked(handler, res) {
+async function withUploadLock(handler) {
   if (uploadInProgress) {
-    return res.status(409).json({ ok: false, error: "upload in progress" });
+    const err = new Error("upload in progress");
+    err.code = "upload_in_progress";
+    throw err;
   }
   uploadInProgress = true;
   try {
     return await handler();
   } finally {
     uploadInProgress = false;
+  }
+}
+
+async function runUploadLocked(handler, res) {
+  try {
+    return await withUploadLock(handler);
+  } catch (e) {
+    if (String(e?.code || "").toLowerCase() === "upload_in_progress") {
+      return res.status(409).json({ ok: false, error: "upload in progress" });
+    }
+    throw e;
   }
 }
 
@@ -2788,6 +3088,26 @@ app.post("/api/recommendations/auto-upload", authRequired, async (req, res) => {
   }, res);
 });
 
+app.post("/api/recommendations/auto-run", authRequired, async (req, res) => {
+  try {
+    const result = await runRecommendationAutoRunForUser({
+      user: req.user,
+      options: req.body || {},
+      reason: "api_manual",
+    });
+    return res.json({ ok: true, result });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+app.get("/api/recommendations/auto-run/status", authRequired, async (_req, res) => {
+  return res.json({
+    ok: true,
+    state: recommendationDailyAutoRunState,
+  });
+});
+
 // ✅ 주문 엑셀 생성
 app.post("/api/orders/export", authRequired, async (req, res) => {
   try {
@@ -3074,4 +3394,34 @@ function escapeHtml(s) {
 app.listen(PORT, "127.0.0.1", () => {
   log(`server running: http://localhost:${PORT}`);
   log(`authorize start: http://localhost:${PORT}/auth/kakao`);
+
+  const dailyAutoEnabled = parseBooleanFlag(
+    process.env.RECOMMENDATION_DAILY_AUTO_ENABLED,
+    false,
+  );
+  if (dailyAutoEnabled) {
+    const hour = clampInt(process.env.RECOMMENDATION_DAILY_AUTO_HOUR, 0, 23, 9);
+    const minute = clampInt(
+      process.env.RECOMMENDATION_DAILY_AUTO_MINUTE,
+      0,
+      59,
+      0,
+    );
+    const intervalMs = clampInt(
+      process.env.RECOMMENDATION_DAILY_AUTO_INTERVAL_MS,
+      10_000,
+      600_000,
+      60_000,
+    );
+    const started = startRecommendationDailyAutoRunLoop({
+      hour,
+      minute,
+      intervalMs,
+    });
+    log(
+      `[reco-auto] scheduler enabled at ${String(started.hour).padStart(2, "0")}:${String(started.minute).padStart(2, "0")} interval=${started.intervalMs}ms`,
+    );
+  } else {
+    log("[reco-auto] scheduler disabled (RECOMMENDATION_DAILY_AUTO_ENABLED!=1)");
+  }
 });
