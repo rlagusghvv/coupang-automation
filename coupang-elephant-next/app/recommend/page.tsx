@@ -39,6 +39,9 @@ export default function RecommendPage() {
   const [busy, setBusy] = useState(false);
   const [log, setLog] = useState<string>("");
   const [continueOnError, setContinueOnError] = useState(true);
+  const [autoLimit, setAutoLimit] = useState(5);
+  const [autoOnlyEligible, setAutoOnlyEligible] = useState(true);
+  const [autoForce, setAutoForce] = useState(false);
 
   const selectedUrls = useMemo(
     () => items.map((x) => x.sourceUrl).filter((u) => selected[u]),
@@ -82,7 +85,6 @@ export default function RecommendPage() {
     refresh();
     const t = setInterval(refresh, 5000);
     return () => clearInterval(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const fill = async (reset: boolean) => {
@@ -140,6 +142,42 @@ export default function RecommendPage() {
       }
 
       setLog((s) => `${s}\n배치 enqueue 완료: ok=${okCount}, fail=${failCount}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const autoUpload = async () => {
+    setBusy(true);
+    try {
+      setLog(
+        (s) =>
+          `${s}\n자동 업로드 시작: limit=${autoLimit}, onlyEligible=${autoOnlyEligible ? "1" : "0"}, force=${autoForce ? "1" : "0"}`,
+      );
+      const r = await apiJson("/api/recommendations/auto-upload", {
+        method: "POST",
+        body: JSON.stringify({
+          limit: Math.max(1, Math.min(30, autoLimit)),
+          onlyEligible: autoOnlyEligible ? "1" : "0",
+          force: autoForce ? "1" : "0",
+        }),
+      });
+
+      if (!r.ok || !r.json?.ok) {
+        setLog((s) => `${s}\n자동 업로드 실패 (${r.status})`);
+        return;
+      }
+
+      const summary = r.json.summary || {};
+      const uploaded = Number(summary.uploaded || 0);
+      const skipped = Number(summary.skipped || 0);
+      const failed = Number(summary.failed || 0);
+
+      setLog(
+        (s) =>
+          `${s}\n자동 업로드 완료: success=${uploaded}, skipped=${skipped}, failed=${failed}`,
+      );
+      await refresh();
     } finally {
       setBusy(false);
     }
@@ -209,11 +247,51 @@ export default function RecommendPage() {
               >
                 선택 업로드(직렬)
               </button>
+              <button
+                className="rounded-full bg-neutral-900 px-4 py-2 text-sm font-extrabold text-white shadow hover:bg-neutral-800 disabled:opacity-60"
+                onClick={autoUpload}
+                disabled={busy}
+              >
+                자동 업로드
+              </button>
             </div>
           </div>
 
           <div className="mt-4 rounded-2xl border border-black/10 bg-neutral-50 p-3 text-xs text-neutral-700">
             선택한 추천을 업로드 큐에 <b>1개씩 순서대로</b> 넣습니다. (동시 요청/DB 락 이슈 방지)
+          </div>
+
+          <div className="mt-3 rounded-2xl border border-black/10 bg-neutral-50 p-3">
+            <div className="text-xs font-extrabold text-neutral-700">자동 업로드 설정</div>
+            <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-neutral-700">
+              <label className="flex items-center gap-2">
+                <span>개수</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={30}
+                  value={autoLimit}
+                  onChange={(e) => setAutoLimit(Number(e.target.value) || 5)}
+                  className="w-20 rounded-lg border border-black/10 bg-white px-2 py-1"
+                />
+              </label>
+              <label className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={autoOnlyEligible}
+                  onChange={(e) => setAutoOnlyEligible(e.target.checked)}
+                />
+                QC 통과만
+              </label>
+              <label className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={autoForce}
+                  onChange={(e) => setAutoForce(e.target.checked)}
+                />
+                강제 재업로드
+              </label>
+            </div>
           </div>
 
           <div className="mt-4 space-y-2">
