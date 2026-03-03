@@ -1650,28 +1650,32 @@ function resolveRecommendationThresholds(settings = {}) {
 }
 
 function resolveRecommendationShippingSettings(settings = {}) {
-  const policyRaw = String(
-    settings?.recommendationShippingPolicy ??
-      settings?.shippingPolicy ??
-      'actual',
-  )
+  const recommendationPolicyRaw = String(settings?.recommendationShippingPolicy ?? '')
     .trim()
     .toLowerCase();
+  const legacyPolicyRaw = String(settings?.shippingPolicy ?? '')
+    .trim()
+    .toLowerCase();
+  // Keep recommendation shipping independent from upload shipping defaults.
+  // Legacy fallback only carries fixed mode, never "none".
+  const policyRaw = recommendationPolicyRaw || (legacyPolicyRaw === 'fixed' ? 'fixed' : 'actual');
   const policy = policyRaw === 'none' || policyRaw === 'fixed' ? policyRaw : 'actual';
   const fixedAmount = Math.floor(
     clampNumber(
-      settings?.recommendationShippingFixedAmount ?? settings?.shippingFixedAmount,
+      settings?.recommendationShippingFixedAmount ??
+        (legacyPolicyRaw === 'fixed' ? settings?.shippingFixedAmount : undefined),
       0,
       50000,
       3000,
     ),
   );
+  const unknownFallback = Math.max(3000, fixedAmount);
   const unknownAmount = Math.floor(
     clampNumber(
       settings?.recommendationUnknownShippingAmount,
       0,
       50000,
-      fixedAmount,
+      unknownFallback,
     ),
   );
   return { policy, fixedAmount, unknownAmount };
@@ -2024,7 +2028,7 @@ function strictValidatePreview(preview, banKeywords = DEFAULT_BAN_KEYWORDS) {
 async function generateRecommendationsBatch({
   settings,
   keywords,
-  topN = 20,
+  topN = 80,
   excludeUrls = new Set(),
   onProgress = null,
   maxRuntimeMs = 110_000,
@@ -2041,17 +2045,41 @@ async function generateRecommendationsBatch({
   const thresholds = resolveRecommendationThresholds(normalizedSettings);
   const shippingSettings = resolveRecommendationShippingSettings(normalizedSettings);
   const policy = resolveRecommendationPolicy(normalizedSettings);
+  topN = Math.max(5, Math.min(100, Number(topN) || 80));
+  const runtimeFromTopN =
+    topN <= 30
+      ? 110_000
+      : Math.floor(110_000 + (topN - 30) * 2_500);
+  maxRuntimeMs = Math.floor(
+    clampNumber(
+      normalizedSettings?.recommendationMaxRuntimeMs,
+      90_000,
+      360_000,
+      Math.min(300_000, runtimeFromTopN),
+    ),
+  );
+  previewTimeoutMs = Math.floor(
+    clampNumber(
+      normalizedSettings?.recommendationPreviewTimeoutMs,
+      7_000,
+      22_000,
+      Math.max(Number(previewTimeoutMs) || 9_000, topN >= 70 ? 12_000 : 9_000),
+    ),
+  );
+  const keywordScanCap = policy.requireQcPass ? 24 : 16;
+  const keywordScanFloor = policy.requireQcPass ? 10 : 8;
+  const keywordScanWanted = Math.ceil(Number(topN || 80) * (policy.requireQcPass ? 2.2 : 1.6));
   const keywordScanLimit = Math.max(
     1,
     Math.min(
       seed.length,
-      policy.requireQcPass ? 18 : 10,
-      Math.max(
-        policy.requireQcPass ? 10 : 8,
-        Math.ceil(Number(topN || 20) * (policy.requireQcPass ? 2 : 1.5)),
-      ),
-      18,
+      keywordScanCap,
+      Math.max(keywordScanFloor, keywordScanWanted),
     ),
+  );
+  const perKeywordCandidateLimit = Math.max(
+    policy.requireQcPass ? 80 : 40,
+    Math.min(160, Math.ceil(Number(topN || 80) * (policy.requireQcPass ? 1.8 : 1.2))),
   );
 
   const candidates = [];
@@ -2067,7 +2095,7 @@ async function generateRecommendationsBatch({
     try {
       const result = await fetchFastCandidatesFromList({
         keyword: kw,
-        limit: policy.requireQcPass ? 80 : 40,
+        limit: perKeywordCandidateLimit,
         storageStatePath: String(normalizedSettings?.domeggookStorageStatePath || ''),
         sourceMode: effectiveSourceMode,
       });
@@ -2383,7 +2411,8 @@ async function generateRecommendationsBatch({
     true,
   );
   let maxValidate = Math.max(topN * (policy.requireQcPass ? 12 : 2), 24);
-  maxValidate = Math.min(maxValidate, policy.requireQcPass ? 220 : 80);
+  const maxValidateCap = policy.requireQcPass ? Math.max(220, topN * 5) : Math.max(80, topN * 3);
+  maxValidate = Math.min(maxValidate, maxValidateCap);
   for (const cand of scoredPool) {
     if (final.length >= topN) break;
     if (validated >= maxValidate) break;
@@ -2882,13 +2911,13 @@ async function generateRecommendationsBatch({
   return { ok: true, items: finalItems, validated, diagnostics };
 }
 
-export async function generateRecommendationsForUser({ userId, settings, keywords, topN = 20, onProgress = null }) {
+export async function generateRecommendationsForUser({ userId, settings, keywords, topN = 80, onProgress = null }) {
   const batch = await generateRecommendationsBatch({ settings, keywords, topN, excludeUrls: new Set(), onProgress });
   await replaceRecommendationsForUser({ userId, items: batch.items });
   return { ok: true, count: batch.items.length, diagnostics: batch.diagnostics };
 }
 
-export async function fillRecommendationsForUser({ userId, settings, keywords, targetCount = 20, maxAddPerRun = 6, onProgress = null }) {
+export async function fillRecommendationsForUser({ userId, settings, keywords, targetCount = 80, maxAddPerRun = 20, onProgress = null }) {
   const db = openDb();
   const seed = Array.isArray(keywords) && keywords.length > 0 ? keywords : defaultKeywordSet();
 
@@ -3021,7 +3050,7 @@ export async function fillRecommendationsForUser({ userId, settings, keywords, t
     }
   }
 
-  const up = await upsertRecommendationsForUser({ userId, items: batch.items, maxKeep: Math.max(60, Number(targetCount) || 20) });
+  const up = await upsertRecommendationsForUser({ userId, items: batch.items, maxKeep: Math.max(100, Number(targetCount) || 80) });
   const diagnostics = {
     ...(batch?.diagnostics || {}),
     fillRescuePlaywrightTried,
@@ -3037,7 +3066,7 @@ export async function refreshRecommendationsForUser({
   userId,
   settings,
   keywords,
-  targetCount = 20,
+  targetCount = 80,
   cooldownDays,
   onProgress = null,
 } = {}) {
@@ -3255,7 +3284,7 @@ export function startRecommendationLoop({ getUsers, hour = 9, minute = 0, interv
       const users = await getUsers();
       for (const u of users) {
         try {
-          await generateRecommendationsForUser({ userId: u.id, settings: u.settings || {}, keywords: defaultKeywordSet(), topN: 20 });
+          await generateRecommendationsForUser({ userId: u.id, settings: u.settings || {}, keywords: defaultKeywordSet(), topN: 80 });
         } catch {}
       }
       lastRunKey = key;

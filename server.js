@@ -604,7 +604,7 @@ function compactLegacyJob(job) {
 function parseRecommendationRunRequest(req) {
   const userSettings = req?.user?.settings || {};
   const keywords = normalizeStringList(req.body?.keywords, 30);
-  const targetCount = Math.max(5, Math.min(100, Number(req.body?.targetCount || 20) || 20));
+  const targetCount = Math.max(5, Math.min(100, Number(req.body?.targetCount || 80) || 80));
   const cooldownDays = Math.max(
     1,
     Math.min(60, Number(req.body?.cooldownDays || userSettings?.recommendationCooldownDays || 7) || 7),
@@ -632,7 +632,7 @@ function startRecommendationRefreshJob({
   userId,
   settings = {},
   keywords = [],
-  targetCount = 20,
+  targetCount = 80,
   cooldownDays = 7,
   kind = "recommendations_fill",
 } = {}) {
@@ -2160,7 +2160,7 @@ function resolveRecommendationAutoRunOptions(input = {}, userSettings = {}) {
       raw.targetCount ?? userSettings.recommendationDailyAutoTargetCount,
       1,
       100,
-      6,
+      80,
     ),
     cooldownDays: clampInt(
       raw.cooldownDays ??
@@ -2983,7 +2983,7 @@ app.post("/api/recommendations/fill/start", authRequired, async (req, res) => {
 app.post("/api/recommendations/fill", authRequired, async (req, res) => {
   try {
     const keywords = normalizeStringList(req.body?.keywords, 30);
-    const targetCount = Math.max(5, Math.min(100, Number(req.body?.targetCount || 20) || 20));
+    const targetCount = Math.max(5, Math.min(100, Number(req.body?.targetCount || 80) || 80));
     const cooldownDays = Math.max(
       1,
       Math.min(60, Number(req.body?.cooldownDays || req.user?.settings?.recommendationCooldownDays || 7) || 7),
