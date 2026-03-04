@@ -14,7 +14,9 @@ class MyProductsScreen extends StatefulWidget {
 
 class _MyProductsScreenState extends State<MyProductsScreen> {
   bool _loading = false;
+  bool _syncingStatus = false;
   String? _error;
+  String? _lastSyncSummary;
   List<Map<String, dynamic>> _products = const [];
 
   final _q = TextEditingController();
@@ -34,13 +36,29 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
     super.dispose();
   }
 
-  Future<void> _refresh() async {
+  Future<void> _refresh({bool syncRemote = false}) async {
     setState(() {
       _loading = true;
       _error = null;
+      if (syncRemote) _syncingStatus = true;
     });
 
     try {
+      if (syncRemote) {
+        try {
+          final syncJson = await widget.api
+              .postJson('/api/products/status/refresh', const {});
+          final total = int.tryParse((syncJson['total'] ?? 0).toString()) ?? 0;
+          final success =
+              int.tryParse((syncJson['success'] ?? 0).toString()) ?? 0;
+          final failed =
+              int.tryParse((syncJson['failed'] ?? 0).toString()) ?? 0;
+          _lastSyncSummary = '상태 동기화: 성공 $success / 실패 $failed (대상 $total)';
+        } catch (syncErr) {
+          _lastSyncSummary = '상태 동기화 실패: $syncErr';
+        }
+      }
+
       final json = await widget.api.getJson(
         '/api/catalog',
         query: {
@@ -57,9 +75,16 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
     } catch (e) {
       setState(() => _error = e.toString());
     } finally {
-      if (mounted) setState(() => _loading = false);
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _syncingStatus = false;
+        });
+      }
     }
   }
+
+  Future<void> _refreshWithStatusSync() => _refresh(syncRemote: true);
 
   Future<void> _bulkSync() async {
     if (_selected.isEmpty) return;
@@ -114,7 +139,7 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
         );
       }
 
-      await _refresh();
+      await _refresh(syncRemote: false);
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -132,7 +157,7 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
           SnackBar(content: Text('재배포 ${_selected.length}건 시작했어요.')),
         );
       }
-      await _refresh();
+      await _refresh(syncRemote: false);
     } catch (e) {
       setState(() => _error = e.toString());
     } finally {
@@ -176,7 +201,7 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
       }
 
       setState(() => _selected.clear());
-      await _refresh();
+      await _refresh(syncRemote: false);
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -235,7 +260,7 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
           ),
         );
       }
-      await _refresh();
+      await _refresh(syncRemote: false);
     } catch (e) {
       setState(() => _error = e.toString());
     } finally {
@@ -282,7 +307,7 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
           ? null
           : () {
               setState(() => _status = value);
-              _refresh();
+              _refresh(syncRemote: false);
             },
       child: InfoChip(label: label, color: c),
     );
@@ -292,15 +317,15 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
     final status = raw.trim().toLowerCase();
     switch (status) {
       case 'confirmed':
-        return '확정';
+        return '미업로드';
       case 'uploaded':
-        return '상품 업로드 완료!';
+        return '업로드완료(대기)';
       case 'deployed':
         return '판매중';
       case 'deployed_invalid':
         return '검증 필요';
       case 'deploy_failed':
-        return '배포 실패';
+        return '업로드 실패';
       case 'deleted_remote':
         return '원격 삭제됨';
       case 'deleted_local':
@@ -310,11 +335,21 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
     }
   }
 
+  Color _statusColor(BuildContext context, String raw) {
+    final status = raw.trim().toLowerCase();
+    if (status == 'deployed') return const Color(0xFF2F9E44); // 판매중
+    if (status == 'uploaded') return Theme.of(context).colorScheme.primary;
+    if (status == 'confirmed') return Theme.of(context).colorScheme.outline;
+    if (status == 'deployed_invalid') return Colors.orange;
+    if (status == 'deploy_failed') return Theme.of(context).colorScheme.error;
+    return Theme.of(context).colorScheme.outline;
+  }
+
   @override
   Widget build(BuildContext context) {
     return AppScaffold(
       title: _selectMode ? '내 상품(선택 ${_selected.length})' : '내 상품',
-      onRefresh: _refresh,
+      onRefresh: _refreshWithStatusSync,
       actions: [
         IconButton(
           onPressed: _loading ? null : _importBySellerProductId,
@@ -333,7 +368,7 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
           icon: Icon(_selectMode ? Icons.close : Icons.checklist),
         ),
         IconButton(
-          onPressed: _loading ? null : _refresh,
+          onPressed: _loading ? null : _refreshWithStatusSync,
           icon: const Icon(Icons.refresh),
         ),
       ],
@@ -342,13 +377,13 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
         children: [
           TextField(
             controller: _q,
-            onSubmitted: (_) => _refresh(),
+            onSubmitted: (_) => _refresh(syncRemote: false),
             decoration: InputDecoration(
               labelText: '검색 (제목/URL)',
               border: const OutlineInputBorder(),
               suffixIcon: IconButton(
                 icon: const Icon(Icons.search),
-                onPressed: _loading ? null : _refresh,
+                onPressed: _loading ? null : () => _refresh(syncRemote: false),
               ),
             ),
           ),
@@ -386,6 +421,12 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
                 label: _loading ? '불러오는 중…' : '총 ${_products.length}개',
                 color: Theme.of(context).colorScheme.primary,
               ),
+              const SizedBox(width: 8),
+              if (_syncingStatus)
+                InfoChip(
+                  label: '상태 동기화 중…',
+                  color: Theme.of(context).colorScheme.tertiary,
+                ),
               const Spacer(),
               if (_selectMode) ...[
                 TextButton(
@@ -416,7 +457,20 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
           ),
           if (_error != null) ...[
             const SizedBox(height: 12),
-            ErrorBanner(message: _error!, onRetry: _refresh),
+            ErrorBanner(message: _error!, onRetry: _refreshWithStatusSync),
+          ],
+          if ((_lastSyncSummary ?? '').trim().isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Text(
+              _lastSyncSummary!,
+              style: TextStyle(
+                fontSize: 12,
+                color: Theme.of(context)
+                    .colorScheme
+                    .onSurface
+                    .withValues(alpha: 0.65),
+              ),
+            ),
           ],
           const SizedBox(height: 12),
           if (_products.isEmpty && !_loading)
@@ -468,7 +522,7 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
                               ),
                             ),
                           );
-                          if (mounted) await _refresh();
+                          if (mounted) await _refresh(syncRemote: false);
                         },
                   child: Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -524,7 +578,7 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
                               children: [
                                 InfoChip(
                                   label: _statusLabel(status),
-                                  color: Theme.of(context).colorScheme.primary,
+                                  color: _statusColor(context, status),
                                 ),
                                 if (sellerProductId.isNotEmpty)
                                   InfoChip(

@@ -1422,12 +1422,8 @@ function inferCatalogStatus(currentStatus, snapshot = null, fallback = "confirme
 }
 
 function inferCatalogStatusForSync(currentStatus, snapshot = null, fallback = "confirmed") {
-  const current = String(currentStatus || "").trim();
-  const inferred = inferCatalogStatus(currentStatus, snapshot, fallback);
-  if (inferred !== "deployed") return inferred;
-  if (current === "deployed" || current === "deployed_invalid") return inferred;
-  // Sync is metadata refresh; avoid auto-promoting lifecycle status here.
-  return current || fallback;
+  // Sync should reflect real remote lifecycle status.
+  return inferCatalogStatus(currentStatus, snapshot, fallback);
 }
 
 function normalizeCatalogProduct(row) {
