@@ -27,6 +27,9 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
   String? _activeFillJobId;
   Map<String, dynamic>? _fillProgress;
   DateTime? _fillStartedAt;
+  String? _activeUploadJobId;
+  Map<String, dynamic>? _uploadProgress;
+  DateTime? _uploadStartedAt;
   List<Map<String, dynamic>> _items = const [];
   List<Map<String, dynamic>> _savedItems = const [];
   final Set<String> _savedUrls = <String>{};
@@ -156,6 +159,60 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
 
   String _fillElapsedLabel() {
     final started = _fillStartedAt;
+    if (started == null) return '';
+    final sec = DateTime.now().difference(started).inSeconds;
+    if (sec <= 0) return '';
+    return '${sec}s';
+  }
+
+  String _uploadProgressMessage(Map<String, dynamic> progress) {
+    final stage = (progress['stage'] ?? '').toString().trim().toLowerCase();
+    final total = int.tryParse((progress['total'] ?? 0).toString()) ?? 0;
+    final done = int.tryParse((progress['doneCount'] ?? 0).toString()) ?? 0;
+    final uploaded = int.tryParse((progress['uploaded'] ?? 0).toString()) ?? 0;
+    final skipped = int.tryParse((progress['skipped'] ?? 0).toString()) ?? 0;
+    final failed = int.tryParse((progress['failed'] ?? 0).toString()) ?? 0;
+    final currentUrl = (progress['currentUrl'] ?? '').toString().trim();
+    switch (stage) {
+      case 'queued':
+        return total > 0 ? '업로드 대기열 등록 완료 (총 $total건)' : '업로드 대기열 등록 완료';
+      case 'start':
+        return total > 0 ? '업로드 시작 준비 중 (총 $total건)' : '업로드 시작 준비 중';
+      case 'uploading':
+        final current = currentUrl.isNotEmpty
+            ? ' · ${currentUrl.length > 42 ? '${currentUrl.substring(0, 42)}…' : currentUrl}'
+            : '';
+        return '업로드 진행 중: $done/$total · 성공 $uploaded · 스킵 $skipped · 실패 $failed$current';
+      case 'stopping':
+        return '중단 요청됨: 현재 상품 처리 후 중단합니다.';
+      case 'stopped':
+        return '중단됨: 완료 $done/$total · 성공 $uploaded · 스킵 $skipped · 실패 $failed';
+      case 'done':
+        return '완료: 총 $done/$total · 성공 $uploaded · 스킵 $skipped · 실패 $failed';
+      default:
+        return '업로드 진행 중...';
+    }
+  }
+
+  double? _uploadProgressRatio(Map<String, dynamic> progress) {
+    final percent = num.tryParse((progress['percent'] ?? '').toString());
+    if (percent != null) {
+      final bounded = percent.toDouble();
+      if (bounded <= 0) return 0;
+      if (bounded >= 100) return 1;
+      return bounded / 100.0;
+    }
+    final total = int.tryParse((progress['total'] ?? 0).toString()) ?? 0;
+    final done = int.tryParse((progress['doneCount'] ?? 0).toString()) ?? 0;
+    if (total <= 0) return null;
+    final ratio = done / total;
+    if (ratio <= 0) return 0;
+    if (ratio >= 1) return 1;
+    return ratio;
+  }
+
+  String _uploadElapsedLabel() {
+    final started = _uploadStartedAt;
     if (started == null) return '';
     final sec = DateTime.now().difference(started).inSeconds;
     if (sec <= 0) return '';
@@ -673,6 +730,166 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
 
   // Upload is done from the detail preview screen.
 
+  Future<void> _applyUploadResponse(
+    Map<String, dynamic> json, {
+    bool stopped = false,
+  }) async {
+    final summary =
+        (json['summary'] as Map?)?.cast<String, dynamic>() ?? const {};
+    final items = (json['items'] as List?) ?? const [];
+
+    int asInt(dynamic v) {
+      return int.tryParse((v ?? 0).toString()) ?? 0;
+    }
+
+    final uploaded = asInt(summary['uploaded']);
+    final skipped = asInt(summary['skipped']);
+    final failed = asInt(summary['failed']);
+    final successIds = <String>{};
+
+    final reasonCounts = <String, int>{};
+    for (final raw in items) {
+      final row = (raw as Map).cast<String, dynamic>();
+      final sellerProductId = (row['sellerProductId'] ?? '').toString().trim();
+      if (sellerProductId.isNotEmpty) {
+        successIds.add(sellerProductId);
+      }
+      if (row['skipped'] == true || row['ok'] == false) {
+        final reasonRaw =
+            (row['skipReason'] ?? row['error'] ?? 'unknown').toString().trim();
+        final reason = _humanizeSkipReason(reasonRaw);
+        if (reason.isEmpty) continue;
+        reasonCounts[reason] = (reasonCounts[reason] ?? 0) + 1;
+      }
+    }
+
+    final reasonPreview = reasonCounts.entries.toList()
+      ..sort((a, b) => b.value.compareTo(a.value));
+    final reasonText = reasonPreview
+        .take(3)
+        .map((entry) => '${entry.key} ${entry.value}건')
+        .join(', ');
+
+    setState(() {
+      _selected.clear();
+      _activeUploadJobId = null;
+      _uploadStartedAt = null;
+      _uploadProgress = {
+        'stage': stopped ? 'stopped' : 'done',
+        'percent': 100,
+        'doneCount': asInt(summary['total']),
+        'total': asInt(summary['total']),
+        'uploaded': uploaded,
+        'skipped': skipped,
+        'failed': failed,
+      };
+      _lastUploadAt = DateTime.now();
+      _lastUploadSummary =
+          '${stopped ? '다중 업로드 중단' : '다중 업로드 완료'}: 성공 $uploaded / 스킵 $skipped / 실패 $failed'
+          '${successIds.isNotEmpty ? ' / 등록ID ${successIds.length}건' : ''}'
+          '${reasonText.isNotEmpty ? ' ($reasonText)' : ''}';
+      _lastUploadRows = items
+          .map((raw) => (raw as Map).cast<String, dynamic>())
+          .take(12)
+          .toList();
+      _error = null;
+    });
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            '${stopped ? '다중 업로드 중단' : '다중 업로드 완료'}: 성공 $uploaded / 스킵 $skipped / 실패 $failed',
+          ),
+        ),
+      );
+    }
+
+    await _refresh();
+  }
+
+  Future<Map<String, dynamic>?> _pollUploadJob(String jobId) async {
+    for (var i = 0; i < 3600; i += 1) {
+      await Future<void>.delayed(const Duration(seconds: 1));
+      final j = await widget.api.getJson('/api/jobs/$jobId');
+      final job = (j['job'] as Map?)?.cast<String, dynamic>() ?? const {};
+      final progress = (job['progress'] as Map?)?.cast<String, dynamic>() ??
+          const <String, dynamic>{};
+      final runningRows = (job['items'] as List?) ?? const [];
+      if (mounted) {
+        setState(() {
+          _uploadProgress = progress;
+          if (runningRows.isNotEmpty) {
+            _lastUploadRows = runningRows
+                .map((raw) => (raw as Map).cast<String, dynamic>())
+                .take(12)
+                .toList();
+          }
+        });
+      }
+
+      final status = (job['status'] ?? '').toString().toLowerCase();
+      if (status == 'success' || status == 'done') {
+        final result = (job['result'] as Map?)?.cast<String, dynamic>() ?? {};
+        if (result.isNotEmpty) {
+          return result;
+        }
+        final summary =
+            (job['summary'] as Map?)?.cast<String, dynamic>() ?? const {};
+        return {
+          'summary': summary,
+          'items': runningRows,
+        };
+      }
+      if (status == 'stopped') {
+        final result = (job['result'] as Map?)?.cast<String, dynamic>() ?? {};
+        if (result.isNotEmpty) {
+          return {
+            ...result,
+            'stopped': true,
+          };
+        }
+        final summary =
+            (job['summary'] as Map?)?.cast<String, dynamic>() ?? const {};
+        return {
+          'summary': summary,
+          'items': runningRows,
+          'stopped': true,
+        };
+      }
+      if (status == 'failed') {
+        final message = (job['errorMessage'] ?? job['error'] ?? '다중 업로드 실패')
+            .toString()
+            .trim();
+        throw Exception(message.isEmpty ? '다중 업로드 실패' : message);
+      }
+    }
+    return null;
+  }
+
+  Future<void> _requestStopUpload() async {
+    final jobId = (_activeUploadJobId ?? '').trim();
+    if (jobId.isEmpty) return;
+    try {
+      await widget.api.postJson('/api/jobs/$jobId/stop', const {});
+      if (!mounted) return;
+      setState(() {
+        _uploadProgress = {
+          ...(_uploadProgress ?? const <String, dynamic>{}),
+          'stage': 'stopping',
+        };
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('업로드 중단 요청을 보냈습니다. 현재 상품 처리 후 중단합니다.')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('업로드 중단 요청 실패: $e')),
+      );
+    }
+  }
+
   Future<void> _uploadSelected() async {
     final urls = _selected.toList();
     if (urls.isEmpty) return;
@@ -690,80 +907,79 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
     setState(() {
       _loading = true;
       _error = null;
+      _uploadStartedAt = DateTime.now();
+      _uploadProgress = {
+        'stage': 'queued',
+        'percent': 1,
+        'total': urls.length,
+        'doneCount': 0,
+        'uploaded': 0,
+        'skipped': 0,
+        'failed': 0,
+      };
+      _lastUploadSummary = '마지막 업로드 ${_nowLabel()} · 선택 ${urls.length}개 업로드 시작';
     });
 
     try {
-      final json = await widget.api.postJson('/api/upload/bulk', {
-        'urls': urls,
-        'force': '0',
-        if (overrides.isNotEmpty) 'overridesByUrl': overrides,
-      });
-
-      final summary =
-          (json['summary'] as Map?)?.cast<String, dynamic>() ?? const {};
-      final items = (json['items'] as List?) ?? const [];
-
-      int asInt(dynamic v) {
-        return int.tryParse((v ?? 0).toString()) ?? 0;
+      Map<String, dynamic>? startJson;
+      try {
+        startJson = await widget.api.postJson('/api/upload/bulk/start', {
+          'urls': urls,
+          'force': '0',
+          if (overrides.isNotEmpty) 'overridesByUrl': overrides,
+        });
+      } on ApiException catch (e) {
+        if (e.statusCode != 404) rethrow;
       }
 
-      final uploaded = asInt(summary['uploaded']);
-      final skipped = asInt(summary['skipped']);
-      final failed = asInt(summary['failed']);
-      final successIds = <String>{};
-
-      final reasonCounts = <String, int>{};
-      for (final raw in items) {
-        final row = (raw as Map).cast<String, dynamic>();
-        final sellerProductId =
-            (row['sellerProductId'] ?? '').toString().trim();
-        if (sellerProductId.isNotEmpty) {
-          successIds.add(sellerProductId);
+      final job = (startJson?['job'] as Map?)?.cast<String, dynamic>() ?? {};
+      final jobId = (job['id'] ?? '').toString().trim();
+      if (jobId.isNotEmpty) {
+        setState(() {
+          _activeUploadJobId = jobId;
+          _uploadProgress =
+              (job['progress'] as Map?)?.cast<String, dynamic>() ??
+                  const <String, dynamic>{'stage': 'queued'};
+        });
+        final result = await _pollUploadJob(jobId);
+        if (result == null) {
+          setState(() {
+            _lastUploadSummary =
+                '마지막 업로드 ${_nowLabel()} · 작업이 길어 백그라운드로 계속 진행 중';
+          });
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('업로드 시간이 길어 계속 진행 중입니다. 잠시 후 상태를 다시 확인하세요.'),
+              ),
+            );
+          }
+          return;
         }
-        if (row['skipped'] == true || row['ok'] == false) {
-          final reasonRaw = (row['skipReason'] ?? row['error'] ?? 'unknown')
-              .toString()
-              .trim();
-          final reason = _humanizeSkipReason(reasonRaw);
-          if (reason.isEmpty) continue;
-          reasonCounts[reason] = (reasonCounts[reason] ?? 0) + 1;
-        }
+        await _applyUploadResponse(result, stopped: result['stopped'] == true);
+      } else {
+        // Fallback for older server runtimes without async bulk endpoint.
+        final json = await widget.api.postJson('/api/upload/bulk', {
+          'urls': urls,
+          'force': '0',
+          if (overrides.isNotEmpty) 'overridesByUrl': overrides,
+        });
+        await _applyUploadResponse(json);
       }
-
-      final reasonPreview = reasonCounts.entries.toList()
-        ..sort((a, b) => b.value.compareTo(a.value));
-      final reasonText = reasonPreview
-          .take(3)
-          .map((entry) => '${entry.key} ${entry.value}건')
-          .join(', ');
-
-      setState(() {
-        _selected.clear();
-        _lastUploadAt = DateTime.now();
-        _lastUploadSummary =
-            '다중 업로드 완료: 성공 $uploaded / 스킵 $skipped / 실패 $failed'
-            '${successIds.isNotEmpty ? ' / 등록ID ${successIds.length}건' : ''}'
-            '${reasonText.isNotEmpty ? ' ($reasonText)' : ''}';
-        _lastUploadRows = items
-            .map((raw) => (raw as Map).cast<String, dynamic>())
-            .take(12)
-            .toList();
-        _error = null;
-      });
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('다중 업로드 완료: 성공 $uploaded / 스킵 $skipped / 실패 $failed'),
-          ),
-        );
-      }
-
-      await _refresh();
     } catch (e) {
-      setState(() => _error = e.toString());
+      setState(() {
+        _error = e.toString();
+        _activeUploadJobId = null;
+      });
     } finally {
-      if (mounted) setState(() => _loading = false);
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          if ((_activeUploadJobId ?? '').isEmpty) {
+            _uploadStartedAt = null;
+          }
+        });
+      }
     }
   }
 
@@ -782,8 +998,15 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
     final fillEmptyDone = fillStage == 'done_empty' ||
         fillStage == 'stopped' ||
         (fillStage == 'done' && fillCount <= 0);
-    final fillRunning =
-        _loading || ((_activeFillJobId ?? '').isNotEmpty && !fillDone);
+    final fillRunning = ((_activeFillJobId ?? '').isNotEmpty && !fillDone) ||
+        (_loading && _fillProgress != null && !fillDone);
+    final uploadStage = (_uploadProgress?['stage'] ?? '').toString();
+    final uploadPercent =
+        num.tryParse((_uploadProgress?['percent'] ?? '').toString());
+    final uploadDone = uploadStage == 'done' || uploadStage == 'stopped';
+    final uploadRunning =
+        ((_activeUploadJobId ?? '').isNotEmpty && !uploadDone) ||
+            (_loading && _uploadProgress != null && !uploadDone);
 
     return AppScaffold(
       title: selectedCount > 0 ? '추천 (선택 $selectedCount)' : '추천',
@@ -906,10 +1129,88 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
                 children: [
                   Expanded(child: Text('선택한 $selectedCount개')),
                   FilledButton.tonalIcon(
-                    onPressed: _loading ? null : _uploadSelected,
-                    icon: const Icon(Icons.cloud_upload_outlined, size: 18),
-                    label: const Text('선택 업로드'),
+                    onPressed: uploadRunning
+                        ? _requestStopUpload
+                        : (_loading ? null : _uploadSelected),
+                    icon: Icon(
+                      uploadRunning
+                          ? Icons.stop_circle_outlined
+                          : Icons.cloud_upload_outlined,
+                      size: 18,
+                    ),
+                    label: Text(uploadRunning ? '중단' : '선택 업로드'),
                   ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 10),
+          ],
+          if (_uploadProgress != null) ...[
+            AppCard(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(
+                        uploadRunning
+                            ? Icons.sync
+                            : (uploadDone
+                                ? Icons.cloud_done_outlined
+                                : Icons.cloud_upload_outlined),
+                        size: 18,
+                        color: uploadDone
+                            ? Theme.of(context).colorScheme.primary
+                            : Theme.of(context).colorScheme.tertiary,
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          uploadRunning ? '다중 업로드 진행 중' : '다중 업로드 상태',
+                          style: const TextStyle(fontWeight: FontWeight.w800),
+                        ),
+                      ),
+                      if ((_activeUploadJobId ?? '').isNotEmpty)
+                        Text(
+                          '${uploadPercent != null ? '${uploadPercent.round()}% · ' : ''}#${_activeUploadJobId!.length > 8 ? _activeUploadJobId!.substring(0, 8) : _activeUploadJobId!}',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Theme.of(context)
+                                .colorScheme
+                                .onSurface
+                                .withValues(alpha: 0.65),
+                          ),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    _uploadProgressMessage(_uploadProgress!),
+                    style: TextStyle(
+                      color: Theme.of(context)
+                          .colorScheme
+                          .onSurface
+                          .withValues(alpha: 0.85),
+                    ),
+                  ),
+                  if (_uploadElapsedLabel().isNotEmpty) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      '경과 시간: ${_uploadElapsedLabel()}',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Theme.of(context)
+                            .colorScheme
+                            .onSurface
+                            .withValues(alpha: 0.6),
+                      ),
+                    ),
+                  ],
+                  if (_uploadProgressRatio(_uploadProgress!) != null) ...[
+                    const SizedBox(height: 10),
+                    LinearProgressIndicator(
+                        value: _uploadProgressRatio(_uploadProgress!)),
+                  ],
                 ],
               ),
             ),

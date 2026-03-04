@@ -563,6 +563,7 @@ app.get('/api/image-proxy', async (req, res) => {
 // --- Backward-compatible endpoints for Flutter /app runtime ---
 const legacyJobs = new Map();
 const recommendationRunByUser = new Map();
+const uploadBulkRunByUser = new Map();
 
 function initLegacyJob(kind, seedProgress = {}) {
   const id = crypto.randomUUID();
@@ -645,6 +646,32 @@ function normalizeRecommendationJobProgressPercent(progress = {}, fallbackTarget
   return null;
 }
 
+function normalizeUploadBulkJobProgressPercent(progress = {}) {
+  const stage = String(progress?.stage || "").trim().toLowerCase();
+  if (!stage) return null;
+
+  const toInt = (v, d = 0) => {
+    const n = Number(v);
+    if (!Number.isFinite(n)) return d;
+    return Math.floor(n);
+  };
+  const clamp = (n, min = 0, max = 100) => Math.max(min, Math.min(max, n));
+
+  if (stage === "queued") return 1;
+  if (stage === "start") return 3;
+  if (stage === "stopping") return 99;
+  if (stage === "done" || stage === "stopped") return 100;
+
+  if (stage === "uploading") {
+    const total = Math.max(1, toInt(progress?.total || 0, 1));
+    const done = Math.max(0, toInt(progress?.doneCount || 0));
+    const ratio = Math.min(1, done / total);
+    return clamp(Math.round(8 + ratio * 90), 8, 98);
+  }
+
+  return null;
+}
+
 function parseRecommendationRunRequest(req) {
   const userSettings = req?.user?.settings || {};
   const keywords = normalizeStringList(req.body?.keywords, 30);
@@ -670,6 +697,223 @@ function getRunningRecommendationJobForUser(userId) {
   if (status === "running" || status === "queued") return job;
   recommendationRunByUser.delete(uid);
   return null;
+}
+
+function getRunningUploadBulkJobForUser(userId) {
+  const uid = String(userId || "").trim();
+  if (!uid) return null;
+  const jobId = uploadBulkRunByUser.get(uid);
+  if (!jobId) return null;
+  const job = legacyJobs.get(jobId);
+  if (!job) {
+    uploadBulkRunByUser.delete(uid);
+    return null;
+  }
+  const status = String(job.status || "").toLowerCase();
+  if (status === "running" || status === "queued") return job;
+  uploadBulkRunByUser.delete(uid);
+  return null;
+}
+
+function normalizeBulkUploadJobRow({ url = "", outcome = null, error = "" } = {}) {
+  const followUp =
+    outcome?.result?.followUp && typeof outcome.result.followUp === "object"
+      ? outcome.result.followUp
+      : {};
+  const productId = pickFirstNonEmpty(followUp.productId);
+  const productUrl = pickFirstNonEmpty(
+    followUp.productUrl,
+    buildCoupangProductUrl(productId),
+  );
+  const hasOutcome = outcome && typeof outcome === "object";
+  const skipped = hasOutcome ? Boolean(outcome?.skipped) : false;
+  const ok = hasOutcome ? Boolean(outcome?.ok) : false;
+  const rowError = String(error || outcome?.error || "").trim();
+
+  return {
+    url,
+    ok,
+    skipped,
+    skipReason: normalizeSkipReason(outcome),
+    error: rowError || null,
+    sellerProductId: hasOutcome ? resolveOutcomeSellerProductId(outcome) : null,
+    productId: productId || null,
+    productUrl: productUrl || null,
+    statusName: pickFirstNonEmpty(followUp.statusName) || null,
+  };
+}
+
+function summarizeBulkUploadRows(items = [], force = false) {
+  const rows = Array.isArray(items) ? items : [];
+  return {
+    total: rows.length,
+    uploaded: rows.filter((x) => x?.ok === true && x?.skipped !== true).length,
+    skipped: rows.filter((x) => x?.skipped === true).length,
+    failed: rows.filter((x) => x?.ok !== true && x?.skipped !== true).length,
+    force: Boolean(force),
+  };
+}
+
+function startUploadBulkJob({
+  user = null,
+  urls = [],
+  force = false,
+  overridesByUrl = {},
+} = {}) {
+  const uid = String(user?.id || "").trim();
+  if (!uid) throw new Error("user_id_required");
+
+  const running = getRunningUploadBulkJobForUser(uid);
+  if (running) {
+    return { job: running, reused: true };
+  }
+
+  const total = Array.isArray(urls) ? urls.length : 0;
+  const job = initLegacyJob("upload_bulk", {
+    stage: "queued",
+    total,
+    doneCount: 0,
+    uploaded: 0,
+    skipped: 0,
+    failed: 0,
+    percent: 1,
+  });
+  job.items = [];
+  job.stopRequested = false;
+  uploadBulkRunByUser.set(uid, job.id);
+
+  (async () => {
+    try {
+      patchLegacyJob(job, {
+        status: "running",
+        progress: {
+          stage: "start",
+          total,
+          doneCount: 0,
+          uploaded: 0,
+          skipped: 0,
+          failed: 0,
+          percent: 3,
+        },
+      });
+
+      const rows = [];
+      await withUploadLock(async () => {
+        for (const [idx, url] of urls.entries()) {
+          const index = idx + 1;
+          if (job.stopRequested) break;
+
+          const prevSummary = summarizeBulkUploadRows(rows, force);
+          const runningProgress = {
+            stage: "uploading",
+            total,
+            index,
+            currentUrl: url,
+            doneCount: rows.length,
+            uploaded: prevSummary.uploaded,
+            skipped: prevSummary.skipped,
+            failed: prevSummary.failed,
+          };
+          const runningPercent = normalizeUploadBulkJobProgressPercent(runningProgress);
+          if (Number.isFinite(Number(runningPercent))) {
+            runningProgress.percent = Number(runningPercent);
+          }
+          patchLegacyJob(job, {
+            status: "running",
+            progress: runningProgress,
+            items: rows.slice(-120),
+          });
+
+          let row = null;
+          try {
+            const o = overridesByUrl?.[url];
+            const overrides = {
+              titleOverride: o?.titleOverride,
+              imagesOverride: Array.isArray(o?.imagesOverride) ? o.imagesOverride : undefined,
+              categoryOverrideCode: o?.categoryOverrideCode,
+            };
+            const outcome = await executeUploadForUrl({ url, user, force, overrides });
+            appendUploadHistoryFromOutcome(url, outcome);
+            row = normalizeBulkUploadJobRow({ url, outcome });
+          } catch (oneErr) {
+            const oneErrorText = String(oneErr?.message || oneErr || "bulk_item_failed");
+            appendUploadHistory({
+              at: new Date().toISOString(),
+              url,
+              ok: false,
+              skipped: false,
+              skipReason: "",
+              payloadOnly: false,
+              title: "",
+              finalPrice: null,
+              optionsCount: 0,
+              sellerProductId: "",
+              createStatus: null,
+              error: oneErrorText,
+            });
+            row = normalizeBulkUploadJobRow({
+              url,
+              error: oneErrorText,
+            });
+          }
+
+          rows.push(row);
+          const summary = summarizeBulkUploadRows(rows, force);
+          const nextProgress = {
+            stage: "uploading",
+            total,
+            index,
+            currentUrl: url,
+            doneCount: rows.length,
+            uploaded: summary.uploaded,
+            skipped: summary.skipped,
+            failed: summary.failed,
+          };
+          const nextPercent = normalizeUploadBulkJobProgressPercent(nextProgress);
+          if (Number.isFinite(Number(nextPercent))) {
+            nextProgress.percent = Number(nextPercent);
+          }
+          patchLegacyJob(job, {
+            status: "running",
+            progress: nextProgress,
+            summary,
+            items: rows.slice(-120),
+          });
+        }
+      });
+
+      const items = rows;
+      const summary = summarizeBulkUploadRows(items, force);
+      const stopped = Boolean(job.stopRequested);
+      const finalProgress = {
+        stage: stopped ? "stopped" : "done",
+        total,
+        doneCount: rows.length,
+        uploaded: summary.uploaded,
+        skipped: summary.skipped,
+        failed: summary.failed,
+        percent: 100,
+      };
+      patchLegacyJob(job, {
+        status: stopped ? "stopped" : "success",
+        progress: finalProgress,
+        summary,
+        result: { summary, items },
+      });
+    } catch (e) {
+      patchLegacyJob(job, {
+        status: "failed",
+        errorMessage: String(e?.message || e),
+        error: String(e?.stack || e?.message || e),
+      });
+    } finally {
+      if (uploadBulkRunByUser.get(uid) === job.id) {
+        uploadBulkRunByUser.delete(uid);
+      }
+    }
+  })();
+
+  return { job, reused: false };
 }
 
 function startRecommendationRefreshJob({
@@ -2964,6 +3208,54 @@ app.post("/api/upload", authRequired, handleSingleUpload);
 // ✅ 업로드 실행 API
 app.post("/api/upload/execute", authRequired, handleSingleUpload);
 
+// ✅ bulk 업로드 비동기 시작 (Cloudflare timeout 회피)
+app.post("/api/upload/bulk/start", authRequired, async (req, res) => {
+  try {
+    const urls = parseBulkUrls(req.body?.urls || req.body?.text || "");
+    if (urls.length === 0) {
+      return res.status(400).json({ ok: false, error: "missing urls" });
+    }
+    if (urls.length > 100) {
+      return res.status(400).json({ ok: false, error: "too_many_urls(max:100)" });
+    }
+
+    const force = parseForceFlag(req.body?.force ?? req.query?.force);
+    const overridesByUrlRaw =
+      req.body?.overridesByUrl && typeof req.body.overridesByUrl === "object"
+        ? req.body.overridesByUrl
+        : {};
+
+    const running = getRunningUploadBulkJobForUser(req.user?.id);
+    if (running) {
+      return res.json({
+        ok: true,
+        reused: true,
+        job: compactLegacyJob(running),
+      });
+    }
+
+    // Preserve existing upload lock semantics (single upload pipeline at a time).
+    // If another upload is already running, fail fast with 409.
+    if (uploadInProgress) {
+      return res.status(409).json({ ok: false, error: "upload in progress" });
+    }
+
+    const started = startUploadBulkJob({
+      user: req.user,
+      urls,
+      force,
+      overridesByUrl: overridesByUrlRaw,
+    });
+    return res.json({
+      ok: true,
+      reused: Boolean(started?.reused),
+      job: compactLegacyJob(started?.job),
+    });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
 // ✅ bulk 업로드 실행
 app.post("/api/upload/bulk", authRequired, async (req, res) => {
   return runUploadLocked(async () => {
@@ -2993,26 +3285,7 @@ app.post("/api/upload/bulk", authRequired, async (req, res) => {
           };
           const outcome = await executeUploadForUrl({ url, user: req.user, force, overrides });
           appendUploadHistoryFromOutcome(url, outcome);
-          const followUp =
-            outcome?.result?.followUp && typeof outcome.result.followUp === "object"
-              ? outcome.result.followUp
-              : {};
-          const productId = pickFirstNonEmpty(followUp.productId);
-          const productUrl = pickFirstNonEmpty(
-            followUp.productUrl,
-            buildCoupangProductUrl(productId),
-          );
-          items.push({
-            url,
-            ok: Boolean(outcome?.ok),
-            skipped: Boolean(outcome?.skipped),
-            skipReason: normalizeSkipReason(outcome),
-            error: outcome?.error || null,
-            sellerProductId: resolveOutcomeSellerProductId(outcome),
-            productId: productId || null,
-            productUrl: productUrl || null,
-            statusName: pickFirstNonEmpty(followUp.statusName) || null,
-          });
+          items.push(normalizeBulkUploadJobRow({ url, outcome }));
         } catch (oneErr) {
           const oneErrorText = String(oneErr?.message || oneErr || "bulk_item_failed");
           appendUploadHistory({
@@ -3029,27 +3302,11 @@ app.post("/api/upload/bulk", authRequired, async (req, res) => {
             createStatus: null,
             error: oneErrorText,
           });
-          items.push({
-            url,
-            ok: false,
-            skipped: false,
-            skipReason: "",
-            error: oneErrorText,
-            sellerProductId: null,
-            productId: null,
-            productUrl: null,
-            statusName: null,
-          });
+          items.push(normalizeBulkUploadJobRow({ url, error: oneErrorText }));
         }
       }
 
-      const summary = {
-        total: items.length,
-        uploaded: items.filter((x) => x.ok && !x.skipped).length,
-        skipped: items.filter((x) => x.skipped).length,
-        failed: items.filter((x) => !x.ok && !x.skipped).length,
-        force,
-      };
+      const summary = summarizeBulkUploadRows(items, force);
 
       return res.json({ ok: true, summary, items });
     } catch (e) {
