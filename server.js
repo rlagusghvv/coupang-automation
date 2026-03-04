@@ -681,7 +681,7 @@ function parseRecommendationRunRequest(req) {
     Math.min(60, Number(req.body?.cooldownDays || userSettings?.recommendationCooldownDays || 7) || 7),
   );
   const strictMode = parseBooleanFlag(
-    req.body?.strictMode ?? req.body?.strict ?? userSettings?.recommendationStrictMode,
+    req.body?.strictMode ?? req.body?.strict,
     false,
   );
   return { keywords, targetCount, cooldownDays, strictMode };
@@ -690,10 +690,7 @@ function parseRecommendationRunRequest(req) {
 function buildRecommendationRunSettings(baseSettings = {}, { strictMode = false } = {}) {
   const base =
     baseSettings && typeof baseSettings === "object" ? { ...baseSettings } : {};
-  const resolvedStrictMode = parseBooleanFlag(
-    strictMode ?? base.recommendationStrictMode,
-    false,
-  );
+  const resolvedStrictMode = parseBooleanFlag(strictMode, false);
 
   if (resolvedStrictMode) {
     return {
@@ -2604,12 +2601,7 @@ function resolveRecommendationAutoRunOptions(input = {}, userSettings = {}) {
 function buildAutoRecommendationSettings(baseSettings = {}) {
   const base = buildRecommendationRunSettings(
     baseSettings && typeof baseSettings === "object" ? baseSettings : {},
-    {
-      strictMode: parseBooleanFlag(
-        baseSettings?.recommendationStrictMode,
-        false,
-      ),
-    },
+    { strictMode: false },
   );
   return {
     ...base,
