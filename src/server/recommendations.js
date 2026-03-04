@@ -1757,13 +1757,24 @@ async function enrichRecommendationsForUpload({ items = [], settings = {} } = {}
 }
 
 function resolveRecommendationPolicy(settings = {}) {
+  const strictMode = parseBoolean(settings?.recommendationStrictMode, false);
+  if (!strictMode) {
+    return {
+      // Keep QC gate as default, but prioritize list volume in normal mode.
+      requireQcPass: parseBoolean(settings?.recommendationRequireQcPass, true),
+      allowRelaxedExclusion: true,
+      allowQuickFallback: true,
+      strictMode: false,
+    };
+  }
   return {
     // User request default: only QC-passed items should be recommended.
     requireQcPass: parseBoolean(settings?.recommendationRequireQcPass, true),
     // Underfilled runs should automatically retry without recent-seen exclusion.
-    allowRelaxedExclusion: parseBoolean(settings?.recommendationAllowRelaxedExclusion, true),
+    allowRelaxedExclusion: parseBoolean(settings?.recommendationAllowRelaxedExclusion, false),
     // Keep list volume stable by backfilling with QC-review candidates when strict pass is too low.
-    allowQuickFallback: parseBoolean(settings?.recommendationAllowQuickFallback, true),
+    allowQuickFallback: parseBoolean(settings?.recommendationAllowQuickFallback, false),
+    strictMode: true,
   };
 }
 
