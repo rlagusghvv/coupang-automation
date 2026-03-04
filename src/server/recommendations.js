@@ -219,10 +219,19 @@ const RECOMMENDATION_THEME_HINTS = {
   organize: [
     '정리', '수납', '트레이', '칸막이', '파티션', '서랍', '멀티탭', '전선',
   ],
+  home: [
+    '주방', '싱크대', '욕실', '세탁', '현관', '신발장', '옷장', '냉장고',
+  ],
+  desk: [
+    '책상', '데스크', '모니터', '노트북', '키보드', '마우스', '케이블',
+  ],
+  outdoor: [
+    '캠핑', '아웃도어', '여행', '캐리어', '파우치', '차박',
+  ],
 };
 
 export function defaultKeywordSet() {
-  // Focus: pet + car first, desk organization as secondary.
+  // Broad recommendation pool: car + pet + home organize + desk + travel/camping.
   return [
     // car
     '차량용 수납함',
@@ -237,6 +246,14 @@ export function defaultKeywordSet() {
     '차량 햇빛가리개',
     '차량 케이블 정리',
     '차량 논슬립 패드',
+    '차량 트렁크 수납백',
+    '차량 헤드레스트 훅',
+    '차량 도어포켓 정리',
+    '차량 우산 거치대',
+    '차량 컵홀더 트레이',
+    '차량 뒷좌석 테이블',
+    '차량 선바이저 포켓',
+    '차량 핸들 커버',
     // pet (avoid food/medicine)
     '강아지 장난감',
     '고양이 장난감',
@@ -250,12 +267,39 @@ export function defaultKeywordSet() {
     '펫 브러쉬',
     '고양이 빗',
     '반려동물 카시트',
-    // desk/organize (secondary)
+    '강아지 노즈워크 장난감',
+    '고양이 낚싯대 장난감',
+    '반려동물 이동가방',
+    '반려동물 목욕 브러쉬',
+    '고양이 모래 삽',
+    // home organize
+    '싱크대 정리 선반',
+    '주방 서랍 정리',
+    '냉장고 정리 트레이',
+    '욕실 수납 선반',
+    '욕실 칫솔 꽂이',
+    '세탁실 정리함',
+    '신발장 정리대',
+    '옷장 수납함',
+    '압축 수납팩',
+    '현관 우산꽂이',
+    // desk/office organize
     '멀티탭 정리함',
     '전선 정리함',
     '서랍 칸막이',
     '서랍 정리 트레이',
     '책상 수납 정리',
+    '모니터 받침대 수납',
+    '노트북 거치대',
+    '데스크 케이블 홀더',
+    'USB 수납 케이스',
+    // travel/camping
+    '여행용 파우치 세트',
+    '캐리어 정리 파우치',
+    '압축 파우치',
+    '캠핑 수납 박스',
+    '캠핑 랜턴 걸이',
+    '차박 수납함',
   ];
 }
 
@@ -408,7 +452,10 @@ function computeThemeBoost(themes = []) {
   if (list.includes('car')) boost += 1400;
   if (list.includes('pet')) boost += 1400;
   if (list.includes('organize')) boost += 300;
-  return Math.min(3200, boost);
+  if (list.includes('home')) boost += 450;
+  if (list.includes('desk')) boost += 450;
+  if (list.includes('outdoor')) boost += 350;
+  return Math.min(3800, boost);
 }
 
 function roundToKrw900(p) {
@@ -2156,8 +2203,8 @@ async function generateRecommendationsBatch({
       Math.max(Number(previewTimeoutMs) || 9_000, topN >= 70 ? 12_000 : 9_000),
     ),
   );
-  const keywordScanCap = policy.requireQcPass ? 24 : 16;
-  const keywordScanFloor = policy.requireQcPass ? 10 : 8;
+  const keywordScanCap = policy.requireQcPass ? 36 : 24;
+  const keywordScanFloor = policy.requireQcPass ? 12 : 10;
   const keywordScanWanted = Math.ceil(Number(topN || 80) * (policy.requireQcPass ? 2.2 : 1.6));
   const keywordScanLimit = Math.max(
     1,
