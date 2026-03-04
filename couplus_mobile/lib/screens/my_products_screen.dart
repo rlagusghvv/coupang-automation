@@ -288,6 +288,28 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
     );
   }
 
+  String _statusLabel(String raw) {
+    final status = raw.trim().toLowerCase();
+    switch (status) {
+      case 'confirmed':
+        return '확정';
+      case 'uploaded':
+        return '상품 업로드 완료!';
+      case 'deployed':
+        return '판매중';
+      case 'deployed_invalid':
+        return '검증 필요';
+      case 'deploy_failed':
+        return '배포 실패';
+      case 'deleted_remote':
+        return '원격 삭제됨';
+      case 'deleted_local':
+        return '로컬 숨김';
+      default:
+        return raw.trim().isEmpty ? '-' : raw.trim();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return AppScaffold(
@@ -337,15 +359,23 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
               children: [
                 _statusChip(context, '', '전체'),
                 const SizedBox(width: 8),
-                _statusChip(context, 'confirmed', 'confirmed'),
+                _statusChip(context, 'confirmed', _statusLabel('confirmed')),
                 const SizedBox(width: 8),
-                _statusChip(context, 'uploaded', 'uploaded'),
+                _statusChip(context, 'uploaded', _statusLabel('uploaded')),
                 const SizedBox(width: 8),
-                _statusChip(context, 'deployed', 'deployed'),
+                _statusChip(context, 'deployed', _statusLabel('deployed')),
                 const SizedBox(width: 8),
-                _statusChip(context, 'deployed_invalid', 'invalid'),
+                _statusChip(
+                  context,
+                  'deployed_invalid',
+                  _statusLabel('deployed_invalid'),
+                ),
                 const SizedBox(width: 8),
-                _statusChip(context, 'deploy_failed', 'failed'),
+                _statusChip(
+                  context,
+                  'deploy_failed',
+                  _statusLabel('deploy_failed'),
+                ),
               ],
             ),
           ),
@@ -493,7 +523,7 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
                               runSpacing: 6,
                               children: [
                                 InfoChip(
-                                  label: status.isEmpty ? '-' : status,
+                                  label: _statusLabel(status),
                                   color: Theme.of(context).colorScheme.primary,
                                 ),
                                 if (sellerProductId.isNotEmpty)

@@ -37,6 +37,57 @@ function toRecommendationImageUrl(rawUrl, referer = '') {
   return u;
 }
 
+function normalizeRecommendationSourceUrl(rawUrl) {
+  try {
+    const u = new URL(String(rawUrl || '').trim());
+    u.hash = '';
+
+    for (const key of [...u.searchParams.keys()]) {
+      if (
+        key.startsWith('utm_') ||
+        key === 'from' ||
+        key === 'advcnt' ||
+        key === 'traceId' ||
+        key === 'searchId' ||
+        key === 'rank' ||
+        key === 'sourceType'
+      ) {
+        u.searchParams.delete(key);
+      }
+    }
+
+    const sortedEntries = [...u.searchParams.entries()].sort(([a], [b]) => a.localeCompare(b));
+    u.search = '';
+    for (const [k, v] of sortedEntries) {
+      u.searchParams.append(k, v);
+    }
+
+    return u.toString();
+  } catch {
+    return String(rawUrl || '').trim();
+  }
+}
+
+function toNormalizedUrlSet(values = []) {
+  const set = new Set();
+  for (const value of values) {
+    const raw = String(value || '').trim();
+    if (!raw) continue;
+    const normalized = normalizeRecommendationSourceUrl(raw);
+    set.add(normalized || raw);
+  }
+  return set;
+}
+
+function isExcludedSourceUrl(excludeUrls, sourceUrl) {
+  if (!(excludeUrls instanceof Set)) return false;
+  const raw = String(sourceUrl || '').trim();
+  if (!raw) return false;
+  if (excludeUrls.has(raw)) return true;
+  const normalized = normalizeRecommendationSourceUrl(raw);
+  return normalized ? excludeUrls.has(normalized) : false;
+}
+
 function withTimeout(promise, ms, label = 'timeout') {
   const t = new Promise((_, reject) => setTimeout(() => reject(new Error(label)), ms));
   return Promise.race([promise, t]);
@@ -644,22 +695,28 @@ async function listRecentSeenUrls(db, userId, cooldownDays) {
     'SELECT source_url FROM recommendations_seen WHERE user_id = ? AND last_seen_at >= ?',
     [userId, cutoff],
   );
-  return rows.map((r) => String(r?.source_url || '').trim()).filter(Boolean);
+  return [...toNormalizedUrlSet(rows.map((r) => String(r?.source_url || '').trim()))];
 }
 
 async function listUploadedSourceUrls(db, userId, limit = 5000) {
   const rows = await dbAll(
     db,
-    'SELECT source_url FROM uploaded_products WHERE user_id = ? ORDER BY created_at DESC LIMIT ?',
+    'SELECT source_url, normalized_url FROM uploaded_products WHERE user_id = ? ORDER BY created_at DESC LIMIT ?',
     [userId, Math.max(1, Math.min(10000, Number(limit) || 5000))],
   );
-  return rows.map((r) => String(r?.source_url || '').trim()).filter(Boolean);
+  const rawUrls = rows
+    .flatMap((r) => [
+      String(r?.source_url || '').trim(),
+      String(r?.normalized_url || '').trim(),
+    ])
+    .filter(Boolean);
+  return [...toNormalizedUrlSet(rawUrls)];
 }
 
 export async function listRecommendations(userId, { limit = 50 } = {}) {
   const db = openDb();
   const lim = Math.max(1, Math.min(200, Number(limit) || 50));
-  const queryLimit = Math.max(lim, Math.min(800, lim * 4));
+  const queryLimit = Math.max(lim, Math.min(2000, lim * 10));
   const rows = await dbAll(
     db,
     `SELECT id, source_url, keyword, title, main_image_url, source_price, shipping_fee, final_price, profit, margin_rate, score, reason, payload_json, created_at
@@ -676,15 +733,31 @@ export async function listRecommendations(userId, { limit = 50 } = {}) {
      WHERE user_id = ?`,
     [userId],
   ).catch(() => []);
+  const uploadedRows = await dbAll(
+    db,
+    `SELECT source_url, normalized_url
+     FROM uploaded_products
+     WHERE user_id = ?
+     ORDER BY id DESC
+     LIMIT 12000`,
+    [userId],
+  ).catch(() => []);
   db.close();
   const savedSet = new Set(
     savedRows.map((r) => String(r?.source_url || '').trim()).filter(Boolean),
+  );
+  const uploadedUrlSet = toNormalizedUrlSet(
+    uploadedRows.flatMap((r) => [
+      String(r?.source_url || '').trim(),
+      String(r?.normalized_url || '').trim(),
+    ]),
   );
   const mapped = rows.map((r) => {
     let payload = {};
     try { payload = JSON.parse(r.payload_json || '{}'); } catch {}
 
     const sourceUrl = String(r.source_url || '').trim();
+    const sourceUrlNormalized = normalizeRecommendationSourceUrl(sourceUrl);
     const qc = payload?.qc || null;
     const prev = payload?.preview || null;
     const previewImagesRaw = Array.isArray(prev?.computed?.images)
@@ -720,6 +793,7 @@ export async function listRecommendations(userId, { limit = 50 } = {}) {
     return {
       id: r.id,
       sourceUrl,
+      sourceUrlNormalized,
       keyword: r.keyword,
       title: seoTitle || r.title,
       seoTitle: seoTitle || r.title,
@@ -741,7 +815,10 @@ export async function listRecommendations(userId, { limit = 50 } = {}) {
       saved: savedSet.has(String(r.source_url || '').trim()),
     };
   });
-  return mapped.filter((item) => Boolean(item?.qc?.eligibleUpload)).slice(0, lim);
+  return mapped
+    .filter((item) => Boolean(item?.qc?.eligibleUpload))
+    .filter((item) => !isExcludedSourceUrl(uploadedUrlSet, item?.sourceUrl))
+    .slice(0, lim);
 }
 
 function normalizeRecommendationItemInput(item = {}) {
@@ -2178,7 +2255,7 @@ async function generateRecommendationsBatch({
     }
 
     for (const it of list) {
-      if (excludeUrls.has(it.url)) continue;
+      if (isExcludedSourceUrl(excludeUrls, it.url)) continue;
       candidates.push({ keyword: kw, ...it });
       if (candidates.length >= 1800) break;
     }
@@ -2199,9 +2276,10 @@ async function generateRecommendationsBatch({
   const uniq = [];
   const seen = new Set();
   for (const c of candidates) {
-    if (excludeUrls.has(c.url)) continue;
-    if (seen.has(c.url)) continue;
-    seen.add(c.url);
+    if (isExcludedSourceUrl(excludeUrls, c.url)) continue;
+    const normalized = normalizeRecommendationSourceUrl(c.url);
+    if (seen.has(normalized)) continue;
+    seen.add(normalized);
     uniq.push(c);
   }
 
@@ -2473,7 +2551,7 @@ async function generateRecommendationsBatch({
     if (final.length >= topN) break;
     if (validated >= maxValidate) break;
     if (Date.now() - startedAt > Math.floor(maxRuntimeMs * 0.92)) break;
-    if (excludeUrls.has(cand.sourceUrl)) continue;
+    if (isExcludedSourceUrl(excludeUrls, cand.sourceUrl)) continue;
 
     const requestPreview = async (timeoutMs, previewSourceMode = 'auto') =>
       (
@@ -2799,16 +2877,21 @@ async function generateRecommendationsBatch({
   // backfill with scored candidates so the list is not almost empty.
   let fallbackFilledCount = 0;
   if (policy.allowQuickFallback && final.length < topN) {
-    const chosen = new Set(final.map((x) => String(x?.sourceUrl || '')));
+    const chosen = new Set(
+      final
+        .map((x) => normalizeRecommendationSourceUrl(String(x?.sourceUrl || '')))
+        .filter(Boolean),
+    );
     for (const cand of scoredPool) {
       if (isStopRequested()) {
         stopRequested = true;
         break;
       }
       if (final.length >= topN) break;
-      if (excludeUrls.has(cand.sourceUrl)) continue;
-      if (chosen.has(cand.sourceUrl)) continue;
-      chosen.add(cand.sourceUrl);
+      if (isExcludedSourceUrl(excludeUrls, cand.sourceUrl)) continue;
+      const normalizedSourceUrl = normalizeRecommendationSourceUrl(cand.sourceUrl);
+      if (chosen.has(normalizedSourceUrl)) continue;
+      chosen.add(normalizedSourceUrl);
 
       final.push({
         ...cand,
@@ -3049,7 +3132,12 @@ export async function fillRecommendationsForUser({ userId, settings, keywords, t
   const seed = Array.isArray(keywords) && keywords.length > 0 ? keywords : defaultKeywordSet();
 
   const existingRows = await dbAll(db, 'SELECT source_url FROM recommendations WHERE user_id = ?', [userId]);
-  const exclude = new Set(existingRows.map((r) => r.source_url));
+  const existingUrls = existingRows
+    .map((r) => String(r?.source_url || '').trim())
+    .filter(Boolean);
+  const existingUrlSet = toNormalizedUrlSet(existingUrls);
+  const uploadedUrls = await listUploadedSourceUrls(db, userId, 8000);
+  const exclude = toNormalizedUrlSet([...existingUrls, ...uploadedUrls]);
 
   const state = await getRecommendationsState(db, userId);
   const idx = state.nextKeywordIdx % Math.max(1, seed.length);
@@ -3059,15 +3147,15 @@ export async function fillRecommendationsForUser({ userId, settings, keywords, t
   db.close();
 
   if (typeof onProgress === 'function') {
-    try { onProgress({ stage: 'fill_start', keyword: kw, candidates: exclude.size }); } catch {}
+    try { onProgress({ stage: 'fill_start', keyword: kw, candidates: existingUrlSet.size }); } catch {}
   }
 
-  const need = Math.max(0, Number(targetCount) - exclude.size);
+  const need = Math.max(0, Number(targetCount) - existingUrlSet.size);
   if (need <= 0) {
     return {
       ok: true,
       inserted: 0,
-      count: exclude.size,
+      count: existingUrlSet.size,
       keyword: kw,
       diagnostics: {
         keywordsTried: 1,
@@ -3075,7 +3163,7 @@ export async function fillRecommendationsForUser({ userId, settings, keywords, t
         uniqueCandidates: 0,
         scoredCandidates: 0,
         validated: 0,
-        kept: exclude.size,
+        kept: existingUrlSet.size,
         keywordDiagnostics: [],
         hint: '',
       },
@@ -3220,7 +3308,7 @@ export async function refreshRecommendationsForUser({
   const markedCount = await markCurrentRecommendationsAsSeen(db, userId, existingUrls);
   const recentSeenUrls = await listRecentSeenUrls(db, userId, cooldown);
   const uploadedUrls = await listUploadedSourceUrls(db, userId, 8000);
-  const excludeUrls = new Set([...recentSeenUrls, ...uploadedUrls]);
+  const excludeUrls = toNormalizedUrlSet([...existingUrls, ...recentSeenUrls, ...uploadedUrls]);
 
   await dbRun(db, 'DELETE FROM recommendations WHERE user_id = ?', [userId]);
 
@@ -3262,7 +3350,7 @@ export async function refreshRecommendationsForUser({
   // Keep uploaded products excluded to avoid duplicate uploads.
   const tooFew = batch.items.length < Math.max(2, Math.floor(target * 0.5));
   if (!isStopRequested() && policy.allowRelaxedExclusion && tooFew && recentSeenUrls.length > 0) {
-    const uploadedOnlyExclude = new Set(uploadedUrls);
+    const uploadedOnlyExclude = toNormalizedUrlSet(uploadedUrls);
     if (typeof onProgress === 'function') {
       try {
         onProgress({
