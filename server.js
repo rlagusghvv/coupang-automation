@@ -680,7 +680,35 @@ function parseRecommendationRunRequest(req) {
     1,
     Math.min(60, Number(req.body?.cooldownDays || userSettings?.recommendationCooldownDays || 7) || 7),
   );
-  return { keywords, targetCount, cooldownDays };
+  const strictMode = parseBooleanFlag(
+    req.body?.strictMode ?? req.body?.strict ?? userSettings?.recommendationStrictMode,
+    false,
+  );
+  return { keywords, targetCount, cooldownDays, strictMode };
+}
+
+function buildRecommendationRunSettings(baseSettings = {}, { strictMode = false } = {}) {
+  const base =
+    baseSettings && typeof baseSettings === "object" ? { ...baseSettings } : {};
+  const resolvedStrictMode = parseBooleanFlag(
+    strictMode ?? base.recommendationStrictMode,
+    false,
+  );
+
+  if (resolvedStrictMode) {
+    return {
+      ...base,
+      recommendationStrictMode: true,
+    };
+  }
+
+  return {
+    ...base,
+    recommendationStrictMode: false,
+    recommendationAllowQuickFallback: true,
+    recommendationAllowRelaxedExclusion: true,
+    recommendationAllowReviewModeRescue: true,
+  };
 }
 
 function getRunningRecommendationJobForUser(userId) {
@@ -951,6 +979,17 @@ function startRecommendationRefreshJob({
           targetCount,
           cooldownDays,
           keywordsCount: Array.isArray(keywords) ? keywords.length : 0,
+          policy: {
+            strictMode: parseBooleanFlag(settings?.recommendationStrictMode, false),
+            allowQuickFallback: parseBooleanFlag(
+              settings?.recommendationAllowQuickFallback,
+              false,
+            ),
+            allowRelaxedExclusion: parseBooleanFlag(
+              settings?.recommendationAllowRelaxedExclusion,
+              false,
+            ),
+          },
           percent: 3,
         },
       });
@@ -2563,7 +2602,15 @@ function resolveRecommendationAutoRunOptions(input = {}, userSettings = {}) {
 }
 
 function buildAutoRecommendationSettings(baseSettings = {}) {
-  const base = baseSettings && typeof baseSettings === "object" ? baseSettings : {};
+  const base = buildRecommendationRunSettings(
+    baseSettings && typeof baseSettings === "object" ? baseSettings : {},
+    {
+      strictMode: parseBooleanFlag(
+        baseSettings?.recommendationStrictMode,
+        false,
+      ),
+    },
+  );
   return {
     ...base,
     // Auto mode should stay bounded even if test-mode relax flags are enabled in UI.
@@ -3524,9 +3571,13 @@ app.delete("/api/recommendations/saved", authRequired, async (req, res) => {
 app.post("/api/recommendations/fill/start", authRequired, async (req, res) => {
   try {
     const params = parseRecommendationRunRequest(req);
+    const runSettings = buildRecommendationRunSettings(
+      req.user.settings || {},
+      { strictMode: params.strictMode },
+    );
     const started = startRecommendationRefreshJob({
       userId: req.user.id,
-      settings: req.user.settings || {},
+      settings: runSettings,
       keywords: params.keywords,
       targetCount: params.targetCount,
       cooldownDays: params.cooldownDays,
@@ -3545,23 +3596,22 @@ app.post("/api/recommendations/fill/start", authRequired, async (req, res) => {
 
 app.post("/api/recommendations/fill", authRequired, async (req, res) => {
   try {
-    const keywords = normalizeStringList(req.body?.keywords, 30);
-    const targetCount = Math.max(50, Math.min(100, Number(req.body?.targetCount || 80) || 80));
-    const cooldownDays = Math.max(
-      1,
-      Math.min(60, Number(req.body?.cooldownDays || req.user?.settings?.recommendationCooldownDays || 7) || 7),
+    const params = parseRecommendationRunRequest(req);
+    const runSettings = buildRecommendationRunSettings(
+      req.user.settings || {},
+      { strictMode: params.strictMode },
     );
     // Product decision: "fill" is now replace-mode.
     const fill = await refreshRecommendationsForUser({
       userId: req.user.id,
-      settings: req.user.settings || {},
-      keywords,
-      targetCount,
-      cooldownDays,
+      settings: runSettings,
+      keywords: params.keywords,
+      targetCount: params.targetCount,
+      cooldownDays: params.cooldownDays,
     });
 
     const items = await listRecommendations(req.user.id, {
-      limit: Math.max(40, targetCount),
+      limit: Math.max(40, params.targetCount),
     });
 
     return res.json({
@@ -3577,9 +3627,13 @@ app.post("/api/recommendations/fill", authRequired, async (req, res) => {
 app.post("/api/recommendations/refresh", authRequired, async (req, res) => {
   try {
     const params = parseRecommendationRunRequest(req);
+    const runSettings = buildRecommendationRunSettings(
+      req.user.settings || {},
+      { strictMode: params.strictMode },
+    );
     const started = startRecommendationRefreshJob({
       userId: req.user.id,
-      settings: req.user.settings || {},
+      settings: runSettings,
       keywords: params.keywords,
       targetCount: params.targetCount,
       cooldownDays: params.cooldownDays,
