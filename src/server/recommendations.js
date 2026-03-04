@@ -458,6 +458,174 @@ function computeThemeBoost(themes = []) {
   return Math.min(3800, boost);
 }
 
+function extractRecommendationImageDedupKey(rawUrl = '') {
+  const proxyText = String(rawUrl || '').trim();
+  if (!proxyText) return '';
+
+  let source = proxyText;
+  if (proxyText.startsWith('/api/image-proxy?')) {
+    try {
+      const parsedProxy = new URL(`http://local${proxyText}`);
+      source = decodeURIComponent(parsedProxy.searchParams.get('url') || '').trim() || source;
+    } catch {}
+  }
+
+  try {
+    const u = new URL(source);
+    const host = String(u.hostname || '').trim().toLowerCase();
+    const path = decodeURIComponent(String(u.pathname || '').trim().toLowerCase());
+    if (!host || !path) return '';
+    const base = path.split('/').pop() || '';
+    const baseNoExt = base.replace(/\.[a-z0-9]{2,6}$/i, '');
+    const normalizedBase = baseNoExt.replace(/_img_\d+$/i, '');
+    if (!normalizedBase) return '';
+    return `${host}/${normalizedBase}`;
+  } catch {
+    return '';
+  }
+}
+
+function buildRecommendationTitleDedupKey(rawTitle = '') {
+  const text = String(rawTitle || '')
+    .toLowerCase()
+    .replace(/[^0-9a-zA-Z가-힣ㄱ-ㅎㅏ-ㅣ\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!text) return '';
+  const tokens = text
+    .split(' ')
+    .map((t) => String(t || '').trim())
+    .filter((t) => t.length >= 2);
+  if (tokens.length === 0) return text.slice(0, 30);
+  return tokens.slice(0, 7).join('|');
+}
+
+function diversifyRecommendationItems({
+  items = [],
+  backupPool = [],
+  targetCount = 80,
+} = {}) {
+  const sourceList = Array.isArray(items) ? items : [];
+  const backupList = Array.isArray(backupPool) ? backupPool : [];
+  const target = Math.max(1, Math.min(200, Number(targetCount) || 80));
+  const keywordSoftCap = Math.max(3, Math.min(10, Math.ceil(target / 16)));
+
+  const seenSource = new Set();
+  const seenImage = new Set();
+  const seenTitle = new Map();
+  const keywordCounts = new Map();
+  const output = [];
+  const deferredByKeyword = [];
+  const diagnostics = {
+    input: sourceList.length,
+    keywordSoftCap,
+    droppedSourceDup: 0,
+    droppedImageDup: 0,
+    droppedTitleDup: 0,
+    deferredKeyword: 0,
+    backfilledFromPool: 0,
+    kept: 0,
+  };
+
+  const normalizeSource = (sourceUrl = '') => normalizeRecommendationSourceUrl(String(sourceUrl || '').trim());
+  const readSourcePrice = (item = {}) => {
+    const n = Number(item?.sourcePrice);
+    return Number.isFinite(n) && n > 0 ? n : 0;
+  };
+  const readMeta = (item = {}) => {
+    const sourceKey = normalizeSource(item?.sourceUrl);
+    const imageKey = extractRecommendationImageDedupKey(item?.mainImageUrl || '');
+    const titleKey = buildRecommendationTitleDedupKey(item?.title || item?.seoTitle || '');
+    const keyword = String(item?.keyword || '').trim() || '_';
+    const sourcePrice = readSourcePrice(item);
+    return { sourceKey, imageKey, titleKey, keyword, sourcePrice };
+  };
+
+  const isDuplicate = (meta = {}, { allowImageDup = false } = {}) => {
+    if (meta.sourceKey && seenSource.has(meta.sourceKey)) {
+      diagnostics.droppedSourceDup += 1;
+      return true;
+    }
+    if (!allowImageDup && meta.imageKey && seenImage.has(meta.imageKey)) {
+      diagnostics.droppedImageDup += 1;
+      return true;
+    }
+    if (meta.titleKey) {
+      const prevPrice = Number(seenTitle.get(meta.titleKey) || 0);
+      if (prevPrice > 0 && meta.sourcePrice > 0) {
+        const priceGapRatio = Math.abs(prevPrice - meta.sourcePrice) / Math.max(prevPrice, meta.sourcePrice);
+        if (priceGapRatio <= 0.12) {
+          diagnostics.droppedTitleDup += 1;
+          return true;
+        }
+      }
+    }
+    return false;
+  };
+
+  const markSeen = (meta = {}) => {
+    if (meta.sourceKey) seenSource.add(meta.sourceKey);
+    if (meta.imageKey) seenImage.add(meta.imageKey);
+    if (meta.titleKey && !seenTitle.has(meta.titleKey) && meta.sourcePrice > 0) {
+      seenTitle.set(meta.titleKey, meta.sourcePrice);
+    }
+    const nextKeywordCount = Number(keywordCounts.get(meta.keyword) || 0) + 1;
+    keywordCounts.set(meta.keyword, nextKeywordCount);
+  };
+
+  for (const item of sourceList) {
+    const meta = readMeta(item);
+    if (isDuplicate(meta)) continue;
+    const keywordCount = Number(keywordCounts.get(meta.keyword) || 0);
+    if (keywordCount >= keywordSoftCap) {
+      deferredByKeyword.push({ item, meta });
+      diagnostics.deferredKeyword += 1;
+      continue;
+    }
+    output.push(item);
+    markSeen(meta);
+    if (output.length >= target) break;
+  }
+
+  if (output.length < target) {
+    for (const { item, meta } of deferredByKeyword) {
+      if (output.length >= target) break;
+      if (isDuplicate(meta, { allowImageDup: true })) continue;
+      output.push(item);
+      markSeen(meta);
+    }
+  }
+
+  if (output.length < target && backupList.length > 0) {
+    for (const cand of backupList) {
+      if (output.length >= target) break;
+      const fallbackItem = {
+        ...cand,
+        payload: {
+          ...(cand?.payload && typeof cand.payload === 'object' ? cand.payload : {}),
+          qc: {
+            ok: false,
+            reasons: ['quick_fallback'],
+            metrics: {},
+            detailImageCount: 0,
+            tier: 'C',
+            eligibleUpload: false,
+          },
+          quickFallback: true,
+        },
+      };
+      const meta = readMeta(fallbackItem);
+      if (isDuplicate(meta, { allowImageDup: true })) continue;
+      output.push(fallbackItem);
+      markSeen(meta);
+      diagnostics.backfilledFromPool += 1;
+    }
+  }
+
+  diagnostics.kept = output.length;
+  return { items: output.slice(0, target), diagnostics };
+}
+
 function roundToKrw900(p) {
   const x = Number(p);
   if (!Number.isFinite(x)) return null;
@@ -3004,11 +3172,18 @@ async function generateRecommendationsBatch({
     }
   }
 
-  const uploadMeta = await enrichRecommendationsForUpload({
+  const diversified = diversifyRecommendationItems({
     items: final,
+    backupPool: scoredPool,
+    targetCount: topN,
+  });
+  const diversifiedItems = Array.isArray(diversified?.items) ? diversified.items : final;
+
+  const uploadMeta = await enrichRecommendationsForUpload({
+    items: diversifiedItems,
     settings: normalizedSettings,
   });
-  const finalItems = Array.isArray(uploadMeta?.items) ? uploadMeta.items : final;
+  const finalItems = Array.isArray(uploadMeta?.items) ? uploadMeta.items : diversifiedItems;
 
   const strictRejectedTotal = sumCountValues(strictRejectCounts);
   const strictRejectTop = toSortedCountEntries(strictRejectCounts, 5).map(([reason, count]) => ({
@@ -3071,6 +3246,7 @@ async function generateRecommendationsBatch({
     qcRelaxAttemptStage2,
     qcRelaxPassStage2,
     fallbackFilledCount,
+    diversify: diversified?.diagnostics || {},
     uploadMeta: uploadMeta?.diagnostics || {},
     keywordDiagnostics: keywordDiagnostics.slice(0, keywordScanLimit).map((d) => ({
       keyword: d.keyword,
