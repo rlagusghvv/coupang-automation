@@ -1217,7 +1217,7 @@ async function refreshRecommendationsReplacing() {
   setStatus("추천 새로고침 중... (기존 목록 교체)", "");
   try {
     const keywords = parseKeywords(recoKeywordsEl?.value);
-    const body = { targetCount: 6 };
+    const body = { targetCount: 80 };
     if (keywords.length) body.keywords = keywords;
 
     const res = await fetch("/api/recommendations/refresh", {
@@ -1268,7 +1268,7 @@ async function fillRecommendations() {
   setStatus("후보 생성 중...", "");
   try {
     const keywords = parseKeywords(recoKeywordsEl?.value);
-    const body = { targetCount: 6 };
+    const body = { targetCount: 80 };
     if (keywords.length) body.keywords = keywords;
 
     const res = await fetch("/api/recommendations/fill", {
@@ -1422,7 +1422,7 @@ function renderRecoAutoRunStatusCard(payload = {}) {
     : parseKeywords(options.keywords || "");
   const html = `
     <div class="kv-row"><span class="k">서버 스케줄</span><span class="v">${escapeHtml(schedulerLabel)}</span></div>
-    <div class="kv-row"><span class="k">내 계정 설정</span><span class="v">${parseBoolLike(user.enabled, false) ? "켜짐" : "꺼짐"} / 업로드 ${Number(options.uploadLimit || 3)}개 / 후보 ${Number(options.targetCount || 6)}개 / 키워드 ${keywords.length || 0}개</span></div>
+    <div class="kv-row"><span class="k">내 계정 설정</span><span class="v">${parseBoolLike(user.enabled, false) ? "켜짐" : "꺼짐"} / 업로드 ${Number(options.uploadLimit || 3)}개 / 후보 ${Number(options.targetCount || 80)}개 / 키워드 ${keywords.length || 0}개</span></div>
     <div class="kv-row"><span class="k">스케줄 상태</span><span class="v">${escapeHtml(runningLabel)}</span></div>
     <div class="kv-row"><span class="k">최근 스케줄</span><span class="v">${escapeHtml(lastRunLabel)} / 전체 성공 ${total.uploaded} / 스킵 ${total.skipped} / 실패 ${total.failed}</span></div>
     <div class="kv-row"><span class="k">내 최근 결과</span><span class="v">${escapeHtml(mySummary)}</span></div>
@@ -1477,7 +1477,7 @@ function buildRecoAutoRunRequestBody() {
     3,
   );
   const body = {
-    targetCount: toIntInRange(settingsEls.recommendationDailyAutoTargetCount?.value, 1, 100, 6),
+    targetCount: toIntInRange(settingsEls.recommendationDailyAutoTargetCount?.value, 1, 100, 80),
     cooldownDays: toIntInRange(settingsEls.recommendationDailyAutoCooldownDays?.value, 1, 60, 7),
     uploadLimit,
     limit: uploadLimit,

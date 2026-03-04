@@ -184,10 +184,6 @@ export const DEFAULT_BAN_KEYWORDS = [
   '한우', '소고기', '돼지고기', '닭고기', '축산', '수산', '김치', '라면',
   '의약', '의료', '치료', '진단',
   '화장품', '미백', '주름', '탈모',
-  // batteries/electric
-  '배터리', '충전기', '전동', '전기', '220v', '110v',
-  // kids safety / certifications
-  'KC', '인증', '전파', '어린이', '유아', '안전인증',
   // high risk
   '액체', '향수', '스프레이',
 ];
@@ -195,6 +191,7 @@ export const DEFAULT_BAN_KEYWORDS = [
 // Recommendation scoring relaxation: these are often over-broad for
 // discovery candidates and can eliminate almost everything.
 const RELAXABLE_RECO_BAN_KEYWORDS = new Set([
+  '배터리',
   '충전기',
   '전동',
   '전기',
@@ -203,6 +200,9 @@ const RELAXABLE_RECO_BAN_KEYWORDS = new Set([
   'kc',
   '인증',
   '전파',
+  '어린이',
+  '유아',
+  '안전인증',
   '스틱',
 ]);
 
@@ -816,7 +816,6 @@ export async function listRecommendations(userId, { limit = 50 } = {}) {
     };
   });
   return mapped
-    .filter((item) => Boolean(item?.qc?.eligibleUpload))
     .filter((item) => !isExcludedSourceUrl(uploadedUrlSet, item?.sourceUrl))
     .slice(0, lim);
 }
@@ -1714,10 +1713,10 @@ function resolveRecommendationPolicy(settings = {}) {
   return {
     // User request default: only QC-passed items should be recommended.
     requireQcPass: parseBoolean(settings?.recommendationRequireQcPass, true),
-    // User request default: avoid repeating the same items by keeping recent-seen exclusion strict.
-    allowRelaxedExclusion: parseBoolean(settings?.recommendationAllowRelaxedExclusion, false),
-    // Keep this off by default; quick fallback often brings low-quality items.
-    allowQuickFallback: parseBoolean(settings?.recommendationAllowQuickFallback, false),
+    // Underfilled runs should automatically retry without recent-seen exclusion.
+    allowRelaxedExclusion: parseBoolean(settings?.recommendationAllowRelaxedExclusion, true),
+    // Keep list volume stable by backfilling with QC-review candidates when strict pass is too low.
+    allowQuickFallback: parseBoolean(settings?.recommendationAllowQuickFallback, true),
   };
 }
 
@@ -2139,14 +2138,14 @@ async function generateRecommendationsBatch({
   topN = Math.max(5, Math.min(100, Number(topN) || 80));
   const runtimeFromTopN =
     topN <= 30
-      ? 110_000
-      : Math.floor(110_000 + (topN - 30) * 2_500);
+      ? 150_000
+      : Math.floor(150_000 + (topN - 30) * 5_000);
   maxRuntimeMs = Math.floor(
     clampNumber(
       normalizedSettings?.recommendationMaxRuntimeMs,
-      90_000,
-      360_000,
-      Math.min(300_000, runtimeFromTopN),
+      120_000,
+      900_000,
+      Math.min(780_000, runtimeFromTopN),
     ),
   );
   previewTimeoutMs = Math.floor(
@@ -2541,7 +2540,7 @@ async function generateRecommendationsBatch({
     true,
   );
   let maxValidate = Math.max(topN * (policy.requireQcPass ? 12 : 2), 24);
-  const maxValidateCap = policy.requireQcPass ? Math.max(220, topN * 5) : Math.max(80, topN * 3);
+  const maxValidateCap = policy.requireQcPass ? Math.max(600, topN * 12) : Math.max(180, topN * 6);
   maxValidate = Math.min(maxValidate, maxValidateCap);
   for (const cand of scoredPool) {
     if (isStopRequested()) {
