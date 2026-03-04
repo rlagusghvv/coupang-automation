@@ -55,7 +55,7 @@ function parseShippingFeeFromText(allText) {
   if (positivePaid.length > 0) return Math.min(...positivePaid);
 
   const hasFreeShipping = /무료\s*배송|배송비\s*무료|택배비\s*무료/.test(t);
-  const hasPaidUnknown = /착불|배송비\s*별도|택배비\s*별도|배송비\s*유료|유료\s*배송|유료\s*택배/.test(t);
+  const hasPaidUnknown = /착불|배송비\s*별도|택배비\s*별도|배송비\s*유료|유료\s*배송|유료\s*택배|주문시\s*결제|수량별\s*비례|배송비\s*견적\s*요청|추가\s*배송비/.test(t);
   if (hasFreeShipping && !hasPaidUnknown) return 0;
   if (paidCandidates.includes(0) && !hasPaidUnknown) return 0;
 
@@ -102,7 +102,7 @@ function hasExplicitFreeShippingText(text) {
   if (!t) return false;
   const free = /무료\s*배송|배송비\s*무료|택배비\s*무료/i.test(t);
   if (!free) return false;
-  const paid = /착불|배송비\s*별도|택배비\s*별도|유료\s*배송|유료\s*택배/i.test(t);
+  const paid = /착불|배송비\s*별도|택배비\s*별도|유료\s*배송|유료\s*택배|주문시\s*결제|수량별\s*비례|배송비\s*견적\s*요청|추가\s*배송비/i.test(t);
   return !paid;
 }
 
