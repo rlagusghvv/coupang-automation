@@ -192,6 +192,51 @@ function parseBoolean(value, fallback = false) {
   return fallback;
 }
 
+function isTransientPlaywrightPageClosedError(error) {
+  const message = String(error?.message || error || "").toLowerCase();
+  if (!message) return false;
+  return (
+    message.includes("target page, context or browser has been closed") ||
+    message.includes("browser has been closed") ||
+    message.includes("page has been closed") ||
+    message.includes("execution context was destroyed")
+  );
+}
+
+async function parsePreviewDraftWithRetry(sourceUrl, opts = {}) {
+  const maxAttempts = Math.max(1, Math.min(2, Number(opts?.maxAttempts) || 2));
+  let lastError = null;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      const draft = await parseProductFromDomaeqq(sourceUrl, {
+        mode: "preview",
+        previewSourceMode: opts.previewSourceMode,
+        previewOpenApiTimeoutMs: opts.previewOpenApiTimeoutMs,
+        previewSeedTitle: opts.previewSeedTitle,
+        previewSeedPrice: opts.previewSeedPrice,
+        previewSeedImageUrl: opts.previewSeedImageUrl,
+      });
+      if (attempt > 1) {
+        draft.__debug = {
+          ...(draft?.__debug && typeof draft.__debug === "object" ? draft.__debug : {}),
+          previewRetry: {
+            attempts: attempt,
+            recovered: true,
+            lastError: String(lastError?.message || lastError || ""),
+          },
+        };
+      }
+      return draft;
+    } catch (e) {
+      lastError = e;
+      if (attempt >= maxAttempts) break;
+      if (!isTransientPlaywrightPageClosedError(e)) break;
+      await new Promise((resolve) => setTimeout(resolve, 450));
+    }
+  }
+  throw lastError;
+}
+
 function sanitizeOpenApiDetailImages(urls = []) {
   const out = [];
   const seen = new Set();
@@ -650,13 +695,13 @@ export async function previewUploadFromUrl(inputUrl, settings = {}) {
     10,
     Math.min(120, Number(settings.maxContentImages) || 60),
   );
-  const draft = await parseProductFromDomaeqq(c.url, {
-    mode: "preview",
+  const draft = await parsePreviewDraftWithRetry(c.url, {
     previewSourceMode,
     previewOpenApiTimeoutMs: settings.previewOpenApiTimeoutMs,
     previewSeedTitle: settings.seedTitle,
     previewSeedPrice: settings.seedPrice,
     previewSeedImageUrl: settings.seedImageUrl,
+    maxAttempts: 2,
   });
   let rawContentImages = unique(extractImageUrls(draft.contentText));
   rawContentImages = rawContentImages.slice(0, maxContentImages);

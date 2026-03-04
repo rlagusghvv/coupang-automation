@@ -2984,34 +2984,63 @@ app.post("/api/upload/bulk", authRequired, async (req, res) => {
       const items = [];
 
       for (const url of urls) {
-        const o = overridesByUrlRaw?.[url];
-        const overrides = {
-          titleOverride: o?.titleOverride,
-          imagesOverride: Array.isArray(o?.imagesOverride) ? o.imagesOverride : undefined,
-          categoryOverrideCode: o?.categoryOverrideCode,
-        };
-        const outcome = await executeUploadForUrl({ url, user: req.user, force, overrides });
-        appendUploadHistoryFromOutcome(url, outcome);
-        const followUp =
-          outcome?.result?.followUp && typeof outcome.result.followUp === "object"
-            ? outcome.result.followUp
-            : {};
-        const productId = pickFirstNonEmpty(followUp.productId);
-        const productUrl = pickFirstNonEmpty(
-          followUp.productUrl,
-          buildCoupangProductUrl(productId),
-        );
-        items.push({
-          url,
-          ok: Boolean(outcome?.ok),
-          skipped: Boolean(outcome?.skipped),
-          skipReason: normalizeSkipReason(outcome),
-          error: outcome?.error || null,
-          sellerProductId: resolveOutcomeSellerProductId(outcome),
-          productId: productId || null,
-          productUrl: productUrl || null,
-          statusName: pickFirstNonEmpty(followUp.statusName) || null,
-        });
+        try {
+          const o = overridesByUrlRaw?.[url];
+          const overrides = {
+            titleOverride: o?.titleOverride,
+            imagesOverride: Array.isArray(o?.imagesOverride) ? o.imagesOverride : undefined,
+            categoryOverrideCode: o?.categoryOverrideCode,
+          };
+          const outcome = await executeUploadForUrl({ url, user: req.user, force, overrides });
+          appendUploadHistoryFromOutcome(url, outcome);
+          const followUp =
+            outcome?.result?.followUp && typeof outcome.result.followUp === "object"
+              ? outcome.result.followUp
+              : {};
+          const productId = pickFirstNonEmpty(followUp.productId);
+          const productUrl = pickFirstNonEmpty(
+            followUp.productUrl,
+            buildCoupangProductUrl(productId),
+          );
+          items.push({
+            url,
+            ok: Boolean(outcome?.ok),
+            skipped: Boolean(outcome?.skipped),
+            skipReason: normalizeSkipReason(outcome),
+            error: outcome?.error || null,
+            sellerProductId: resolveOutcomeSellerProductId(outcome),
+            productId: productId || null,
+            productUrl: productUrl || null,
+            statusName: pickFirstNonEmpty(followUp.statusName) || null,
+          });
+        } catch (oneErr) {
+          const oneErrorText = String(oneErr?.message || oneErr || "bulk_item_failed");
+          appendUploadHistory({
+            at: new Date().toISOString(),
+            url,
+            ok: false,
+            skipped: false,
+            skipReason: "",
+            payloadOnly: false,
+            title: "",
+            finalPrice: null,
+            optionsCount: 0,
+            sellerProductId: "",
+            createStatus: null,
+            error: oneErrorText,
+          });
+          items.push({
+            url,
+            ok: false,
+            skipped: false,
+            skipReason: "",
+            error: oneErrorText,
+            sellerProductId: null,
+            productId: null,
+            productUrl: null,
+            statusName: null,
+          });
+        }
       }
 
       const summary = {
