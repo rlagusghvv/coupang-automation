@@ -2193,6 +2193,10 @@ async function generateRecommendationsBatch({
   const thresholds = resolveRecommendationThresholds(normalizedSettings);
   const shippingSettings = resolveRecommendationShippingSettings(normalizedSettings);
   const policy = resolveRecommendationPolicy(normalizedSettings);
+  // Keep list volume stable regardless of stale per-user strict flags.
+  const forceVolumeFill = parseBoolean(normalizedSettings?.recommendationForceVolumeFill, true);
+  const allowQuickFallback = forceVolumeFill ? true : Boolean(policy.allowQuickFallback);
+  const allowRelaxedExclusion = forceVolumeFill ? true : Boolean(policy.allowRelaxedExclusion);
   topN = Math.max(5, Math.min(100, Number(topN) || 80));
   const runtimeFromTopN =
     topN <= 30
@@ -2690,7 +2694,7 @@ async function generateRecommendationsBatch({
           } else {
             previewPlaywrightFailed += 1;
             prev = playwrightFallback || prev;
-            if (policy.allowQuickFallback) {
+            if (allowQuickFallback) {
               const fallback = await buildHtmlPreviewFallback({
                 sourceUrl: cand.sourceUrl,
                 seedTitle: cand.title,
@@ -2933,7 +2937,7 @@ async function generateRecommendationsBatch({
   // Keep UX stable: if strict preview validation yielded too few items,
   // backfill with scored candidates so the list is not almost empty.
   let fallbackFilledCount = 0;
-  if (policy.allowQuickFallback && final.length < topN) {
+  if (allowQuickFallback && final.length < topN) {
     const chosen = new Set(
       final
         .map((x) => normalizeRecommendationSourceUrl(String(x?.sourceUrl || '')))
@@ -3030,7 +3034,12 @@ async function generateRecommendationsBatch({
     strictRejectCounts,
     scoringPasses,
     thresholds,
-    policy,
+    policy: {
+      ...policy,
+      allowQuickFallback,
+      allowRelaxedExclusion,
+      forceVolumeFill,
+    },
     shippingSettings,
     qcSettings: recommendationQcSettings,
     validated,
@@ -3228,7 +3237,10 @@ export async function fillRecommendationsForUser({ userId, settings, keywords, t
   }
 
   const fillTopN = Math.min(Math.max(1, need), Math.max(2, Number(maxAddPerRun) || 6));
-  const allowReviewModeRescue = parseBoolean(settings?.recommendationAllowReviewModeRescue, false);
+  const forceVolumeFill = parseBoolean(settings?.recommendationForceVolumeFill, true);
+  const allowReviewModeRescue = forceVolumeFill
+    ? true
+    : parseBoolean(settings?.recommendationAllowReviewModeRescue, false);
   let batch = await generateRecommendationsBatch({
     settings,
     keywords: [kw],
@@ -3344,6 +3356,8 @@ export async function refreshRecommendationsForUser({
   shouldStop = null,
 } = {}) {
   const policy = resolveRecommendationPolicy(settings || {});
+  const forceVolumeFill = parseBoolean(settings?.recommendationForceVolumeFill, true);
+  const allowRelaxedExclusion = forceVolumeFill ? true : Boolean(policy.allowRelaxedExclusion);
   const isStopRequested = () => (typeof shouldStop === 'function' ? Boolean(shouldStop()) : false);
   const seed = Array.isArray(keywords) && keywords.length > 0 ? keywords : defaultKeywordSet();
   const target = Math.max(5, Math.min(100, Number(targetCount) || 20));
@@ -3406,7 +3420,7 @@ export async function refreshRecommendationsForUser({
   // If too few items are found, retry without "recent seen" restriction.
   // Keep uploaded products excluded to avoid duplicate uploads.
   const tooFew = batch.items.length < Math.max(2, Math.floor(target * 0.5));
-  if (!isStopRequested() && policy.allowRelaxedExclusion && tooFew && recentSeenUrls.length > 0) {
+  if (!isStopRequested() && allowRelaxedExclusion && tooFew && recentSeenUrls.length > 0) {
     const uploadedOnlyExclude = toNormalizedUrlSet(uploadedUrls);
     if (typeof onProgress === 'function') {
       try {
@@ -3443,7 +3457,9 @@ export async function refreshRecommendationsForUser({
     }, 0);
   };
   rescueDetailTooFewCount = countDetailTooFewReasons(batch?.diagnostics);
-  const allowReviewModeRescue = parseBoolean(settings?.recommendationAllowReviewModeRescue, false);
+  const allowReviewModeRescue = forceVolumeFill
+    ? true
+    : parseBoolean(settings?.recommendationAllowReviewModeRescue, false);
   const validatedCount = Number(batch?.diagnostics?.validated || 0);
   const underfilledThreshold = Math.max(2, Math.floor(target * 0.4));
   const severelyUnderfilled = batch.items.length < underfilledThreshold;
@@ -3531,8 +3547,9 @@ export async function refreshRecommendationsForUser({
     stopped: Boolean(isStopRequested() || batch?.diagnostics?.stopped),
     initialExcludedCount,
     finalExcludedCount,
-    relaxedExclusionAllowed: Boolean(policy.allowRelaxedExclusion),
+    relaxedExclusionAllowed: allowRelaxedExclusion,
     relaxedExclusionApplied: usedRelaxedExclusion,
+    forceVolumeFill,
     rescuePlaywrightTried,
     rescuePlaywrightApplied,
     rescueReviewModeTried,
