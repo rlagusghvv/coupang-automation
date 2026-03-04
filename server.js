@@ -2326,64 +2326,109 @@ app.post("/api/catalog/:id/deploy", authRequired, async (req, res) => {
   }
 });
 
+async function syncUploadedProductStatusOne({
+  userId,
+  userSettings = {},
+  sellerProductId,
+  includeHistory = true,
+} = {}) {
+  const spid = String(sellerProductId || "").trim();
+  if (!spid) {
+    return {
+      sellerProductId: "",
+      ok: false,
+      status: null,
+      statusName: null,
+      approved: false,
+      productId: null,
+      remoteDeleted: false,
+      error: "sellerProductId_required",
+      linkedId: null,
+      updated: false,
+    };
+  }
+
+  const live = await fetchSellerStatusLive({
+    sellerProductId: spid,
+    settings: userSettings || {},
+    includeHistory,
+  });
+
+  const linked = await getUploadedProductBySellerProductId(userId, spid);
+  const remoteDeleted = isRemoteDeleted(live);
+  let updated = null;
+  if (linked) {
+    const nextMeta = linked.meta && typeof linked.meta === "object" ? { ...linked.meta } : {};
+    const nowIso = new Date().toISOString();
+    nextMeta.lastSyncedAt = nowIso;
+    if (live?.ok) {
+      Object.assign(
+        nextMeta,
+        applyLiveSnapshotToMeta(nextMeta, live, {
+          fallbackTitle: linked.title,
+          fallbackImageUrl: linked.imageUrl,
+        }),
+      );
+      if (nextMeta.validation && typeof nextMeta.validation === "object") {
+        nextMeta.validation.checkedAt = nowIso;
+      }
+    } else {
+      nextMeta.lastRemoteError = live;
+      if (remoteDeleted) {
+        nextMeta.remoteDeleted = true;
+        nextMeta.remoteDeletedAt = nowIso;
+        nextMeta.validation = {
+          ok: false,
+          checkedAt: nowIso,
+          errors: ["remote_deleted"],
+        };
+      }
+    }
+    updated = await updateUploadedProductById({
+      userId,
+      id: linked.id,
+      patch: {
+        status: remoteDeleted ? "deleted_remote" : inferCatalogStatusForSync(linked.status, live, "confirmed"),
+        title: pickFirstNonEmpty(nextMeta.confirmedTitle, live?.title, linked.title),
+        imageUrl: pickFirstNonEmpty(nextMeta.mainImageUrl, live?.mainImageUrl, linked.imageUrl),
+        metaReplace: nextMeta,
+      },
+    });
+  }
+
+  return {
+    sellerProductId: spid,
+    ok: Boolean(live?.ok),
+    status: live,
+    statusName: live?.statusName || null,
+    approved: Boolean(live?.approved),
+    productId: live?.productId || null,
+    remoteDeleted,
+    error: live?.ok ? null : live?.error || "status_fetch_failed",
+    linkedId: linked?.id ? String(linked.id) : null,
+    updated: Boolean(updated),
+  };
+}
+
 app.get("/api/products/status/:sellerProductId", authRequired, async (req, res) => {
   try {
     const sellerProductId = String(req.params?.sellerProductId || "").trim();
     if (!sellerProductId) {
       return res.status(400).json({ ok: false, error: "sellerProductId required" });
     }
-    const status = await fetchSellerStatusLive({
+    const synced = await syncUploadedProductStatusOne({
+      userId: req.user.id,
+      userSettings: req.user.settings || {},
       sellerProductId,
-      settings: req.user.settings || {},
       includeHistory: true,
     });
 
-    const linked = await getUploadedProductBySellerProductId(req.user.id, sellerProductId);
-    const remoteDeleted = isRemoteDeleted(status);
-    if (linked) {
-      const nextMeta = linked.meta && typeof linked.meta === "object" ? { ...linked.meta } : {};
-      const nowIso = new Date().toISOString();
-      nextMeta.lastSyncedAt = nowIso;
-      if (status?.ok) {
-        Object.assign(
-          nextMeta,
-          applyLiveSnapshotToMeta(nextMeta, status, {
-            fallbackTitle: linked.title,
-            fallbackImageUrl: linked.imageUrl,
-          }),
-        );
-        if (nextMeta.validation && typeof nextMeta.validation === "object") {
-          nextMeta.validation.checkedAt = nowIso;
-        }
-      } else {
-        nextMeta.lastRemoteError = status;
-        if (remoteDeleted) {
-          nextMeta.remoteDeleted = true;
-          nextMeta.remoteDeletedAt = nowIso;
-          nextMeta.validation = {
-            ok: false,
-            checkedAt: nowIso,
-            errors: ["remote_deleted"],
-          };
-        }
-      }
-      await updateUploadedProductById({
-        userId: req.user.id,
-        id: linked.id,
-        patch: {
-          status: remoteDeleted ? "deleted_remote" : inferCatalogStatusForSync(linked.status, status, "confirmed"),
-          title: pickFirstNonEmpty(nextMeta.confirmedTitle, status?.title, linked.title),
-          imageUrl: pickFirstNonEmpty(nextMeta.mainImageUrl, status?.mainImageUrl, linked.imageUrl),
-          metaReplace: nextMeta,
-        },
-      });
-    }
-
     return res.json({
-      ok: Boolean(status?.ok),
-      status,
-      sellerProductId,
-      remoteDeleted,
+      ok: Boolean(synced?.ok),
+      status: synced?.status || null,
+      sellerProductId: synced?.sellerProductId || sellerProductId,
+      remoteDeleted: Boolean(synced?.remoteDeleted),
+      error: synced?.error || null,
     });
   } catch (e) {
     return res.status(500).json({ ok: false, error: String(e?.message || e) });
@@ -2410,60 +2455,33 @@ app.post("/api/products/status/refresh", authRequired, async (req, res) => {
 
     const results = [];
     for (const sellerProductId of targets) {
-      const live = await fetchSellerStatusLive({
-        sellerProductId,
-        settings: req.user.settings || {},
-        includeHistory: true,
-      });
-      const linked = await getUploadedProductBySellerProductId(req.user.id, sellerProductId);
-      const remoteDeleted = isRemoteDeleted(live);
-      if (linked) {
-        const nextMeta = linked.meta && typeof linked.meta === "object" ? { ...linked.meta } : {};
-        const nowIso = new Date().toISOString();
-        nextMeta.lastSyncedAt = nowIso;
-        if (live?.ok) {
-          Object.assign(
-            nextMeta,
-            applyLiveSnapshotToMeta(nextMeta, live, {
-              fallbackTitle: linked.title,
-              fallbackImageUrl: linked.imageUrl,
-            }),
-          );
-          if (nextMeta.validation && typeof nextMeta.validation === "object") {
-            nextMeta.validation.checkedAt = nowIso;
-          }
-        } else {
-          nextMeta.lastRemoteError = live;
-          if (remoteDeleted) {
-            nextMeta.remoteDeleted = true;
-            nextMeta.remoteDeletedAt = nowIso;
-            nextMeta.validation = {
-              ok: false,
-              checkedAt: nowIso,
-              errors: ["remote_deleted"],
-            };
-          }
-        }
-        await updateUploadedProductById({
+      try {
+        const synced = await syncUploadedProductStatusOne({
           userId: req.user.id,
-          id: linked.id,
-          patch: {
-            status: remoteDeleted ? "deleted_remote" : inferCatalogStatusForSync(linked.status, live, "confirmed"),
-            title: pickFirstNonEmpty(nextMeta.confirmedTitle, live?.title, linked.title),
-            imageUrl: pickFirstNonEmpty(nextMeta.mainImageUrl, live?.mainImageUrl, linked.imageUrl),
-            metaReplace: nextMeta,
-          },
+          userSettings: req.user.settings || {},
+          sellerProductId,
+          includeHistory: true,
+        });
+        results.push({
+          sellerProductId: synced?.sellerProductId || sellerProductId,
+          ok: Boolean(synced?.ok),
+          statusName: synced?.statusName || null,
+          approved: Boolean(synced?.approved),
+          productId: synced?.productId || null,
+          remoteDeleted: Boolean(synced?.remoteDeleted),
+          error: synced?.error || null,
+        });
+      } catch (oneErr) {
+        results.push({
+          sellerProductId,
+          ok: false,
+          statusName: null,
+          approved: false,
+          productId: null,
+          remoteDeleted: false,
+          error: String(oneErr?.message || oneErr || "status_refresh_failed"),
         });
       }
-      results.push({
-        sellerProductId,
-        ok: Boolean(live?.ok),
-        statusName: live?.statusName || null,
-        approved: Boolean(live?.approved),
-        productId: live?.productId || null,
-        remoteDeleted,
-        error: live?.ok ? null : live?.error || "status_fetch_failed",
-      });
     }
 
     return res.json({
@@ -2591,6 +2609,19 @@ const recommendationDailyAutoSchedulerState = {
   minute: 0,
   intervalMs: 60_000,
   startedAt: "",
+};
+
+const catalogAutoSyncState = {
+  enabled: false,
+  running: false,
+  intervalMs: 15 * 60_000,
+  limitPerUser: 200,
+  includeHistory: false,
+  pauseWhenUpload: true,
+  startedAt: "",
+  lastRunAt: "",
+  lastError: "",
+  lastStats: null,
 };
 
 async function runRecommendationAutoRunForUser({
@@ -2780,6 +2811,137 @@ function startRecommendationDailyAutoRunLoop({
   const t = setInterval(tick, tickIntervalMs);
   t.unref?.();
   return { timer: t, hour: runHour, minute: runMinute, intervalMs: tickIntervalMs };
+}
+
+async function runCatalogAutoSyncOnce({ reason = "scheduler" } = {}) {
+  if (catalogAutoSyncState.running) {
+    return { ok: false, skipped: true, reason: "already_running" };
+  }
+  if (catalogAutoSyncState.pauseWhenUpload && uploadInProgress) {
+    return { ok: false, skipped: true, reason: "upload_in_progress" };
+  }
+
+  catalogAutoSyncState.running = true;
+  catalogAutoSyncState.lastError = "";
+  try {
+    const users = await listUsersWithSettings({ limit: 1000 });
+    const enabledUsers = users.filter((u) =>
+      parseBooleanFlag(u?.settings?.catalogAutoSyncEnabled, true),
+    );
+
+    const skipStatuses = new Set(["deleted_local", "deleted_remote"]);
+    const perUser = [];
+    let totalTargets = 0;
+    let totalSuccess = 0;
+    let totalFailed = 0;
+
+    for (const user of enabledUsers) {
+      const listed = await listUploadedProducts({
+        userId: user.id,
+        q: "",
+        status: "",
+        limit: Math.max(1, Math.min(500, Number(catalogAutoSyncState.limitPerUser) || 200)),
+        offset: 0,
+      });
+
+      const targets = [];
+      const seenSpid = new Set();
+      for (const row of listed.items || []) {
+        const status = String(row?.status || "").trim().toLowerCase();
+        if (skipStatuses.has(status)) continue;
+        const spid = String(row?.sellerProductId || "").trim();
+        if (!spid) continue;
+        if (seenSpid.has(spid)) continue;
+        seenSpid.add(spid);
+        targets.push(spid);
+      }
+
+      let success = 0;
+      let failed = 0;
+      for (const sellerProductId of targets) {
+        try {
+          const synced = await syncUploadedProductStatusOne({
+            userId: user.id,
+            userSettings: user.settings || {},
+            sellerProductId,
+            includeHistory: Boolean(catalogAutoSyncState.includeHistory),
+          });
+          if (synced?.ok) success += 1;
+          else failed += 1;
+        } catch {
+          failed += 1;
+        }
+      }
+
+      totalTargets += targets.length;
+      totalSuccess += success;
+      totalFailed += failed;
+      perUser.push({
+        userId: String(user?.id || "").trim(),
+        userEmail: String(user?.email || "").trim(),
+        targets: targets.length,
+        success,
+        failed,
+      });
+    }
+
+    const ranAt = new Date().toISOString();
+    const summary = {
+      reason,
+      ranAt,
+      totalUsers: users.length,
+      enabledUsers: enabledUsers.length,
+      targets: totalTargets,
+      success: totalSuccess,
+      failed: totalFailed,
+      users: perUser.slice(0, 200),
+    };
+    catalogAutoSyncState.lastRunAt = ranAt;
+    catalogAutoSyncState.lastStats = summary;
+    return { ok: true, ...summary };
+  } catch (e) {
+    catalogAutoSyncState.lastError = String(e?.message || e);
+    return {
+      ok: false,
+      reason,
+      error: catalogAutoSyncState.lastError,
+    };
+  } finally {
+    catalogAutoSyncState.running = false;
+  }
+}
+
+function startCatalogAutoSyncLoop({
+  intervalMs = 15 * 60_000,
+  initialDelayMs = 20_000,
+} = {}) {
+  const tickIntervalMs = clampInt(intervalMs, 60_000, 3_600_000, 15 * 60_000);
+  const firstDelayMs = clampInt(initialDelayMs, 1_000, 300_000, 20_000);
+
+  const tick = async () => {
+    try {
+      const run = await runCatalogAutoSyncOnce({ reason: "scheduler" });
+      if (run?.ok) {
+        log(
+          `[catalog-auto-sync] run done users=${run.enabledUsers}/${run.totalUsers} targets=${run.targets} success=${run.success} failed=${run.failed}`,
+        );
+      } else if (!run?.skipped) {
+        log("[catalog-auto-sync] run failed", run);
+      }
+    } catch (e) {
+      log("[catalog-auto-sync] tick error", String(e?.message || e));
+    }
+  };
+
+  const t = setInterval(tick, tickIntervalMs);
+  t.unref?.();
+
+  const first = setTimeout(() => {
+    tick().catch(() => {});
+  }, firstDelayMs);
+  first.unref?.();
+
+  return { timer: t, intervalMs: tickIntervalMs, initialDelayMs: firstDelayMs };
 }
 
 function parseBulkUrls(value) {
@@ -3875,5 +4037,54 @@ app.listen(PORT, "127.0.0.1", () => {
     );
   } else {
     log("[reco-auto] scheduler disabled (RECOMMENDATION_DAILY_AUTO_ENABLED!=1)");
+  }
+
+  const catalogAutoSyncEnabled = parseBooleanFlag(
+    process.env.CATALOG_AUTO_SYNC_ENABLED,
+    true,
+  );
+  const catalogAutoSyncIntervalMs = clampInt(
+    process.env.CATALOG_AUTO_SYNC_INTERVAL_MS,
+    60_000,
+    3_600_000,
+    15 * 60_000,
+  );
+  const catalogAutoSyncInitialDelayMs = clampInt(
+    process.env.CATALOG_AUTO_SYNC_INITIAL_DELAY_MS,
+    1_000,
+    300_000,
+    20_000,
+  );
+  const catalogAutoSyncLimitPerUser = clampInt(
+    process.env.CATALOG_AUTO_SYNC_LIMIT_PER_USER,
+    10,
+    500,
+    200,
+  );
+  const catalogAutoSyncIncludeHistory = parseBooleanFlag(
+    process.env.CATALOG_AUTO_SYNC_INCLUDE_HISTORY,
+    false,
+  );
+  const catalogAutoSyncPauseWhenUpload = parseBooleanFlag(
+    process.env.CATALOG_AUTO_SYNC_PAUSE_WHEN_UPLOAD,
+    true,
+  );
+  catalogAutoSyncState.enabled = catalogAutoSyncEnabled;
+  catalogAutoSyncState.intervalMs = catalogAutoSyncIntervalMs;
+  catalogAutoSyncState.limitPerUser = catalogAutoSyncLimitPerUser;
+  catalogAutoSyncState.includeHistory = catalogAutoSyncIncludeHistory;
+  catalogAutoSyncState.pauseWhenUpload = catalogAutoSyncPauseWhenUpload;
+  catalogAutoSyncState.startedAt = new Date().toISOString();
+
+  if (catalogAutoSyncEnabled) {
+    const started = startCatalogAutoSyncLoop({
+      intervalMs: catalogAutoSyncIntervalMs,
+      initialDelayMs: catalogAutoSyncInitialDelayMs,
+    });
+    log(
+      `[catalog-auto-sync] scheduler enabled interval=${started.intervalMs}ms initialDelay=${started.initialDelayMs}ms limit=${catalogAutoSyncLimitPerUser} includeHistory=${catalogAutoSyncIncludeHistory ? "1" : "0"}`,
+    );
+  } else {
+    log("[catalog-auto-sync] scheduler disabled (CATALOG_AUTO_SYNC_ENABLED=0)");
   }
 });
