@@ -1520,6 +1520,9 @@ export async function parseProductFromDomaeqq(url, opts = {}) {
       const openApiDetailImagesRaw = Array.isArray(openApiItemView?.detailImages)
         ? openApiItemView.detailImages.map((u) => normalizeUrl(u)).filter(Boolean)
         : [];
+      const openApiDetailHtmlImageCount = openApiDetailHtml
+        ? extractImageUrlsFromHtml(openApiDetailHtml, refererUrl || url).length
+        : 0;
       const quickDetail =
         !openApiDetailHtml
           ? await loadQuickDetailHtmlCandidate(url, {
@@ -1532,10 +1535,16 @@ export async function parseProductFromDomaeqq(url, opts = {}) {
           ...(Array.isArray(quickDetail?.detailImages) ? quickDetail.detailImages : []),
         ]),
       );
-      const fastContentHtml =
-        openApiDetailHtml ||
-        String(quickDetail?.detailHtml || "").trim() ||
-        buildImageHtml(mergedDetailImages.slice(0, 80));
+      const fastContentHtml = openApiDetailHtml
+        ? (
+            openApiDetailHtmlImageCount > 0
+              ? openApiDetailHtml
+              : `${openApiDetailHtml}\n${buildImageHtml(mergedDetailImages.slice(0, 80))}`
+          )
+        : (
+            String(quickDetail?.detailHtml || "").trim() ||
+            buildImageHtml(mergedDetailImages.slice(0, 80))
+          );
       const shippingSignalText = `${fastTitle} ${fastContentHtml}`;
       const parsedShippingFromFastText = parseShippingFeeFromAnyText(shippingSignalText);
       const explicitFreeFromFastText = hasExplicitFreeShippingText(shippingSignalText);
@@ -1617,6 +1626,7 @@ export async function parseProductFromDomaeqq(url, opts = {}) {
               reason: String(quickDetail?.reason || ""),
               detailImages: mergedDetailImages.length,
             },
+            detailImages: mergedDetailImages.slice(0, 120),
             seedFallbackUsed: Boolean(
               (!String(openApiItemView?.title || "").trim() && previewSeedTitle) ||
               (!(Number.isFinite(openApiPrice) && openApiPrice > 0) && Number.isFinite(previewSeedPrice)) ||

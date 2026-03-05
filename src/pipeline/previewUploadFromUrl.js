@@ -168,6 +168,31 @@ function unique(arr) {
   return Array.from(new Set((arr || []).filter(Boolean)));
 }
 
+function extractImageUrlsWithBase(html, baseUrl = "") {
+  const out = [];
+  const push = (raw) => {
+    const srcRaw = String(raw || "").trim();
+    if (!srcRaw) return;
+    let src = srcRaw;
+    if (src.startsWith("//")) src = `https:${src}`;
+    if (!/^https?:\/\//i.test(src)) {
+      try {
+        src = new URL(src, baseUrl).toString();
+      } catch {
+        return;
+      }
+    }
+    if (!/^https?:\/\//i.test(src)) return;
+    if (!out.includes(src)) out.push(src);
+  };
+  const re = /<img[^>]+(?:src|data-src|data-original|data-lazy)=["']?([^"' >]+)["']?/gi;
+  let m;
+  while ((m = re.exec(String(html || "")))) {
+    push(m[1]);
+  }
+  return out;
+}
+
 function looksLikeProductFileName(fileName = "") {
   const name = String(fileName || "").toLowerCase();
   if (!name) return false;
@@ -703,7 +728,16 @@ export async function previewUploadFromUrl(inputUrl, settings = {}) {
     previewSeedImageUrl: settings.seedImageUrl,
     maxAttempts: 2,
   });
-  let rawContentImages = unique(extractImageUrls(draft.contentText));
+  const debugOpenApiImages = Array.isArray(draft?.__debug?.openApi?.detailImages)
+    ? draft.__debug.openApi.detailImages
+        .map((u) => String(u || "").trim())
+        .filter(Boolean)
+    : [];
+  let rawContentImages = unique([
+    ...extractImageUrls(draft.contentText),
+    ...extractImageUrlsWithBase(draft.contentText, draft.sourceUrl),
+    ...debugOpenApiImages,
+  ]);
   rawContentImages = rawContentImages.slice(0, maxContentImages);
   rawContentImages = await expandOwnerclanCopyImages(rawContentImages);
   rawContentImages = rawContentImages.slice(0, maxContentImages);
