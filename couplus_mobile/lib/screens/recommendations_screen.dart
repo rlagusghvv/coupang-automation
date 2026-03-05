@@ -15,7 +15,41 @@ class RecommendationsScreen extends StatefulWidget {
 }
 
 class _RecommendationsScreenState extends State<RecommendationsScreen> {
+  static const List<Map<String, String>> _fallbackRecoCategories = [
+    {
+      'key': 'all',
+      'label': '전체 (기본)',
+      'description': '기본 키워드셋 전체 사용',
+    },
+    {
+      'key': 'car',
+      'label': '차량용',
+      'description': '차량 정리/거치 중심',
+    },
+    {
+      'key': 'pet',
+      'label': '반려동물',
+      'description': '반려동물 용품 중심',
+    },
+    {
+      'key': 'home',
+      'label': '생활/수납',
+      'description': '주방/욕실/정리 중심',
+    },
+    {
+      'key': 'desk',
+      'label': '데스크/사무',
+      'description': '책상/케이블 정리 중심',
+    },
+    {
+      'key': 'outdoor',
+      'label': '여행/캠핑',
+      'description': '아웃도어/차박 중심',
+    },
+  ];
+
   bool _loading = false;
+  bool _loadingRecoCategories = false;
   String? _error;
   String? _lastRunSummary;
   String? _lastUploadSummary;
@@ -35,6 +69,9 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
   final Set<String> _savedUrls = <String>{};
   bool _showSavedOnly = false;
   final Set<String> _selected = <String>{};
+  List<Map<String, String>> _recoCategories =
+      List<Map<String, String>>.from(_fallbackRecoCategories);
+  String _selectedRecoCategoryKey = 'all';
 
   List<Map<String, dynamic>> get _visibleItems =>
       _showSavedOnly ? _savedItems : _items;
@@ -45,6 +82,26 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
     final mm = n.minute.toString().padLeft(2, '0');
     final ss = n.second.toString().padLeft(2, '0');
     return '$hh:$mm:$ss';
+  }
+
+  String _normalizeRecoCategoryKey(dynamic raw) {
+    final text = raw.toString().trim().toLowerCase();
+    if (text.isEmpty) return '';
+    return text.replaceAll(RegExp(r'[^a-z0-9_-]'), '');
+  }
+
+  bool _hasRecoCategoryKey(String key) {
+    return _recoCategories.any((row) => (row['key'] ?? '') == key);
+  }
+
+  String _selectedRecoCategoryLabel() {
+    for (final row in _recoCategories) {
+      if ((row['key'] ?? '') == _selectedRecoCategoryKey) {
+        final label = (row['label'] ?? '').trim();
+        if (label.isNotEmpty) return label;
+      }
+    }
+    return '전체 (기본)';
   }
 
   String _diagnosticsHint(Map<String, dynamic> diagnostics) {
@@ -280,9 +337,64 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
     return images.take(max).toList();
   }
 
+  Future<void> _loadRecoCategories() async {
+    setState(() => _loadingRecoCategories = true);
+    try {
+      final json = await widget.api.getJson('/api/recommendations/categories');
+      final rows = (json['categories'] as List?) ?? const [];
+      final next = <Map<String, String>>[];
+
+      for (final raw in rows) {
+        if (raw is! Map) continue;
+        final map = raw.cast<String, dynamic>();
+        final key = _normalizeRecoCategoryKey(map['key']);
+        if (key.isEmpty) continue;
+        final label = (map['label'] ?? key).toString().trim();
+        final description = (map['description'] ?? '').toString().trim();
+        next.add({
+          'key': key,
+          'label': label.isEmpty ? key : label,
+          'description': description,
+        });
+      }
+
+      if (next.isEmpty) {
+        next.addAll(_fallbackRecoCategories);
+      }
+      if (!next.any((row) => row['key'] == 'all')) {
+        next.insert(0, const {
+          'key': 'all',
+          'label': '전체 (기본)',
+          'description': '기본 키워드셋 전체 사용',
+        });
+      }
+
+      if (!mounted) return;
+      setState(() {
+        _recoCategories = next;
+        if (!_hasRecoCategoryKey(_selectedRecoCategoryKey)) {
+          _selectedRecoCategoryKey = 'all';
+        }
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _recoCategories = List<Map<String, String>>.from(_fallbackRecoCategories);
+        if (!_hasRecoCategoryKey(_selectedRecoCategoryKey)) {
+          _selectedRecoCategoryKey = 'all';
+        }
+      });
+    } finally {
+      if (mounted) {
+        setState(() => _loadingRecoCategories = false);
+      }
+    }
+  }
+
   @override
   void initState() {
     super.initState();
+    _loadRecoCategories();
     _refresh();
   }
 
@@ -610,6 +722,8 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
 
   Future<void> _runNow() async {
     const fillTargetCount = 80;
+    final categoryKey = _selectedRecoCategoryKey;
+    final categoryLabel = _selectedRecoCategoryLabel();
     setState(() {
       _loading = true;
       _error = null;
@@ -618,7 +732,8 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
       _items = const [];
       _selected.clear();
       _showSavedOnly = false;
-      _lastRunSummary = '마지막 채우기 ${_nowLabel()} · 기존 추천 비우고 새 목록 생성 시작';
+      _lastRunSummary =
+          '마지막 채우기 ${_nowLabel()} · [$categoryLabel] 기존 추천 비우고 새 목록 생성 시작';
     });
     try {
       Map<String, dynamic>? startJson;
@@ -626,6 +741,7 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
         startJson =
             await widget.api.postJson('/api/recommendations/fill/start', {
           'targetCount': fillTargetCount,
+          'categoryKey': categoryKey,
         });
       } on ApiException catch (e) {
         if (e.statusCode != 404) rethrow;
@@ -680,6 +796,7 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
         // Fallback for older server runtimes without async fill job endpoint.
         final json = await widget.api.postJson('/api/recommendations/fill', {
           'targetCount': fillTargetCount,
+          'categoryKey': categoryKey,
         });
         await _applyFillResponse(json);
       }
@@ -1193,9 +1310,58 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
                     ),
                   ],
                 ),
+                const SizedBox(height: 10),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    Expanded(
+                      child: InputDecorator(
+                        decoration: const InputDecoration(
+                          labelText: '추천 카테고리',
+                          isDense: true,
+                        ),
+                        child: DropdownButtonHideUnderline(
+                          child: DropdownButton<String>(
+                            value: _hasRecoCategoryKey(_selectedRecoCategoryKey)
+                                ? _selectedRecoCategoryKey
+                                : 'all',
+                            isExpanded: true,
+                            onChanged: (_loading || fillRunning || _loadingRecoCategories)
+                                ? null
+                                : (value) {
+                                    if (value == null) return;
+                                    setState(() {
+                                      _selectedRecoCategoryKey = value;
+                                    });
+                                  },
+                            items: _recoCategories
+                                .map(
+                                  (row) => DropdownMenuItem<String>(
+                                    value: (row['key'] ?? 'all'),
+                                    child: Text((row['label'] ?? '전체 (기본)')),
+                                  ),
+                                )
+                                .toList(),
+                          ),
+                        ),
+                      ),
+                    ),
+                    if (_loadingRecoCategories) ...[
+                      const SizedBox(width: 8),
+                      SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Theme.of(context).colorScheme.primary,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
                 const SizedBox(height: 4),
                 Text(
-                  '추천 목록 상위 항목을 즉시 업로드합니다.',
+                  '채우기(우측 상단 새로고침)는 선택한 카테고리 기준으로 추천을 생성합니다. 자동 업로드는 현재 목록 상위 항목에 적용됩니다.',
                   style: TextStyle(
                     fontSize: 12,
                     color: Theme.of(context)
