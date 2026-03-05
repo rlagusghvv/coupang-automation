@@ -701,9 +701,140 @@ function normalizeUploadBulkJobProgressPercent(progress = {}) {
   return null;
 }
 
+const RECOMMENDATION_CATEGORY_PRESETS = Object.freeze([
+  {
+    key: "all",
+    label: "전체 (기본)",
+    description: "기본 키워드셋 전체 사용",
+    keywords: [],
+  },
+  {
+    key: "car",
+    label: "차량용",
+    description: "차량 정리/거치 중심",
+    keywords: [
+      "차량용 수납함",
+      "차량 틈새 수납",
+      "차량 시트백 수납",
+      "차량 트렁크 정리함",
+      "차량 송풍구 거치대",
+      "차량 휴대폰 거치대",
+      "차량 컵홀더 수납",
+      "차량 콘솔 정리",
+      "차량용 쓰레기통",
+      "차량 햇빛가리개",
+      "차량 케이블 정리",
+      "차량 선바이저 포켓",
+      "차량 헤드레스트 훅",
+    ],
+  },
+  {
+    key: "pet",
+    label: "반려동물",
+    description: "반려동물 용품 중심",
+    keywords: [
+      "강아지 장난감",
+      "고양이 장난감",
+      "강아지 하네스",
+      "강아지 리드줄",
+      "강아지 산책줄",
+      "고양이 스크래쳐",
+      "반려동물 배변봉투",
+      "반려동물 배변패드",
+      "반려동물 급수기",
+      "펫 브러쉬",
+      "고양이 빗",
+      "반려동물 카시트",
+      "반려동물 이동가방",
+    ],
+  },
+  {
+    key: "home",
+    label: "생활/수납",
+    description: "주방/욕실/정리 중심",
+    keywords: [
+      "싱크대 정리 선반",
+      "주방 서랍 정리",
+      "냉장고 정리 트레이",
+      "욕실 수납 선반",
+      "욕실 칫솔 꽂이",
+      "세탁실 정리함",
+      "신발장 정리대",
+      "옷장 수납함",
+      "압축 수납팩",
+      "현관 우산꽂이",
+    ],
+  },
+  {
+    key: "desk",
+    label: "데스크/사무",
+    description: "책상/케이블 정리 중심",
+    keywords: [
+      "멀티탭 정리함",
+      "전선 정리함",
+      "서랍 칸막이",
+      "서랍 정리 트레이",
+      "책상 수납 정리",
+      "모니터 받침대 수납",
+      "노트북 거치대",
+      "데스크 케이블 홀더",
+      "USB 수납 케이스",
+    ],
+  },
+  {
+    key: "outdoor",
+    label: "여행/캠핑",
+    description: "아웃도어/차박 중심",
+    keywords: [
+      "여행용 파우치 세트",
+      "캐리어 정리 파우치",
+      "압축 파우치",
+      "캠핑 수납 박스",
+      "캠핑 랜턴 걸이",
+      "차박 수납함",
+    ],
+  },
+]);
+
+const RECOMMENDATION_CATEGORY_PRESET_MAP = new Map(
+  RECOMMENDATION_CATEGORY_PRESETS.map((row) => [row.key, row]),
+);
+
+function normalizeRecommendationCategoryKey(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]/g, "");
+}
+
+function getRecommendationCategoryPreset(rawKey) {
+  const key = normalizeRecommendationCategoryKey(rawKey);
+  if (key && RECOMMENDATION_CATEGORY_PRESET_MAP.has(key)) {
+    return RECOMMENDATION_CATEGORY_PRESET_MAP.get(key);
+  }
+  return RECOMMENDATION_CATEGORY_PRESET_MAP.get("all");
+}
+
+function listRecommendationCategoryPresets() {
+  return RECOMMENDATION_CATEGORY_PRESETS.map((row) => ({
+    key: row.key,
+    label: row.label,
+    description: row.description,
+    keywords: [...row.keywords],
+  }));
+}
+
 function parseRecommendationRunRequest(req) {
   const userSettings = req?.user?.settings || {};
-  const keywords = normalizeStringList(req.body?.keywords, 30);
+  const categoryPreset = getRecommendationCategoryPreset(
+    req.body?.categoryKey ?? req.body?.recommendationCategory,
+  );
+  const inputKeywords = normalizeStringList(req.body?.keywords, 30);
+  const categoryKeywords = normalizeStringList(categoryPreset?.keywords || [], 30);
+  const keywords =
+    inputKeywords.length > 0
+      ? inputKeywords
+      : (categoryPreset?.key === "all" ? [] : categoryKeywords);
   const targetCount = Math.max(50, Math.min(100, Number(req.body?.targetCount || 80) || 80));
   const cooldownDays = Math.max(
     1,
@@ -713,7 +844,18 @@ function parseRecommendationRunRequest(req) {
     req.body?.strictMode ?? req.body?.strict,
     false,
   );
-  return { keywords, targetCount, cooldownDays, strictMode };
+  return {
+    keywords,
+    targetCount,
+    cooldownDays,
+    strictMode,
+    categoryKey: categoryPreset?.key || "all",
+    categoryLabel: categoryPreset?.label || "전체 (기본)",
+    keywordSource:
+      inputKeywords.length > 0
+        ? "custom"
+        : (categoryPreset?.key === "all" ? "default" : "category"),
+  };
 }
 
 function buildRecommendationRunSettings(baseSettings = {}, { strictMode = false, targetCount = 80 } = {}) {
@@ -3578,6 +3720,13 @@ app.post("/api/upload/bulk", authRequired, async (req, res) => {
   }, res);
 });
 
+app.get("/api/recommendations/categories", authRequired, async (_req, res) => {
+  return res.json({
+    ok: true,
+    categories: listRecommendationCategoryPresets(),
+  });
+});
+
 app.get("/api/recommendations", authRequired, async (req, res) => {
   try {
     const limit = Math.max(1, Math.min(200, Number(req.query?.limit || 40) || 40));
@@ -3645,6 +3794,12 @@ app.post("/api/recommendations/fill/start", authRequired, async (req, res) => {
     return res.json({
       ok: true,
       reused: Boolean(started.reused),
+      request: {
+        categoryKey: params.categoryKey,
+        categoryLabel: params.categoryLabel,
+        keywordSource: params.keywordSource,
+        keywordsCount: params.keywords.length,
+      },
       job: compactLegacyJob(started.job),
     });
   } catch (e) {
@@ -3675,6 +3830,12 @@ app.post("/api/recommendations/fill", authRequired, async (req, res) => {
     return res.json({
       ok: true,
       fill,
+      request: {
+        categoryKey: params.categoryKey,
+        categoryLabel: params.categoryLabel,
+        keywordSource: params.keywordSource,
+        keywordsCount: params.keywords.length,
+      },
       items,
     });
   } catch (e) {
@@ -3725,6 +3886,12 @@ app.post("/api/recommendations/refresh", authRequired, async (req, res) => {
       ok: true,
       pending: !finished,
       reused: Boolean(started.reused),
+      request: {
+        categoryKey: params.categoryKey,
+        categoryLabel: params.categoryLabel,
+        keywordSource: params.keywordSource,
+        keywordsCount: params.keywords.length,
+      },
       job: compactLegacyJob(job),
       refresh,
       items: finished && resultItems.length > 0 ? resultItems : items,

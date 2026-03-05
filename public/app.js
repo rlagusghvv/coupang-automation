@@ -97,11 +97,17 @@ const uploadConfirmCancelBtn = $("uploadConfirmCancel");
 const uploadConfirmProceedBtn = $("uploadConfirmProceed");
 
 // Recommendations (auto digger)
+const recoCategoryPresetEl = $("recoCategoryPreset");
+const recoCategoryApplyBtn = $("recoCategoryApply");
 const recoKeywordsEl = $("recoKeywords");
 const recoFillBtn = $("recoFill");
 const recoRefreshBtn = $("recoRefresh");
 const recoAutoCountEl = $("recoAutoCount");
 const recoAutoUploadBtn = $("recoAutoUpload");
+const recoSelectAllBtn = $("recoSelectAll");
+const recoClearSelectionBtn = $("recoClearSelection");
+const recoUploadSelectedBtn = $("recoUploadSelected");
+const recoSelectedMetaEl = $("recoSelectedMeta");
 const recoListEl = $("recoList");
 const recoAutoRunStatusHomeEl = $("recoAutoRunStatusHome");
 const recoAutoRunStatusSettingsEl = $("recoAutoRunStatusSettings");
@@ -130,6 +136,10 @@ const refreshHistoryBtn = $("refreshHistory");
 let currentUserEmail = "";
 let recoAutoRunStatusTimer = null;
 let lastManualAutoRunResult = null;
+let recoCurrentItems = [];
+let recoSelectedSourceUrls = new Set();
+let recoCategoryPresets = [];
+let recoCategoryPresetMap = new Map();
 
 // Dev-only dummy orders
 const devOrdersRow = $("devOrdersRow");
@@ -1065,6 +1075,254 @@ async function previewUpload() {
 }
 
 // ----- Recommendations / Auto digger -----
+const RECO_CATEGORY_STORAGE_KEY = "couplus.reco.categoryPreset";
+const FALLBACK_RECO_CATEGORIES = [
+  { key: "all", label: "전체 (기본)", description: "기본 키워드셋 전체 사용", keywords: [] },
+  {
+    key: "car",
+    label: "차량용",
+    description: "차량 정리/거치 중심",
+    keywords: [
+      "차량용 수납함",
+      "차량 틈새 수납",
+      "차량 트렁크 정리함",
+      "차량 송풍구 거치대",
+      "차량 휴대폰 거치대",
+      "차량 케이블 정리",
+      "차량 컵홀더 수납",
+      "차량 선바이저 포켓",
+      "차량 헤드레스트 훅",
+    ],
+  },
+  {
+    key: "pet",
+    label: "반려동물",
+    description: "반려동물 용품 중심",
+    keywords: [
+      "강아지 장난감",
+      "고양이 장난감",
+      "강아지 하네스",
+      "강아지 리드줄",
+      "고양이 스크래쳐",
+      "반려동물 급수기",
+      "펫 브러쉬",
+      "반려동물 이동가방",
+      "고양이 모래 삽",
+    ],
+  },
+  {
+    key: "home",
+    label: "생활/수납",
+    description: "주방/욕실/정리 중심",
+    keywords: [
+      "싱크대 정리 선반",
+      "주방 서랍 정리",
+      "냉장고 정리 트레이",
+      "욕실 수납 선반",
+      "세탁실 정리함",
+      "신발장 정리대",
+      "옷장 수납함",
+      "압축 수납팩",
+      "현관 우산꽂이",
+    ],
+  },
+  {
+    key: "desk",
+    label: "데스크/사무",
+    description: "책상/케이블 정리 중심",
+    keywords: [
+      "멀티탭 정리함",
+      "전선 정리함",
+      "서랍 칸막이",
+      "서랍 정리 트레이",
+      "책상 수납 정리",
+      "모니터 받침대 수납",
+      "노트북 거치대",
+      "데스크 케이블 홀더",
+      "USB 수납 케이스",
+    ],
+  },
+  {
+    key: "outdoor",
+    label: "여행/캠핑",
+    description: "아웃도어/차박 중심",
+    keywords: [
+      "여행용 파우치 세트",
+      "캐리어 정리 파우치",
+      "압축 파우치",
+      "캠핑 수납 박스",
+      "캠핑 랜턴 걸이",
+      "차박 수납함",
+    ],
+  },
+];
+
+function normalizeRecoCategoryKey(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]/g, "");
+}
+
+function getSavedRecoCategoryKey() {
+  try {
+    return normalizeRecoCategoryKey(localStorage.getItem(RECO_CATEGORY_STORAGE_KEY)) || "all";
+  } catch {
+    return "all";
+  }
+}
+
+function saveRecoCategoryKey(key) {
+  const normalized = normalizeRecoCategoryKey(key) || "all";
+  try {
+    localStorage.setItem(RECO_CATEGORY_STORAGE_KEY, normalized);
+  } catch {}
+}
+
+function getSelectedRecoCategoryKey() {
+  const raw = recoCategoryPresetEl?.value;
+  const key = normalizeRecoCategoryKey(raw);
+  return key || "all";
+}
+
+function getSelectedRecoCategoryPreset() {
+  const key = getSelectedRecoCategoryKey();
+  return recoCategoryPresetMap.get(key) || recoCategoryPresetMap.get("all") || null;
+}
+
+function applyRecoCategoryPresetToKeywords({ forceOverwrite = false } = {}) {
+  if (!recoKeywordsEl) return false;
+  const preset = getSelectedRecoCategoryPreset();
+  if (!preset || !Array.isArray(preset.keywords) || preset.keywords.length === 0) return false;
+  const hasCustomKeywords = parseKeywords(recoKeywordsEl.value).length > 0;
+  if (hasCustomKeywords && !forceOverwrite) return false;
+  recoKeywordsEl.value = preset.keywords.join(", ");
+  return true;
+}
+
+function renderRecoCategoryPresetOptions(categories = []) {
+  if (!recoCategoryPresetEl) return;
+  const list = Array.isArray(categories) && categories.length > 0 ? categories : FALLBACK_RECO_CATEGORIES;
+  const normalizedList = list
+    .map((row) => {
+      const key = normalizeRecoCategoryKey(row?.key);
+      if (!key) return null;
+      const label = String(row?.label || key).trim();
+      const description = String(row?.description || "").trim();
+      const keywords = parseKeywords(
+        Array.isArray(row?.keywords) ? row.keywords.join(", ") : row?.keywords || "",
+      );
+      return {
+        key,
+        label,
+        description,
+        keywords,
+      };
+    })
+    .filter(Boolean);
+  const hasAll = normalizedList.some((row) => row.key === "all");
+  if (!hasAll) {
+    normalizedList.unshift({
+      key: "all",
+      label: "전체 (기본)",
+      description: "기본 키워드셋 전체 사용",
+      keywords: [],
+    });
+  }
+
+  recoCategoryPresets = normalizedList;
+  recoCategoryPresetMap = new Map(recoCategoryPresets.map((row) => [row.key, row]));
+
+  const savedKey = getSavedRecoCategoryKey();
+  const defaultKey = recoCategoryPresetMap.has(savedKey) ? savedKey : "all";
+
+  recoCategoryPresetEl.innerHTML = recoCategoryPresets
+    .map((row) => {
+      const title = row.description ? `${row.description} / 키워드 ${row.keywords.length}개` : "";
+      return `<option value="${escapeHtml(row.key)}" title="${escapeHtml(title)}">${escapeHtml(row.label)}</option>`;
+    })
+    .join("");
+  recoCategoryPresetEl.value = defaultKey;
+  saveRecoCategoryKey(defaultKey);
+}
+
+async function loadRecoCategoryPresets() {
+  try {
+    const res = await fetch("/api/recommendations/categories");
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok || !json.ok || !Array.isArray(json.categories)) {
+      renderRecoCategoryPresetOptions(FALLBACK_RECO_CATEGORIES);
+      return;
+    }
+    renderRecoCategoryPresetOptions(json.categories);
+  } catch {
+    renderRecoCategoryPresetOptions(FALLBACK_RECO_CATEGORIES);
+  }
+}
+
+function buildRecommendationRunBody({ targetCount = 80 } = {}) {
+  const keywords = parseKeywords(recoKeywordsEl?.value);
+  const categoryKey = getSelectedRecoCategoryKey();
+  const body = {
+    targetCount: Math.max(50, Math.min(100, Number(targetCount) || 80)),
+    categoryKey,
+  };
+  if (keywords.length > 0) body.keywords = keywords;
+  return body;
+}
+
+function syncRecoSelectionWithList(items = []) {
+  const list = Array.isArray(items) ? items : [];
+  recoCurrentItems = list;
+  const available = new Set(
+    list
+      .map((it) => String(it?.sourceUrl || "").trim())
+      .filter(Boolean),
+  );
+  const next = new Set();
+  for (const url of recoSelectedSourceUrls) {
+    if (available.has(url)) next.add(url);
+  }
+  recoSelectedSourceUrls = next;
+  updateRecoSelectionUi();
+}
+
+function updateRecoSelectionUi() {
+  const selectedCount = recoSelectedSourceUrls.size;
+  const totalCount = Array.isArray(recoCurrentItems) ? recoCurrentItems.length : 0;
+  if (recoSelectedMetaEl) {
+    recoSelectedMetaEl.textContent = `선택 ${selectedCount}개 / ${totalCount}개`;
+  }
+  if (recoUploadSelectedBtn) {
+    recoUploadSelectedBtn.disabled = selectedCount <= 0;
+  }
+}
+
+function setRecoItemSelected(url, checked) {
+  const key = String(url || "").trim();
+  if (!key) return;
+  if (checked) recoSelectedSourceUrls.add(key);
+  else recoSelectedSourceUrls.delete(key);
+  updateRecoSelectionUi();
+}
+
+function toggleRecoSelectionAll(checked = true) {
+  const list = Array.isArray(recoCurrentItems) ? recoCurrentItems : [];
+  for (const item of list) {
+    const url = String(item?.sourceUrl || "").trim();
+    if (!url) continue;
+    if (checked) recoSelectedSourceUrls.add(url);
+    else recoSelectedSourceUrls.delete(url);
+  }
+  renderRecoList(recoCurrentItems);
+}
+
+function getSelectedRecoItems() {
+  const list = Array.isArray(recoCurrentItems) ? recoCurrentItems : [];
+  if (recoSelectedSourceUrls.size <= 0) return [];
+  return list.filter((it) => recoSelectedSourceUrls.has(String(it?.sourceUrl || "").trim()));
+}
+
 function parseKeywords(raw) {
   const s = String(raw || "");
   // split by comma or newline
@@ -1092,8 +1350,10 @@ function formatWon(n) {
 function renderRecoList(items) {
   if (!recoListEl) return;
   const list = Array.isArray(items) ? items : [];
+  syncRecoSelectionWithList(list);
   if (!list.length) {
     recoListEl.innerHTML = `<div class="hint">아직 후보가 없어요. ‘후보 채우기’를 눌러주세요.</div>`;
+    updateRecoSelectionUi();
     return;
   }
 
@@ -1108,6 +1368,7 @@ function renderRecoList(items) {
       const margin = Number(it.marginRate);
       const marginText = Number.isFinite(margin) ? `${Math.round(margin * 100)}%` : "-";
       const sourceUrl = it.sourceUrl || "";
+      const isSelected = sourceUrl ? recoSelectedSourceUrls.has(sourceUrl) : false;
       const categoryCode = Number(it.categoryCode);
       const categorySource = String(it.categorySource || "").trim();
       const categoryChip =
@@ -1121,6 +1382,13 @@ function renderRecoList(items) {
             ${img ? `<img src="${img}" alt="thumb" style="width:72px; height:72px; object-fit:cover; border-radius:10px;" loading="lazy"/>` : `<div style="width:72px; height:72px; border-radius:10px; background:#f2f2f2;"></div>`}
           </div>
           <div style="flex:1 1 auto; min-width:0;">
+            <div style="display:flex; align-items:center; justify-content:space-between; gap:8px;">
+              <label style="display:inline-flex; align-items:center; gap:6px; margin:0; color:var(--muted); font-size:12px;">
+                <input type="checkbox" data-action="reco-select" data-url="${escapeHtml(sourceUrl)}" ${isSelected ? "checked" : ""} />
+                선택
+              </label>
+              <span class="hint">${escapeHtml(it?.qc?.eligibleUpload ? "업로드 가능" : "QC 점검 필요")}</span>
+            </div>
             <div style="font-weight:700; line-height:1.25;">${escapeHtml(title)}</div>
             ${
               originalTitle && originalTitle !== title
@@ -1156,11 +1424,90 @@ function renderRecoList(items) {
       document.getElementById("uploadPreviewCard")?.scrollIntoView({ behavior: "smooth", block: "center" });
     });
   });
+
+  // bind selection checkboxes
+  recoListEl.querySelectorAll('[data-action="reco-select"]').forEach((input) => {
+    input.addEventListener("change", () => {
+      const url = input.getAttribute("data-url") || "";
+      setRecoItemSelected(url, Boolean(input.checked));
+    });
+  });
+
+  updateRecoSelectionUi();
+}
+
+async function uploadSelectedRecommendations() {
+  if (recoUploadSelectedBtn) recoUploadSelectedBtn.disabled = true;
+  try {
+    const selectedItems = getSelectedRecoItems();
+    if (selectedItems.length <= 0) {
+      setStatus("업로드할 추천 아이템을 먼저 선택하세요.", "bad");
+      return;
+    }
+
+    setStatus(`선택 업로드 실행 중... (${selectedItems.length}개)`, "");
+    const urls = [];
+    const overridesByUrl = {};
+
+    for (const item of selectedItems) {
+      const sourceUrl = String(item?.sourceUrl || "").trim();
+      if (!sourceUrl) continue;
+      urls.push(sourceUrl);
+
+      const titleOverride = String(item?.seoTitle || item?.title || "").trim();
+      const categoryOverrideCode = Number(item?.categoryCode);
+      const previewImages = Array.isArray(item?.previewImages)
+        ? item.previewImages.map((u) => String(u || "").trim()).filter(Boolean).slice(0, 20)
+        : [];
+
+      const overrides = {};
+      if (titleOverride) overrides.titleOverride = titleOverride;
+      if (Number.isFinite(categoryOverrideCode) && categoryOverrideCode > 0) {
+        overrides.categoryOverrideCode = categoryOverrideCode;
+      }
+      if (previewImages.length > 0) overrides.imagesOverride = previewImages;
+      if (Object.keys(overrides).length > 0) {
+        overridesByUrl[sourceUrl] = overrides;
+      }
+    }
+
+    const res = await fetch("/api/upload/bulk", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ urls, force: "0", overridesByUrl }),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok || !json.ok) {
+      setStatus("선택 업로드 실패", "bad");
+      log(json);
+      return;
+    }
+
+    const summary = json.summary || {};
+    setStatus(
+      `선택 업로드 완료 (성공 ${summary.uploaded || 0} / 스킵 ${summary.skipped || 0} / 실패 ${summary.failed || 0})`,
+      Number(summary.failed || 0) > 0 ? "bad" : "ok",
+    );
+    log(json);
+
+    if (Number(summary.uploaded || 0) > 0) {
+      playSuccessSound();
+    }
+
+    recoSelectedSourceUrls.clear();
+    await loadRecommendations();
+    await loadUploadHistory();
+  } catch (e) {
+    setStatus("선택 업로드 에러", "bad");
+    log(String(e?.message || e));
+  } finally {
+    updateRecoSelectionUi();
+  }
 }
 
 async function loadRecommendations() {
   try {
-    const res = await fetch("/api/recommendations?limit=40");
+    const res = await fetch("/api/recommendations?limit=120");
     const json = await res.json().catch(() => ({}));
     if (!res.ok || !json.ok) {
       renderRecoList([]);
@@ -1216,9 +1563,7 @@ async function refreshRecommendationsReplacing() {
   if (recoRefreshBtn) recoRefreshBtn.disabled = true;
   setStatus("추천 새로고침 중... (기존 목록 교체)", "");
   try {
-    const keywords = parseKeywords(recoKeywordsEl?.value);
-    const body = { targetCount: 80 };
-    if (keywords.length) body.keywords = keywords;
+    const body = buildRecommendationRunBody({ targetCount: 80 });
 
     const res = await fetch("/api/recommendations/refresh", {
       method: "POST",
@@ -1267,9 +1612,7 @@ async function fillRecommendations() {
   if (recoFillBtn) recoFillBtn.disabled = true;
   setStatus("후보 생성 중...", "");
   try {
-    const keywords = parseKeywords(recoKeywordsEl?.value);
-    const body = { targetCount: 80 };
-    if (keywords.length) body.keywords = keywords;
+    const body = buildRecommendationRunBody({ targetCount: 80 });
 
     const res = await fetch("/api/recommendations/fill", {
       method: "POST",
@@ -2318,8 +2661,25 @@ domemeSessionSaveBtn?.addEventListener("click", async () => {
   await loadPurchaseLogsAndRenderHomePay();
 
   // recommendations
+  await loadRecoCategoryPresets();
+  recoCategoryPresetEl?.addEventListener("change", () => {
+    const key = getSelectedRecoCategoryKey();
+    saveRecoCategoryKey(key);
+    applyRecoCategoryPresetToKeywords({ forceOverwrite: false });
+  });
+  recoCategoryApplyBtn?.addEventListener("click", () => {
+    const changed = applyRecoCategoryPresetToKeywords({ forceOverwrite: true });
+    if (!changed) {
+      setStatus("적용할 카테고리 키워드가 없습니다. (전체는 기본 키워드셋 사용)", "");
+    }
+  });
   recoFillBtn?.addEventListener("click", fillRecommendations);
   recoRefreshBtn?.addEventListener("click", refreshRecommendationsReplacing);
   recoAutoUploadBtn?.addEventListener("click", autoUploadRecommendations);
+  recoSelectAllBtn?.addEventListener("click", () => toggleRecoSelectionAll(true));
+  recoClearSelectionBtn?.addEventListener("click", () => toggleRecoSelectionAll(false));
+  recoUploadSelectedBtn?.addEventListener("click", uploadSelectedRecommendations);
+  applyRecoCategoryPresetToKeywords({ forceOverwrite: false });
+  updateRecoSelectionUi();
   await loadRecommendations();
 })();
