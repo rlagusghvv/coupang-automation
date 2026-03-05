@@ -218,6 +218,17 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
     return e.message.trim().toLowerCase() == 'job_not_found';
   }
 
+  bool _isTransientJobPollError(Object e) {
+    if (e is! ApiException) return false;
+    const transientCodes = <int>{502, 503, 504, 520, 521, 522, 523, 524};
+    if (transientCodes.contains(e.statusCode)) return true;
+    final details = (e.details ?? '').trimLeft().toLowerCase();
+    final looksHtml =
+        details.startsWith('<!doctype html') || details.startsWith('<html');
+    final isInvalidJson = e.message.trim().toLowerCase() == 'invalid json';
+    return looksHtml && isInvalidJson;
+  }
+
   String _fillProgressMessage(Map<String, dynamic> progress) {
     final stage = (progress['stage'] ?? '').toString();
     switch (stage) {
@@ -731,6 +742,7 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
   }
 
   Future<Map<String, dynamic>?> _pollFillJob(String jobId) async {
+    var transientErrorStreak = 0;
     for (var i = 0; i < 3600; i += 1) {
       await Future<void>.delayed(const Duration(seconds: 1));
       Map<String, dynamic> j;
@@ -743,8 +755,16 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
             'jobId': jobId,
           };
         }
+        if (_isTransientJobPollError(e)) {
+          transientErrorStreak += 1;
+          if (transientErrorStreak <= 20) {
+            continue;
+          }
+          throw Exception('서버 응답이 불안정합니다(일시 502/게이트웨이 오류). 잠시 후 다시 시도해 주세요.');
+        }
         rethrow;
       }
+      transientErrorStreak = 0;
       final job = (j['job'] as Map?)?.cast<String, dynamic>() ?? const {};
       final progress = (job['progress'] as Map?)?.cast<String, dynamic>() ??
           const <String, dynamic>{};
@@ -1072,6 +1092,7 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
   }
 
   Future<Map<String, dynamic>?> _pollUploadJob(String jobId) async {
+    var transientErrorStreak = 0;
     for (var i = 0; i < 3600; i += 1) {
       await Future<void>.delayed(const Duration(seconds: 1));
       Map<String, dynamic> j;
@@ -1084,8 +1105,16 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
             'jobId': jobId,
           };
         }
+        if (_isTransientJobPollError(e)) {
+          transientErrorStreak += 1;
+          if (transientErrorStreak <= 20) {
+            continue;
+          }
+          throw Exception('서버 응답이 불안정합니다(일시 502/게이트웨이 오류). 잠시 후 다시 시도해 주세요.');
+        }
         rethrow;
       }
+      transientErrorStreak = 0;
       final job = (j['job'] as Map?)?.cast<String, dynamic>() ?? const {};
       final progress = (job['progress'] as Map?)?.cast<String, dynamic>() ??
           const <String, dynamic>{};
