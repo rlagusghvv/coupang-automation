@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>경제탐험대 계정 삭제</title>
+  <style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:860px;margin:40px auto;padding:0 16px;line-height:1.65;color:#111827}.card{border:1px solid #e5e7eb;border-radius:12px;padding:16px;margin:12px 0;background:#fafafa}.muted{color:#6b7280}input,textarea{width:100%;padding:10px;border:1px solid #d1d5db;border-radius:8px}button{padding:10px 14px;border:0;border-radius:8px;background:#111827;color:#fff;cursor:pointer}</style>
+</head>
+<body>
+  <h1>경제탐험대 계정 삭제</h1>
+  <p class="muted">앱에서 계정 삭제가 어려울 경우 이 페이지에서 삭제 요청을 완료할 수 있습니다.</p>
+
+  <div class="card">
+    <h2>앱 내 직접 삭제(권장)</h2>
+    <p>가이드 탭 → 계정/동기화 → 계정 삭제</p>
+  </div>
+
+  <div class="card">
+    <h2>웹 삭제 요청</h2>
+    <p>아래 정보를 작성 후 제출 버튼을 누르면 메일 앱이 열립니다.</p>
+    <label>가입 이메일</label>
+    <input id="email" placeholder="example@email.com" />
+    <label style="margin-top:8px;display:block;">요청 내용</label>
+    <textarea id="memo" rows="4" placeholder="계정 및 학습 데이터 삭제 요청"></textarea>
+    <p style="margin-top:10px"><button onclick="submitReq()">삭제 요청 메일 보내기</button></p>
+  </div>
+
+  <script>
+    function submitReq(){
+      const email=document.getElementById('email').value.trim();
+      const memo=document.getElementById('memo').value.trim() || '계정 및 학습 데이터 삭제 요청';
+      const subject=encodeURIComponent('[경제탐험대] 계정 삭제 요청');
+      const body=encodeURIComponent(`가입 이메일: ${email}\n요청 내용: ${memo}`);
+      location.href=`mailto:privacy@splui.com?subject=${subject}&body=${body}`;
+    }
+  </script>
+</body>
+</html>
