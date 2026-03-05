@@ -668,12 +668,16 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
             .trim();
         final seedTitle = (nextTitle.isNotEmpty ? nextTitle : fallbackTitle).trim();
         final categoryCode = int.tryParse((item['categoryCode'] ?? '').toString());
+        final keyword = (item['keyword'] ?? '').toString().trim();
         final override = <String, dynamic>{};
         if (nextTitle.isNotEmpty) {
           override['titleOverride'] = nextTitle;
         }
         if (seedTitle.isNotEmpty) {
           override['seedTitle'] = seedTitle;
+        }
+        if (keyword.isNotEmpty) {
+          override['keyword'] = keyword;
         }
         if (categoryCode != null && categoryCode > 0) {
           override['categoryOverrideCode'] = categoryCode;
@@ -1901,6 +1905,10 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
                 final finalPrice = (it['finalPrice'] ?? 0);
                 final reason = (it['reason'] ?? '').toString();
                 final url = (it['sourceUrl'] ?? '').toString();
+                final seoScore =
+                    num.tryParse((it['seoScore'] ?? '').toString())?.toInt();
+                final seoGrade = (it['seoGrade'] ?? '').toString().trim();
+                final seoGradeUpper = seoGrade.toUpperCase();
                 final previewImagesAll = _previewImagesOf(it, max: 0);
                 final previewImages = previewImagesAll.take(6).toList();
                 final qc = (it['qc'] as Map?)?.cast<String, dynamic>() ??
@@ -2012,6 +2020,19 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
                                     label: keyword,
                                     color:
                                         Theme.of(context).colorScheme.outline,
+                                  ),
+                                if (seoScore != null)
+                                  InfoChip(
+                                    label: seoGradeUpper.isNotEmpty
+                                        ? 'SEO $seoGradeUpper · $seoScore점'
+                                        : 'SEO $seoScore점',
+                                    color: seoGradeUpper == 'A'
+                                        ? const Color(0xFF2F9E44)
+                                        : (seoGradeUpper == 'B'
+                                            ? const Color(0xFF1971C2)
+                                            : (seoGradeUpper == 'C'
+                                                ? Colors.orange
+                                                : Colors.redAccent)),
                                   ),
                                 InfoChip(
                                   label: eligibleUpload ? '업로드 가능' : 'QC 검토',

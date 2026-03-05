@@ -179,6 +179,62 @@ function toPositiveInt(value) {
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : null;
 }
 
+function normalizeSearchTagToken(raw) {
+  const cleaned = String(raw || "")
+    .replace(/[^0-9A-Za-z가-힣\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!cleaned) return "";
+  if (cleaned.length < 2) return "";
+  return cleaned.length > 20 ? cleaned.slice(0, 20).trim() : cleaned;
+}
+
+function uniqueSearchTags(list = [], max = 10) {
+  const out = [];
+  const seen = new Set();
+  for (const raw of list) {
+    const token = normalizeSearchTagToken(raw);
+    if (!token) continue;
+    const key = token.replace(/\s+/g, "").toLowerCase();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(token);
+    if (out.length >= max) break;
+  }
+  return out;
+}
+
+function buildSearchTags({ title = "", keyword = "", extraTags = [] } = {}) {
+  const titleText = String(title || "").trim();
+  const keywordText = String(keyword || "").trim();
+  const extras = Array.isArray(extraTags)
+    ? extraTags
+    : String(extraTags || "")
+        .split(/\n|,/)
+        .map((x) => String(x || "").trim())
+        .filter(Boolean);
+
+  const titleWords = titleText
+    .replace(/[^0-9A-Za-z가-힣\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .split(" ")
+    .map((x) => x.trim())
+    .filter((x) => x.length >= 2);
+  const bigrams = [];
+  for (let i = 0; i < Math.min(6, titleWords.length - 1); i += 1) {
+    const one = `${titleWords[i]} ${titleWords[i + 1]}`.trim();
+    if (one.length >= 2 && one.length <= 20) bigrams.push(one);
+  }
+
+  return uniqueSearchTags([
+    keywordText,
+    ...extras,
+    ...bigrams,
+    ...titleWords.slice(0, 8),
+  ]);
+}
+
 export async function runUploadFromUrl(inputUrl, settings = {}, runtime = {}) {
   const c = classifyUrl(inputUrl);
   if (!c.ok) {
@@ -466,6 +522,11 @@ export async function runUploadFromUrl(inputUrl, settings = {}, runtime = {}) {
     unitCount: Number.isFinite(Number(settings.defaultUnitCount)) ? Number(settings.defaultUnitCount) : 1,
     unitType: String(settings.defaultUnitType || 'PIECE').trim() || 'PIECE',
   };
+  const searchTags = buildSearchTags({
+    title: draft.title,
+    keyword: String(settings.keyword || settings.seedKeyword || "").trim(),
+    extraTags: settings.searchTags,
+  });
 
   const baseBody = buildSellerProductBody({
     vendorId,
@@ -478,6 +539,7 @@ export async function runUploadFromUrl(inputUrl, settings = {}, runtime = {}) {
     price: finalPrice,
     stock: 10,
     contentText: contentHtml,
+    searchTags,
     notices,
     requested: autoRequest,
     deliveryCompanyCode: settings.coupangDeliveryCompanyCode,
@@ -708,6 +770,11 @@ function applyErrorItemFixes({ body, errorItems, finalCategoryCode }) {
     textBlob.includes("unit type") ||
     textBlob.includes("단위수량") ||
     textBlob.includes("단위 수량");
+  const needsDropSearchTags =
+    textBlob.includes("searchtag") ||
+    textBlob.includes("search tag") ||
+    textBlob.includes("검색어") ||
+    textBlob.includes("태그");
 
   const appliedFixes = [];
   let changed = false;
@@ -746,6 +813,14 @@ function applyErrorItemFixes({ body, errorItems, finalCategoryCode }) {
     if (unitChanged) {
       changed = true;
       appliedFixes.push("item_unit_autofill:1-PIECE");
+    }
+  }
+
+  if (needsDropSearchTags) {
+    if (Array.isArray(cloned.searchTags) && cloned.searchTags.length > 0) {
+      delete cloned.searchTags;
+      changed = true;
+      appliedFixes.push("search_tags_removed");
     }
   }
 

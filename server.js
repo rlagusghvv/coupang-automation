@@ -1389,6 +1389,8 @@ function startUploadBulkJob({
               seedTitle: o?.seedTitle,
               seedPrice: o?.seedPrice,
               seedImageUrl: o?.seedImageUrl,
+              keyword: o?.keyword,
+              searchTags: Array.isArray(o?.searchTags) ? o.searchTags : undefined,
               imagesOverride: Array.isArray(o?.imagesOverride) ? o.imagesOverride : undefined,
               categoryOverrideCode: o?.categoryOverrideCode,
             };
@@ -1677,6 +1679,8 @@ app.post('/api/jobs/start', authRequired, async (req, res) => {
           seedTitle: req.body?.seedTitle,
           seedPrice: req.body?.seedPrice,
           seedImageUrl: req.body?.seedImageUrl,
+          keyword: req.body?.keyword,
+          searchTags: Array.isArray(req.body?.searchTags) ? req.body.searchTags : undefined,
           imagesOverride: Array.isArray(req.body?.imagesOverride) ? req.body.imagesOverride : undefined,
           categoryOverrideCode: req.body?.categoryOverrideCode,
         },
@@ -3543,6 +3547,7 @@ function resolveRecommendationUploadOverrides(item = {}) {
   const payload = item?.payload && typeof item.payload === "object" ? item.payload : {};
   const seo = payload?.seo && typeof payload.seo === "object" ? payload.seo : {};
   const category = payload?.category && typeof payload.category === "object" ? payload.category : {};
+  const keyword = pickFirstNonEmpty(item?.keyword, seo?.keyword);
 
   const titleOverrideRaw = pickFirstNonEmpty(item?.seoTitle, seo?.title, item?.title);
   const titleOverride = String(titleOverrideRaw || "").trim();
@@ -3553,6 +3558,7 @@ function resolveRecommendationUploadOverrides(item = {}) {
     overrides.titleOverride = titleOverride;
     overrides.seedTitle = titleOverride;
   }
+  if (keyword) overrides.keyword = keyword;
   if (categoryOverrideCode) overrides.categoryOverrideCode = categoryOverrideCode;
   return overrides;
 }
@@ -3645,6 +3651,12 @@ async function executeUploadForUrl({ url, user, force = false, overrides = {} })
       : {}),
     ...(String(overrides?.seedImageUrl || '').trim()
       ? { seedImageUrl: String(overrides.seedImageUrl).trim() }
+      : {}),
+    ...(String(overrides?.keyword || '').trim()
+      ? { keyword: String(overrides.keyword).trim() }
+      : {}),
+    ...(Array.isArray(overrides?.searchTags) && overrides.searchTags.length > 0
+      ? { searchTags: normalizeStringList(overrides.searchTags, 20) }
       : {}),
     ...(Number.isFinite(Number(overrides?.categoryOverrideCode))
       ? { categoryOverrideCode: Number(overrides.categoryOverrideCode) }
@@ -3925,6 +3937,8 @@ async function handleSingleUpload(req, res) {
         seedTitle: req.body?.seedTitle,
         seedPrice: req.body?.seedPrice,
         seedImageUrl: req.body?.seedImageUrl,
+        keyword: req.body?.keyword,
+        searchTags: Array.isArray(req.body?.searchTags) ? req.body.searchTags : undefined,
         imagesOverride: Array.isArray(req.body?.imagesOverride) ? req.body.imagesOverride : undefined,
         categoryOverrideCode: req.body?.categoryOverrideCode,
       };
@@ -4035,6 +4049,8 @@ app.post("/api/upload/bulk", authRequired, async (req, res) => {
             seedTitle: o?.seedTitle,
             seedPrice: o?.seedPrice,
             seedImageUrl: o?.seedImageUrl,
+            keyword: o?.keyword,
+            searchTags: Array.isArray(o?.searchTags) ? o.searchTags : undefined,
             imagesOverride: Array.isArray(o?.imagesOverride) ? o.imagesOverride : undefined,
             categoryOverrideCode: o?.categoryOverrideCode,
           };
