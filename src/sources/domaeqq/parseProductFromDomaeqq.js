@@ -971,18 +971,29 @@ function extractBodyHtml(html) {
 
 function extractImageUrlsFromHtml(html, baseUrl) {
   const out = [];
-  const re = /<img[^>]+src=["']?([^"' >]+)["']?/gi;
+  const re = /<img\b[^>]*>/gi;
   let m;
   while ((m = re.exec(String(html || "")))) {
-    let src = String(m[1] || "").trim();
-    if (!src) continue;
-    if (src.startsWith("//")) src = "https:" + src;
-    if (!/^https?:\/\//i.test(src)) {
-      try {
-        src = new URL(src, baseUrl).toString();
-      } catch {}
+    const tag = String(m[0] || "");
+    const attrs = [];
+    const attrRe = /(?:\s|^)(src|data-src|data-original|data-lazy)=["']?([^"' >]+)["']?/gi;
+    let am;
+    while ((am = attrRe.exec(tag))) {
+      attrs.push(String(am[2] || "").trim());
     }
-    if (!out.includes(src)) out.push(src);
+    for (const raw of attrs) {
+      let src = String(raw || "").trim();
+      if (!src || src.startsWith("data:")) continue;
+      if (src.startsWith("//")) src = "https:" + src;
+      if (!/^https?:\/\//i.test(src)) {
+        try {
+          src = new URL(src, baseUrl).toString();
+        } catch {
+          continue;
+        }
+      }
+      if (!out.includes(src)) out.push(src);
+    }
   }
   return out;
 }
