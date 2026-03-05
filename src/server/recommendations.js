@@ -1467,6 +1467,31 @@ function normalizePathForDetailMatch(urlObj) {
   }
 }
 
+function extractImageUrlsWithLazyAttrs(html = '', baseUrl = '') {
+  const out = [];
+  const re = /<img\b[^>]*>/gi;
+  let m;
+  while ((m = re.exec(String(html || '')))) {
+    const tag = String(m[0] || '');
+    const attrRe = /(?:\s|^)(src|data-src|data-original|data-lazy)=["']?([^"' >]+)["']?/gi;
+    let am;
+    while ((am = attrRe.exec(tag))) {
+      let src = String(am[2] || '').trim();
+      if (!src || src.startsWith('data:')) continue;
+      if (src.startsWith('//')) src = `https:${src}`;
+      if (!/^https?:\/\//i.test(src)) {
+        try {
+          src = new URL(src, baseUrl).toString();
+        } catch {
+          continue;
+        }
+      }
+      if (!out.includes(src)) out.push(src);
+    }
+  }
+  return out;
+}
+
 function isLikelyDetailAssetUrl(rawUrl = '') {
   const s = String(rawUrl || '').trim();
   if (!s) return false;
@@ -1559,7 +1584,10 @@ async function buildHtmlPreviewFallback({
     /<textarea[^>]*id=["']contentsBuffer["'][^>]*>([\s\S]*?)<\/textarea>/i,
   );
   if (contentsBufferMatch && contentsBufferMatch[1]) {
-    detailHtmlBlocks.push(String(contentsBufferMatch[1]));
+    detailHtmlBlocks.push({
+      html: String(contentsBufferMatch[1]),
+      baseUrl: url,
+    });
   }
 
   const detailIframeMatch = String(html).match(
@@ -1583,7 +1611,12 @@ async function buildHtmlPreviewFallback({
         });
         if (detailRes.ok) {
           const detailHtml = await readHtmlWithCharset(detailRes);
-          if (detailHtml) detailHtmlBlocks.push(detailHtml);
+          if (detailHtml) {
+            detailHtmlBlocks.push({
+              html: detailHtml,
+              baseUrl: detailUrl,
+            });
+          }
         }
       } catch {} finally {
         clearTimeout(detailTimeout);
@@ -1592,19 +1625,26 @@ async function buildHtmlPreviewFallback({
   }
 
   const rawImages = [];
-  const pushImages = (rawHtml, cap = 120) => {
+  const pushImages = (rawHtml, baseForRelative = url, cap = 120) => {
     if (!rawHtml) return;
     const cleanedHtml = stripDomeggookPromoBlocks(String(rawHtml || ''));
-    const list = extractImageUrls(cleanedHtml).slice(0, cap);
+    const list = Array.from(
+      new Set([
+        ...extractImageUrls(cleanedHtml),
+        ...extractImageUrlsWithLazyAttrs(cleanedHtml, baseForRelative),
+      ]),
+    ).slice(0, cap);
     for (const item of list) rawImages.push(item);
   };
 
   for (const block of detailHtmlBlocks) {
-    pushImages(block, 200);
+    const detailHtml = String(block?.html || '');
+    const detailBaseUrl = String(block?.baseUrl || url);
+    pushImages(detailHtml, detailBaseUrl, 200);
     if (rawImages.length >= 200) break;
   }
   if (rawImages.length < 8) {
-    pushImages(html, 200);
+    pushImages(html, url, 200);
   }
 
   const normalizedAll = Array.from(
@@ -2829,7 +2869,26 @@ async function generateRecommendationsBatch({
     }
 
     // Primary flow: OpenAPI preview first.
-    // If it fails (non-timeout), retry once with Playwright parser.
+    // If it fails, try lightweight HTML fallback before Playwright.
+    if (!prev?.ok && allowQuickFallback) {
+      const fallback = await buildHtmlPreviewFallback({
+        sourceUrl: cand.sourceUrl,
+        seedTitle: cand.title,
+        seedPrice: cand.sourcePrice,
+        seedImageUrl: cand.mainImageUrl,
+        strictImageMatch: recommendationPreviewSettings.strictImageMatch,
+        timeoutMs: Math.max(5000, Math.floor(previewTimeoutMs * 0.8)),
+      });
+      if (fallback?.ok) {
+        prev = fallback;
+        previewFallbackRecovered += 1;
+        usedHtmlPreviewFallback = true;
+      } else if (fallback && typeof fallback === 'object') {
+        previewFallbackFailed += 1;
+      }
+    }
+
+    // If still failed (non-timeout), retry once with Playwright parser.
     if (!prev?.ok && !firstPreviewTimedOut) {
       if (previewPlaywrightAttempts < previewPlaywrightRetryBudget) {
         attemptedPlaywrightPreview = true;
@@ -2862,24 +2921,6 @@ async function generateRecommendationsBatch({
           } else {
             previewPlaywrightFailed += 1;
             prev = playwrightFallback || prev;
-            if (allowQuickFallback) {
-              const fallback = await buildHtmlPreviewFallback({
-                sourceUrl: cand.sourceUrl,
-                seedTitle: cand.title,
-                seedPrice: cand.sourcePrice,
-                seedImageUrl: cand.mainImageUrl,
-                strictImageMatch: recommendationPreviewSettings.strictImageMatch,
-                timeoutMs: Math.max(6000, Math.floor(previewTimeoutMs * 0.9)),
-              });
-              if (fallback?.ok) {
-                prev = fallback;
-                previewFallbackRecovered += 1;
-                usedHtmlPreviewFallback = true;
-              } else {
-                previewFallbackFailed += 1;
-                prev = fallback || prev;
-              }
-            }
           }
         } else {
           prev = {
@@ -2887,6 +2928,25 @@ async function generateRecommendationsBatch({
             reason: 'preview_playwright_budget_exhausted',
           };
         }
+      }
+    }
+
+    if (!prev?.ok && allowQuickFallback && !usedHtmlPreviewFallback) {
+      const fallback = await buildHtmlPreviewFallback({
+        sourceUrl: cand.sourceUrl,
+        seedTitle: cand.title,
+        seedPrice: cand.sourcePrice,
+        seedImageUrl: cand.mainImageUrl,
+        strictImageMatch: recommendationPreviewSettings.strictImageMatch,
+        timeoutMs: Math.max(6000, Math.floor(previewTimeoutMs * 0.9)),
+      });
+      if (fallback?.ok) {
+        prev = fallback;
+        previewFallbackRecovered += 1;
+        usedHtmlPreviewFallback = true;
+      } else {
+        previewFallbackFailed += 1;
+        prev = fallback || prev;
       }
     }
 
