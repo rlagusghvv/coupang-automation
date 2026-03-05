@@ -2890,9 +2890,39 @@ async function generateRecommendationsBatch({
       }
     }
 
+    let v = strictValidatePreview(prev, DEFAULT_BAN_KEYWORDS);
+    if (!v.ok) {
+      const strictReason = String(v.reason || '').trim().toLowerCase();
+      const shouldRetryPlaywrightOnStrictReject =
+        !attemptedPlaywrightPreview &&
+        (strictReason === 'no_images' || strictReason === 'no_title');
+      if (shouldRetryPlaywrightOnStrictReject) {
+        previewPlaywrightFallbackNeeded += 1;
+        if (previewPlaywrightAttempts < previewPlaywrightRetryBudget) {
+          attemptedPlaywrightPreview = true;
+          previewPlaywrightAttempts += 1;
+          const strictRetry = await requestPreview(previewPlaywrightTimeoutMs, 'playwright');
+          if (strictRetry?.ok) {
+            prev = strictRetry;
+            previewPlaywrightRecovered += 1;
+            v = strictValidatePreview(prev, DEFAULT_BAN_KEYWORDS);
+          } else {
+            prev = strictRetry || prev;
+            previewPlaywrightFailed += 1;
+            v = strictValidatePreview(prev, DEFAULT_BAN_KEYWORDS);
+          }
+        } else {
+          prev = {
+            ok: false,
+            reason: 'preview_playwright_budget_exhausted',
+          };
+          v = strictValidatePreview(prev, DEFAULT_BAN_KEYWORDS);
+        }
+      }
+    }
+
     validated += 1;
 
-    const v = strictValidatePreview(prev, DEFAULT_BAN_KEYWORDS);
     if (!v.ok) {
       const reason = String(v.reason || 'strict_validate_failed');
       strictRejectCounts[reason] = Number(strictRejectCounts[reason] || 0) + 1;
