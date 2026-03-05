@@ -528,6 +528,35 @@ app.put('/progress', async (req, res) => {
   return res.json({ ok: true });
 });
 
+app.delete('/auth/account', async (req, res) => {
+  try {
+    const session = getEconSession(req);
+    if (!session) return res.status(401).json({ ok: false, error: 'unauthorized' });
+
+    const users = readJsonFileSafe(ECON_AUTH_PATH, { users: [] });
+    const list = Array.isArray(users.users) ? users.users : [];
+    const filtered = list.filter((u) => String(u.id || '') !== String(session.userId));
+    writeJsonFileSafe(ECON_AUTH_PATH, { users: filtered });
+
+    const db = readJsonFileSafe(ECON_PROGRESS_PATH, { progressByUser: {} });
+    const progressByUser = db.progressByUser && typeof db.progressByUser === 'object' ? db.progressByUser : {};
+    if (Object.prototype.hasOwnProperty.call(progressByUser, session.userId)) {
+      delete progressByUser[session.userId];
+      writeJsonFileSafe(ECON_PROGRESS_PATH, { progressByUser });
+    }
+
+    for (const [token, s] of econSessions.entries()) {
+      if (String(s?.userId || '') === String(session.userId)) {
+        econSessions.delete(token);
+      }
+    }
+
+    return res.json({ ok: true, deleted: true });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
 // image proxy for Flutter web (avoid hotlink/CORS issues)
 app.get('/api/image-proxy', async (req, res) => {
   try {
