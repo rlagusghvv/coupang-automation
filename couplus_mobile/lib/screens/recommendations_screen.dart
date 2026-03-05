@@ -132,6 +132,11 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
       'description': '캠핑박스/행잉/트렁크 정리',
     },
   ];
+  static const List<Map<String, String>> _sortOptions = [
+    {'key': 'default', 'label': '기본 추천순'},
+    {'key': 'seo_desc', 'label': 'SEO 점수 높은순'},
+    {'key': 'seo_asc', 'label': 'SEO 점수 낮은순'},
+  ];
 
   bool _loading = false;
   bool _loadingRecoCategories = false;
@@ -157,9 +162,39 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
   List<Map<String, String>> _recoCategories =
       List<Map<String, String>>.from(_fallbackRecoCategories);
   String _selectedRecoCategoryKey = 'all';
+  String _selectedSortKey = 'default';
 
-  List<Map<String, dynamic>> get _visibleItems =>
-      _showSavedOnly ? _savedItems : _items;
+  num? _seoScoreOf(Map<String, dynamic> item) {
+    return num.tryParse((item['seoScore'] ?? '').toString());
+  }
+
+  num _recommendScoreOf(Map<String, dynamic> item) {
+    return num.tryParse((item['score'] ?? '').toString()) ?? 0;
+  }
+
+  List<Map<String, dynamic>> get _visibleItems {
+    final source = _showSavedOnly ? _savedItems : _items;
+    if (_selectedSortKey == 'default') return source;
+    final sorted = List<Map<String, dynamic>>.from(source);
+    sorted.sort((a, b) {
+      final sa = _seoScoreOf(a);
+      final sb = _seoScoreOf(b);
+      if (sa == null && sb == null) {
+        return _recommendScoreOf(b).compareTo(_recommendScoreOf(a));
+      }
+      if (sa == null) return 1;
+      if (sb == null) return -1;
+      if (_selectedSortKey == 'seo_asc') {
+        final cmp = sa.compareTo(sb);
+        if (cmp != 0) return cmp;
+      } else {
+        final cmp = sb.compareTo(sa);
+        if (cmp != 0) return cmp;
+      }
+      return _recommendScoreOf(b).compareTo(_recommendScoreOf(a));
+    });
+    return sorted;
+  }
 
   String _nowLabel() {
     final n = DateTime.now();
@@ -431,6 +466,22 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
         raw.map((e) => e.toString().trim()).where((s) => s.isNotEmpty).toList();
     if (max <= 0) return images;
     return images.take(max).toList();
+  }
+
+  List<String> _searchTagsOf(Map<String, dynamic> item, {int max = 6}) {
+    final raw = (item['searchTags'] as List?) ?? const [];
+    final out = <String>[];
+    final seen = <String>{};
+    for (final value in raw) {
+      final tag = value.toString().trim();
+      if (tag.isEmpty) continue;
+      final key = tag.replaceAll(RegExp(r'\s+'), '').toLowerCase();
+      if (key.isEmpty || seen.contains(key)) continue;
+      seen.add(key);
+      out.add(tag);
+      if (max > 0 && out.length >= max) break;
+    }
+    return out;
   }
 
   Future<void> _loadRecoCategories() async {
@@ -1495,9 +1546,36 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
                     ],
                   ],
                 ),
+                const SizedBox(height: 10),
+                InputDecorator(
+                  decoration: const InputDecoration(
+                    labelText: '목록 정렬',
+                    isDense: true,
+                  ),
+                  child: DropdownButtonHideUnderline(
+                    child: DropdownButton<String>(
+                      value: _selectedSortKey,
+                      isExpanded: true,
+                      onChanged: _loading
+                          ? null
+                          : (value) {
+                              if (value == null) return;
+                              setState(() => _selectedSortKey = value);
+                            },
+                      items: _sortOptions
+                          .map(
+                            (row) => DropdownMenuItem<String>(
+                              value: row['key'],
+                              child: Text(row['label'] ?? '기본 추천순'),
+                            ),
+                          )
+                          .toList(),
+                    ),
+                  ),
+                ),
                 const SizedBox(height: 4),
                 Text(
-                  '채우기(우측 상단 새로고침)는 선택한 카테고리 기준으로 추천을 생성합니다. 자동 업로드는 현재 목록 상위 항목에 적용됩니다.',
+                  '채우기(우측 상단 새로고침)는 선택한 카테고리 기준으로 추천을 생성합니다. 자동 업로드는 현재 목록 상위 항목에 적용되며, 목록 정렬은 화면 표시 순서에만 반영됩니다.',
                   style: TextStyle(
                     fontSize: 12,
                     color: Theme.of(context)
@@ -1909,6 +1987,7 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
                     num.tryParse((it['seoScore'] ?? '').toString())?.toInt();
                 final seoGrade = (it['seoGrade'] ?? '').toString().trim();
                 final seoGradeUpper = seoGrade.toUpperCase();
+                final searchTags = _searchTagsOf(it, max: 8);
                 final previewImagesAll = _previewImagesOf(it, max: 0);
                 final previewImages = previewImagesAll.take(6).toList();
                 final qc = (it['qc'] as Map?)?.cast<String, dynamic>() ??
@@ -2074,6 +2153,29 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
                                   ),
                               ],
                             ),
+                            if (searchTags.isNotEmpty) ...[
+                              const SizedBox(height: 6),
+                              Wrap(
+                                spacing: 6,
+                                runSpacing: 6,
+                                children: [
+                                  for (final tag in searchTags.take(5))
+                                    InfoChip(
+                                      label: '#$tag',
+                                      color: Theme.of(context)
+                                          .colorScheme
+                                          .tertiary,
+                                    ),
+                                  if (searchTags.length > 5)
+                                    InfoChip(
+                                      label: '+${searchTags.length - 5}',
+                                      color: Theme.of(context)
+                                          .colorScheme
+                                          .outline,
+                                    ),
+                                ],
+                              ),
+                            ],
                             if (previewImages.isNotEmpty) ...[
                               const SizedBox(height: 8),
                               SizedBox(

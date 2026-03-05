@@ -3548,6 +3548,16 @@ function resolveRecommendationUploadOverrides(item = {}) {
   const seo = payload?.seo && typeof payload.seo === "object" ? payload.seo : {};
   const category = payload?.category && typeof payload.category === "object" ? payload.category : {};
   const keyword = pickFirstNonEmpty(item?.keyword, seo?.keyword);
+  const searchTags = normalizeStringList(
+    [
+      ...(Array.isArray(item?.searchTags) ? item.searchTags : []),
+      ...(Array.isArray(seo?.searchTags) ? seo.searchTags : []),
+    ],
+    20,
+  )
+    .map((x) => x.slice(0, 20).trim())
+    .filter(Boolean)
+    .slice(0, 10);
 
   const titleOverrideRaw = pickFirstNonEmpty(item?.seoTitle, seo?.title, item?.title);
   const titleOverride = String(titleOverrideRaw || "").trim();
@@ -3559,6 +3569,7 @@ function resolveRecommendationUploadOverrides(item = {}) {
     overrides.seedTitle = titleOverride;
   }
   if (keyword) overrides.keyword = keyword;
+  if (searchTags.length > 0) overrides.searchTags = searchTags;
   if (categoryOverrideCode) overrides.categoryOverrideCode = categoryOverrideCode;
   return overrides;
 }

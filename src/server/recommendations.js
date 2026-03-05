@@ -7,6 +7,7 @@ import { stripDomeggookPromoBlocks } from '../utils/domeggookDetailHtml.js';
 import { buildProxyUrl } from '../utils/imageProxy.js';
 import { resolveDisplayCategoryCode } from '../utils/categoryMap.js';
 import { buildCoupangSeoProfile } from '../utils/titleSuggest.js';
+import { buildSearchTags, normalizeSearchTags } from '../utils/searchTags.js';
 import { recommendCategory } from '../coupang/api/recommendCategory.js';
 import { dbAll, dbRun, openDb } from './storage_sqlite_internal.js';
 
@@ -1006,6 +1007,12 @@ export async function listRecommendations(userId, { limit = 50 } = {}) {
       : null;
     const seoGradeRaw = String(payload?.seo?.grade || '').trim();
     const seoGrade = seoGradeRaw || null;
+    const searchTags = buildSearchTags({
+      title: seoTitle || r.title || '',
+      keyword: r.keyword || '',
+      extraTags: Array.isArray(payload?.seo?.searchTags) ? payload.seo.searchTags : [],
+      max: 10,
+    });
     const categoryCode = toPositiveInt(payload?.category?.code);
     const categorySourceRaw = String(payload?.category?.source || '').trim();
     const categorySource = categorySourceRaw || (categoryCode ? 'payload' : null);
@@ -1020,6 +1027,7 @@ export async function listRecommendations(userId, { limit = 50 } = {}) {
       originalTitle: originalTitleRaw || seoTitle || r.title,
       seoScore,
       seoGrade,
+      searchTags,
       categoryCode,
       categorySource,
       mainImageUrl: toRecommendationImageUrl(r.main_image_url, sourceUrl),
@@ -1047,15 +1055,33 @@ function normalizeRecommendationItemInput(item = {}) {
   const sourceUrl = String(it.sourceUrl || '').trim();
   const payload = it.payload && typeof it.payload === 'object' ? it.payload : {};
   const seoTitleInput = String(it.seoTitle || '').trim();
+  const keyword = String(it.keyword || '').trim();
   const qc = it.qc && typeof it.qc === 'object' ? it.qc : {};
   const previewImages = Array.isArray(it.previewImages)
     ? it.previewImages.map((u) => String(u || '').trim()).filter(Boolean).slice(0, 30)
     : [];
   const contentImageCount = Number(it.contentImageCount ?? qc?.detailImageCount ?? 0) || 0;
+  const payloadSeoTags = Array.isArray(payload?.seo?.searchTags) ? payload.seo.searchTags : [];
+  const searchTags = buildSearchTags({
+    title: String(it.title || seoTitleInput || '').trim(),
+    keyword,
+    extraTags: [
+      ...(Array.isArray(it.searchTags) ? it.searchTags : []),
+      ...payloadSeoTags,
+    ],
+    max: 10,
+  });
   const mergedPayload = {
     ...(payload || {}),
     ...(Object.keys(qc).length ? { qc } : {}),
   };
+  if (searchTags.length > 0) {
+    mergedPayload.seo = {
+      ...(mergedPayload?.seo && typeof mergedPayload.seo === 'object' ? mergedPayload.seo : {}),
+      searchTags: normalizeSearchTags(searchTags, { max: 10 }),
+      ...(keyword ? { keyword } : {}),
+    };
+  }
   if (
     (!mergedPayload.preview || typeof mergedPayload.preview !== 'object') &&
     (previewImages.length > 0 || contentImageCount > 0)
@@ -1076,7 +1102,7 @@ function normalizeRecommendationItemInput(item = {}) {
   });
   return {
     sourceUrl,
-    keyword: String(it.keyword || '').trim(),
+    keyword,
     title: String(it.title || seoTitleInput || '').trim(),
     mainImageUrl: String(it.mainImageUrl || '').trim(),
     sourcePrice: Number.isFinite(Number(it.sourcePrice)) ? Number(it.sourcePrice) : null,
@@ -1125,6 +1151,12 @@ function mapSavedRowToItem(r) {
     : null;
   const seoGradeRaw = String(payload?.seo?.grade || '').trim();
   const seoGrade = seoGradeRaw || null;
+  const searchTags = buildSearchTags({
+    title: seoTitle || r.title || '',
+    keyword: r.keyword || '',
+    extraTags: Array.isArray(payload?.seo?.searchTags) ? payload.seo.searchTags : [],
+    max: 10,
+  });
   const categoryCode = toPositiveInt(payload?.category?.code);
   const categorySourceRaw = String(payload?.category?.source || '').trim();
   const categorySource = categorySourceRaw || (categoryCode ? 'payload' : null);
@@ -1137,6 +1169,7 @@ function mapSavedRowToItem(r) {
     originalTitle: originalTitleRaw || seoTitle || r.title,
     seoScore,
     seoGrade,
+    searchTags,
     categoryCode,
     categorySource,
     mainImageUrl: toRecommendationImageUrl(r.main_image_url, sourceUrl),
@@ -1960,6 +1993,16 @@ async function enrichRecommendationsForUpload({ items = [], settings = {} } = {}
     if (categoryCode) categoryResolved += 1;
 
     const payload = item?.payload && typeof item.payload === 'object' ? item.payload : {};
+    const payloadSeoTags = Array.isArray(payload?.seo?.searchTags) ? payload.seo.searchTags : [];
+    const searchTags = buildSearchTags({
+      title: resolvedTitle || currentTitle,
+      keyword,
+      extraTags: [
+        ...(Array.isArray(item?.searchTags) ? item.searchTags : []),
+        ...payloadSeoTags,
+      ],
+      max: 10,
+    });
     const nextPayload = {
       ...payload,
       seo: {
@@ -1974,6 +2017,7 @@ async function enrichRecommendationsForUpload({ items = [], settings = {} } = {}
         grade: String(seoProfile?.grade || ''),
         checks: Array.isArray(seoProfile?.checks) ? seoProfile.checks : [],
         keyword,
+        searchTags: normalizeSearchTags(searchTags, { max: 10 }),
       },
       category: {
         ...(payload?.category && typeof payload.category === 'object' ? payload.category : {}),
@@ -1990,6 +2034,7 @@ async function enrichRecommendationsForUpload({ items = [], settings = {} } = {}
       title: resolvedTitle || currentTitle,
       seoTitle: resolvedTitle || currentTitle,
       originalTitle: currentTitle || '',
+      searchTags,
       categoryCode: categoryCode || null,
       categorySource,
       payload: nextPayload,
@@ -3208,6 +3253,12 @@ async function generateRecommendationsBatch({
               .map((u) => toRecommendationImageUrl(u, cand.sourceUrl))
               .slice(0, 30)
           : [];
+        const searchTags = buildSearchTags({
+          title: rescored.title || prevTitle || cand.title || '',
+          keyword: cand.keyword || '',
+          extraTags: Array.isArray(cand?.payload?.seo?.searchTags) ? cand.payload.seo.searchTags : [],
+          max: 10,
+        });
         onProgress({
           stage: 'validate',
           validated,
@@ -3226,6 +3277,7 @@ async function generateRecommendationsBatch({
             marginRate: rescored.marginRate,
             score: rescored.score,
             reason: resolvedReason,
+            searchTags,
             contentImageCount: detailDisplayCount,
             previewImages,
             qc: {
@@ -3289,6 +3341,12 @@ async function generateRecommendationsBatch({
       fallbackFilledCount += 1;
       if (typeof onProgress === 'function') {
         try {
+          const searchTags = buildSearchTags({
+            title: String(cand.title || '').trim(),
+            keyword: String(cand.keyword || '').trim(),
+            extraTags: Array.isArray(cand?.payload?.seo?.searchTags) ? cand.payload.seo.searchTags : [],
+            max: 10,
+          });
           onProgress({
             stage: 'validate',
             validated,
@@ -3307,6 +3365,7 @@ async function generateRecommendationsBatch({
               marginRate: Number.isFinite(Number(cand.marginRate)) ? Number(cand.marginRate) : null,
               score: Number.isFinite(Number(cand.score)) ? Number(cand.score) : null,
               reason: String(cand.reason || '').trim(),
+              searchTags,
               contentImageCount: 0,
               previewImages: [],
               qc: {

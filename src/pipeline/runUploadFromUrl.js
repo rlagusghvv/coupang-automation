@@ -23,6 +23,7 @@ import { computePrice } from "../utils/price.js";
 import { resolveLocalImageBase } from "../utils/localImageHost.js";
 import { downloadImagesWithPlaywright } from "../utils/playwrightImageDownload.js";
 import { deployPagesAssets } from "../utils/pagesDeploy.js";
+import { buildSearchTags } from "../utils/searchTags.js";
 import { previewUploadFromUrl } from "./previewUploadFromUrl.js";
 import { evaluateQcGate } from "./qcGate.js";
 
@@ -177,62 +178,6 @@ function buildItemAttributesFromOptionValues(values) {
 function toPositiveInt(value) {
   const n = Number(value);
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : null;
-}
-
-function normalizeSearchTagToken(raw) {
-  const cleaned = String(raw || "")
-    .replace(/[^0-9A-Za-z가-힣\s]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-  if (!cleaned) return "";
-  if (cleaned.length < 2) return "";
-  return cleaned.length > 20 ? cleaned.slice(0, 20).trim() : cleaned;
-}
-
-function uniqueSearchTags(list = [], max = 10) {
-  const out = [];
-  const seen = new Set();
-  for (const raw of list) {
-    const token = normalizeSearchTagToken(raw);
-    if (!token) continue;
-    const key = token.replace(/\s+/g, "").toLowerCase();
-    if (!key || seen.has(key)) continue;
-    seen.add(key);
-    out.push(token);
-    if (out.length >= max) break;
-  }
-  return out;
-}
-
-function buildSearchTags({ title = "", keyword = "", extraTags = [] } = {}) {
-  const titleText = String(title || "").trim();
-  const keywordText = String(keyword || "").trim();
-  const extras = Array.isArray(extraTags)
-    ? extraTags
-    : String(extraTags || "")
-        .split(/\n|,/)
-        .map((x) => String(x || "").trim())
-        .filter(Boolean);
-
-  const titleWords = titleText
-    .replace(/[^0-9A-Za-z가-힣\s]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim()
-    .split(" ")
-    .map((x) => x.trim())
-    .filter((x) => x.length >= 2);
-  const bigrams = [];
-  for (let i = 0; i < Math.min(6, titleWords.length - 1); i += 1) {
-    const one = `${titleWords[i]} ${titleWords[i + 1]}`.trim();
-    if (one.length >= 2 && one.length <= 20) bigrams.push(one);
-  }
-
-  return uniqueSearchTags([
-    keywordText,
-    ...extras,
-    ...bigrams,
-    ...titleWords.slice(0, 8),
-  ]);
 }
 
 export async function runUploadFromUrl(inputUrl, settings = {}, runtime = {}) {
@@ -526,6 +471,7 @@ export async function runUploadFromUrl(inputUrl, settings = {}, runtime = {}) {
     title: draft.title,
     keyword: String(settings.keyword || settings.seedKeyword || "").trim(),
     extraTags: settings.searchTags,
+    max: Math.max(3, Math.min(10, Number(settings.searchTagsLimit) || 8)),
   });
 
   const baseBody = buildSellerProductBody({

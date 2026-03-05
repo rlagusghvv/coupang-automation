@@ -2,33 +2,7 @@ import { deliveryFree } from "../policies/deliveryFree.js";
 import { returnNoCenter } from "../policies/returnNoCenter.js";
 import { buildTopImages } from "./buildTopImages.js";
 import { buildSingleItem } from "./buildSingleItem.js";
-
-function normalizeSearchTags(searchTags = []) {
-  const src = Array.isArray(searchTags)
-    ? searchTags
-    : String(searchTags || "")
-        .split(/\n|,/)
-        .map((x) => String(x || "").trim())
-        .filter(Boolean);
-  const out = [];
-  const seen = new Set();
-  for (const raw of src) {
-    const cleaned = String(raw || "")
-      .replace(/[^0-9A-Za-z가-힣\s]/g, " ")
-      .replace(/\s+/g, " ")
-      .trim();
-    if (!cleaned) continue;
-    if (cleaned.length < 2) continue;
-    const one = cleaned.length > 20 ? cleaned.slice(0, 20).trim() : cleaned;
-    if (!one) continue;
-    const key = one.replace(/\s+/g, "").toLowerCase();
-    if (!key || seen.has(key)) continue;
-    seen.add(key);
-    out.push(one);
-    if (out.length >= 10) break;
-  }
-  return out;
-}
+import { normalizeSearchTags } from "../../utils/searchTags.js";
 
 export function buildSellerProductBody({
   vendorId,
