@@ -403,7 +403,53 @@ function pickPriorityTokens(tokens = []) {
   return uniqueTokens(out, toCanonicalSeoToken);
 }
 
-export function buildCoupangSeoTitle(rawTitle, { maxLen = 55, minLen = 8 } = {}) {
+function collectExternalSeoTokens(...inputs) {
+  const out = [];
+  for (const input of inputs) {
+    const text = cleanTitle(input);
+    if (!text) continue;
+    const tokens = text
+      .split(" ")
+      .map((t) => t.trim())
+      .filter(Boolean)
+      .flatMap((t) => explodeSeoTokens(t))
+      .map((t) => t.replace(/하기$/g, "").replace(/정리하기$/g, "정리"))
+      .filter((t) => t.length >= 2)
+      .filter((t) => !COUPANG_TITLE_NOISE.some((w) => t.includes(w)));
+    out.push(...tokens);
+  }
+  return uniqueTokens(out, toCanonicalSeoToken);
+}
+
+function buildSeoTokenSet(text = "") {
+  const set = new Set();
+  for (const token of explodeSeoTokens(text)) {
+    const canonical = toCanonicalSeoToken(token);
+    if (canonical) set.add(canonical);
+  }
+  return set;
+}
+
+function hasSeoTokenMatch(titleTokenSet, token = "") {
+  const canonical = toCanonicalSeoToken(token);
+  if (!canonical) return false;
+  if (titleTokenSet.has(canonical)) return true;
+  for (const t of titleTokenSet) {
+    if (t.includes(canonical) || canonical.includes(t)) return true;
+  }
+  return false;
+}
+
+function clampInt(value, min, max, fallback) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(min, Math.min(max, Math.floor(n)));
+}
+
+export function buildCoupangSeoTitle(
+  rawTitle,
+  { maxLen = 55, minLen = 8, keyword = "", categoryText = "" } = {},
+) {
   const max = Number.isFinite(Number(maxLen))
     ? Math.max(20, Math.min(80, Math.floor(Number(maxLen))))
     : 55;
@@ -424,6 +470,26 @@ export function buildCoupangSeoTitle(rawTitle, { maxLen = 55, minLen = 8 } = {})
     .filter((t) => t.length >= 2)
     .map((t) => t.replace(/하기$/g, "").replace(/정리하기$/g, "정리"))
     .filter((t) => !COUPANG_TITLE_NOISE.some((w) => t.includes(w)));
+  const baseCanonicalTokens = new Set(
+    baseTokens
+      .map((t) => toCanonicalSeoToken(t))
+      .filter(Boolean),
+  );
+  const externalTokens = collectExternalSeoTokens(keyword, categoryText).filter((t) => {
+    const canonical = toCanonicalSeoToken(t);
+    if (!canonical) return false;
+    for (const baseCanonical of baseCanonicalTokens) {
+      if (
+        canonical === baseCanonical ||
+        canonical.includes(baseCanonical) ||
+        baseCanonical.includes(canonical)
+      ) {
+        return true;
+      }
+    }
+    return false;
+  });
+  const externalPriorityTokens = pickPriorityTokens(externalTokens);
 
   const cleanedTokens = baseTokens.filter((t) => !["정리", "수납"].includes(t));
   const themePrefix = pickThemePrefix(base, baseTokens);
@@ -439,7 +505,9 @@ export function buildCoupangSeoTitle(rawTitle, { maxLen = 55, minLen = 8 } = {})
   const ordered = uniqueTokens(
     [
       themePrefix,
+      ...externalPriorityTokens,
       head,
+      ...externalTokens,
       ...priorityTokens,
       ...contextTokens,
       ...cleanedTokens,
@@ -467,6 +535,136 @@ export function buildCoupangSeoTitle(rawTitle, { maxLen = 55, minLen = 8 } = {})
     out = String(base).slice(0, max).trim();
   }
   return out.replace(/\s+/g, " ").trim();
+}
+
+export function buildCoupangSeoProfile(
+  rawTitle,
+  {
+    maxLen = 55,
+    minLen = 8,
+    keyword = "",
+    categoryText = "",
+  } = {},
+) {
+  const max = clampInt(maxLen, 20, 80, 55);
+  const min = clampInt(minLen, 4, max - 2, 8);
+  const originalTitle = cleanTitle(rawTitle);
+  const seoTitle = buildCoupangSeoTitle(originalTitle, {
+    maxLen: max,
+    minLen: min,
+    keyword,
+    categoryText,
+  });
+  const resolvedTitle = String(seoTitle || originalTitle).replace(/\s+/g, " ").trim();
+  const keywordTokens = collectExternalSeoTokens(keyword);
+  const keywordTokenSet = new Set(keywordTokens.map((t) => toCanonicalSeoToken(t)).filter(Boolean));
+  const titleTokenSet = buildSeoTokenSet(resolvedTitle);
+  const head = pickProductHead(originalTitle || keyword || resolvedTitle);
+  const hasHead = includesHead(resolvedTitle, head);
+  const specTokens = extractSpecTokens(originalTitle);
+  const specMatched = specTokens.some((spec) => {
+    const normalizedSpec = String(spec || "").replace(/\s+/g, "").trim();
+    if (!normalizedSpec) return false;
+    return String(resolvedTitle).replace(/\s+/g, "").includes(normalizedSpec);
+  });
+  const canonicalTokens = resolvedTitle
+    .split(" ")
+    .map((t) => toCanonicalSeoToken(t))
+    .filter(Boolean);
+  const uniqueCanonicalCount = new Set(canonicalTokens).size;
+  const duplicateCanonicalCount = Math.max(0, canonicalTokens.length - uniqueCanonicalCount);
+
+  let score = 0;
+  const checks = [];
+  const pushCheck = (id, label, partial, maxScore, detail = "") => {
+    const bounded = Math.max(0, Math.min(maxScore, Number(partial) || 0));
+    score += bounded;
+    checks.push({
+      id,
+      label,
+      ok: bounded >= Math.ceil(maxScore * 0.7),
+      score: bounded,
+      maxScore,
+      detail: String(detail || ""),
+    });
+  };
+
+  const len = resolvedTitle.length;
+  let lengthScore = 8;
+  if (len >= 18 && len <= 38) lengthScore = 25;
+  else if (len >= min && len <= max) lengthScore = 16;
+  pushCheck("length", "제목 길이", lengthScore, 25, `${len}자 (권장 18~38자)`);
+
+  let keywordScore = 12;
+  let keywordDetail = "키워드 미지정";
+  if (keywordTokenSet.size > 0) {
+    let matched = 0;
+    for (const token of keywordTokenSet) {
+      if (hasSeoTokenMatch(titleTokenSet, token)) matched += 1;
+    }
+    const ratio = matched / keywordTokenSet.size;
+    keywordScore = Math.round(25 * ratio);
+    if (matched > 0 && keywordScore < 8) keywordScore = 8;
+    keywordDetail = `${matched}/${keywordTokenSet.size} 매칭`;
+  }
+  pushCheck("keyword_match", "키워드 매칭", keywordScore, 25, keywordDetail);
+
+  pushCheck(
+    "head_match",
+    "상품 핵심어 포함",
+    hasHead ? 20 : 4,
+    20,
+    head ? `핵심어: ${head}` : "핵심어 미확정",
+  );
+
+  let specScore = 10;
+  let specDetail = "규격/수량 힌트 없음";
+  if (specTokens.length > 0) {
+    specScore = specMatched ? 10 : 2;
+    specDetail = specMatched
+      ? `규격 반영: ${specTokens.join(", ")}`
+      : `규격 미반영: ${specTokens.join(", ")}`;
+  }
+  pushCheck("spec_match", "규격/수량 반영", specScore, 10, specDetail);
+
+  const duplicatePenalty = Math.min(10, duplicateCanonicalCount * 3);
+  pushCheck(
+    "token_diversity",
+    "토큰 다양성",
+    10 - duplicatePenalty,
+    10,
+    duplicateCanonicalCount > 0 ? `중복 토큰 ${duplicateCanonicalCount}개` : "중복 없음",
+  );
+
+  const wordCount = resolvedTitle.split(" ").filter(Boolean).length;
+  const readabilityScore = wordCount >= 2 && wordCount <= 9 ? 10 : 4;
+  pushCheck("readability", "가독성", readabilityScore, 10, `단어 수 ${wordCount}`);
+
+  const finalScore = Math.max(0, Math.min(100, Math.round(score)));
+  const grade =
+    finalScore >= 85
+      ? "A"
+      : finalScore >= 70
+        ? "B"
+        : finalScore >= 55
+          ? "C"
+          : "D";
+
+  return {
+    title: resolvedTitle,
+    score: finalScore,
+    grade,
+    checks,
+    meta: {
+      length: len,
+      wordCount,
+      keywordTokenCount: keywordTokenSet.size,
+      matchedKeywordCount:
+        keywordTokenSet.size > 0
+          ? checks.find((c) => c.id === "keyword_match")?.detail || ""
+          : "0/0",
+    },
+  };
 }
 
 function normalizePhraseWords(s) {

@@ -6,7 +6,7 @@ import { extractImageUrls } from '../utils/contentImages.js';
 import { stripDomeggookPromoBlocks } from '../utils/domeggookDetailHtml.js';
 import { buildProxyUrl } from '../utils/imageProxy.js';
 import { resolveDisplayCategoryCode } from '../utils/categoryMap.js';
-import { buildCoupangSeoTitle } from '../utils/titleSuggest.js';
+import { buildCoupangSeoProfile } from '../utils/titleSuggest.js';
 import { recommendCategory } from '../coupang/api/recommendCategory.js';
 import { dbAll, dbRun, openDb } from './storage_sqlite_internal.js';
 
@@ -1001,6 +1001,11 @@ export async function listRecommendations(userId, { limit = 50 } = {}) {
     const seoTitleRaw = String(payload?.seo?.title || r.title || '').trim();
     const seoTitle = seoTitleRaw || String(r.title || '').trim();
     const originalTitleRaw = String(payload?.seo?.originalTitle || r.title || '').trim();
+    const seoScore = Number.isFinite(Number(payload?.seo?.score))
+      ? Number(payload.seo.score)
+      : null;
+    const seoGradeRaw = String(payload?.seo?.grade || '').trim();
+    const seoGrade = seoGradeRaw || null;
     const categoryCode = toPositiveInt(payload?.category?.code);
     const categorySourceRaw = String(payload?.category?.source || '').trim();
     const categorySource = categorySourceRaw || (categoryCode ? 'payload' : null);
@@ -1013,6 +1018,8 @@ export async function listRecommendations(userId, { limit = 50 } = {}) {
       title: seoTitle || r.title,
       seoTitle: seoTitle || r.title,
       originalTitle: originalTitleRaw || seoTitle || r.title,
+      seoScore,
+      seoGrade,
       categoryCode,
       categorySource,
       mainImageUrl: toRecommendationImageUrl(r.main_image_url, sourceUrl),
@@ -1113,6 +1120,11 @@ function mapSavedRowToItem(r) {
   const seoTitleRaw = String(payload?.seo?.title || r.title || '').trim();
   const seoTitle = seoTitleRaw || String(r.title || '').trim();
   const originalTitleRaw = String(payload?.seo?.originalTitle || r.title || '').trim();
+  const seoScore = Number.isFinite(Number(payload?.seo?.score))
+    ? Number(payload.seo.score)
+    : null;
+  const seoGradeRaw = String(payload?.seo?.grade || '').trim();
+  const seoGrade = seoGradeRaw || null;
   const categoryCode = toPositiveInt(payload?.category?.code);
   const categorySourceRaw = String(payload?.category?.source || '').trim();
   const categorySource = categorySourceRaw || (categoryCode ? 'payload' : null);
@@ -1123,6 +1135,8 @@ function mapSavedRowToItem(r) {
     title: seoTitle || r.title,
     seoTitle: seoTitle || r.title,
     originalTitle: originalTitleRaw || seoTitle || r.title,
+    seoScore,
+    seoGrade,
     categoryCode,
     categorySource,
     mainImageUrl: toRecommendationImageUrl(r.main_image_url, sourceUrl),
@@ -1756,6 +1770,14 @@ function resolveRecommendationUploadSettings(settings = {}) {
         55,
       ),
     ),
+    seoMinScore: Math.floor(
+      clampNumber(
+        settings?.recommendationSeoMinScore,
+        40,
+        95,
+        70,
+      ),
+    ),
     categoryOverrideCode: toPositiveInt(settings?.categoryOverrideCode),
     categoryDefaultCode: toPositiveInt(settings?.defaultDisplayCategoryCode),
     categoryPredictEnabled: parseBoolean(
@@ -1841,6 +1863,9 @@ async function enrichRecommendationsForUpload({ items = [], settings = {} } = {}
       diagnostics: {
         total: 0,
         seoApplied: 0,
+        seoAverageScore: 0,
+        seoHighScoreCount: 0,
+        seoLowScoreCount: 0,
         categoryResolved: 0,
         categoryPredicted: 0,
         categoryPredictFailed: 0,
@@ -1859,6 +1884,9 @@ async function enrichRecommendationsForUpload({ items = [], settings = {} } = {}
 
   const out = [];
   let seoApplied = 0;
+  let seoScoreTotal = 0;
+  let seoHighScoreCount = 0;
+  let seoLowScoreCount = 0;
   let categoryResolved = 0;
   let categoryPredicted = 0;
   let categoryPredictFailed = 0;
@@ -1867,14 +1895,25 @@ async function enrichRecommendationsForUpload({ items = [], settings = {} } = {}
     const item = list[i] && typeof list[i] === 'object' ? list[i] : {};
     const currentTitle = String(item?.title || '').trim();
     const draftMeta = extractRecommendationPreviewDraft(item);
+    const keyword = String(item?.keyword || '').trim();
 
+    const seoProfile = buildCoupangSeoProfile(currentTitle, {
+      maxLen: uploadSettings.seoMaxLen,
+      minLen: 8,
+      keyword,
+      categoryText: draftMeta.categoryText,
+    });
     const seoTitle = uploadSettings.seoEnabled
-      ? buildCoupangSeoTitle(currentTitle, { maxLen: uploadSettings.seoMaxLen })
-      : '';
+      ? String(seoProfile?.title || currentTitle).trim()
+      : currentTitle;
     const resolvedTitle = String(seoTitle || currentTitle).trim();
     if (resolvedTitle && currentTitle && resolvedTitle !== currentTitle) {
       seoApplied += 1;
     }
+    const seoScore = Number(seoProfile?.score || 0) || 0;
+    seoScoreTotal += seoScore;
+    if (seoScore >= 85) seoHighScoreCount += 1;
+    if (seoScore < uploadSettings.seoMinScore) seoLowScoreCount += 1;
 
     let categoryCode = null;
     let categorySource = 'unresolved';
@@ -1930,6 +1969,11 @@ async function enrichRecommendationsForUpload({ items = [], settings = {} } = {}
         applied: Boolean(resolvedTitle && currentTitle && resolvedTitle !== currentTitle),
         source: uploadSettings.seoEnabled ? 'rule' : 'original',
         maxLen: uploadSettings.seoMaxLen,
+        minScore: uploadSettings.seoMinScore,
+        score: seoScore,
+        grade: String(seoProfile?.grade || ''),
+        checks: Array.isArray(seoProfile?.checks) ? seoProfile.checks : [],
+        keyword,
       },
       category: {
         ...(payload?.category && typeof payload.category === 'object' ? payload.category : {}),
@@ -1954,13 +1998,16 @@ async function enrichRecommendationsForUpload({ items = [], settings = {} } = {}
 
   return {
     items: out,
-    diagnostics: {
-      total: list.length,
-      seoApplied,
-      categoryResolved,
-      categoryPredicted,
-      categoryPredictFailed,
-    },
+      diagnostics: {
+        total: list.length,
+        seoApplied,
+        seoAverageScore: list.length > 0 ? Number((seoScoreTotal / list.length).toFixed(2)) : 0,
+        seoHighScoreCount,
+        seoLowScoreCount,
+        categoryResolved,
+        categoryPredicted,
+        categoryPredictFailed,
+      },
   };
 }
 
