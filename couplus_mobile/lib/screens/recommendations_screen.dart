@@ -23,28 +23,113 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
     },
     {
       'key': 'car',
-      'label': '차량용',
-      'description': '차량 정리/거치 중심',
+      'label': '차량용 전체',
+      'description': '차량 수납/거치/선정리 통합',
+    },
+    {
+      'key': 'car_storage',
+      'label': '차량 수납',
+      'description': '트렁크/시트백/콘솔 정리',
+    },
+    {
+      'key': 'car_mount',
+      'label': '차량 거치',
+      'description': '휴대폰/태블릿 거치 위주',
+    },
+    {
+      'key': 'car_cable',
+      'label': '차량 케이블 정리',
+      'description': '충전선/선고정/클립 위주',
     },
     {
       'key': 'pet',
-      'label': '반려동물',
-      'description': '반려동물 용품 중심',
+      'label': '반려동물 전체',
+      'description': '산책/그루밍/놀이 통합',
+    },
+    {
+      'key': 'pet_walk',
+      'label': '반려동물 산책',
+      'description': '하네스/리드줄/배변용품',
+    },
+    {
+      'key': 'pet_groom',
+      'label': '반려동물 그루밍',
+      'description': '브러쉬/털관리/목욕보조',
+    },
+    {
+      'key': 'pet_toy',
+      'label': '반려동물 장난감',
+      'description': '강아지/고양이 놀이용품',
     },
     {
       'key': 'home',
-      'label': '생활/수납',
-      'description': '주방/욕실/정리 중심',
+      'label': '생활/수납 전체',
+      'description': '주방/욕실/세탁/옷장/현관/거실/청소',
+    },
+    {
+      'key': 'kitchen_storage',
+      'label': '주방 수납',
+      'description': '싱크대/냉장고/서랍 정리',
+    },
+    {
+      'key': 'bathroom_storage',
+      'label': '욕실 수납',
+      'description': '욕실 선반/칫솔꽂이/타월걸이',
+    },
+    {
+      'key': 'laundry_storage',
+      'label': '세탁실 정리',
+      'description': '세제/빨래/틈새수납',
+    },
+    {
+      'key': 'closet_storage',
+      'label': '옷장/서랍 정리',
+      'description': '압축팩/칸막이/보관함',
+    },
+    {
+      'key': 'entryway_storage',
+      'label': '현관/신발장 정리',
+      'description': '우산꽂이/신발수납/도어후크',
+    },
+    {
+      'key': 'living_storage',
+      'label': '거실 정리',
+      'description': '리모컨/소파/테이블 수납',
+    },
+    {
+      'key': 'cleaning_tools',
+      'label': '청소도구 정리',
+      'description': '밀대/빗자루/브러쉬 거치',
     },
     {
       'key': 'desk',
-      'label': '데스크/사무',
-      'description': '책상/케이블 정리 중심',
+      'label': '데스크/사무 전체',
+      'description': '케이블/책상수납 통합',
+    },
+    {
+      'key': 'desk_cable',
+      'label': '데스크 케이블 정리',
+      'description': '멀티탭/전선/케이블클립',
+    },
+    {
+      'key': 'desk_storage',
+      'label': '책상 수납',
+      'description': '모니터받침/서랍/문서정리',
     },
     {
       'key': 'outdoor',
-      'label': '여행/캠핑',
-      'description': '아웃도어/차박 중심',
+      'label': '여행/캠핑 전체',
+      'description': '여행파우치/차박/캠핑수납 통합',
+    },
+    {
+      'key': 'travel_pouch',
+      'label': '여행 파우치',
+      'description': '캐리어/소분/압축 파우치',
+    },
+    {
+      'key': 'camping_storage',
+      'label': '캠핑/차박 수납',
+      'description': '캠핑박스/행잉/트렁크 정리',
     },
   ];
 
