@@ -463,9 +463,13 @@ export async function runUploadFromUrl(inputUrl, settings = {}, runtime = {}) {
       ? makeUniqueOptions(draft.options)
       : [];
 
+  const configuredUnitCount = Number(settings.defaultUnitCount);
+  const configuredUnitType = String(settings.defaultUnitType || "").trim();
   const defaultItemUnit = {
-    unitCount: Number.isFinite(Number(settings.defaultUnitCount)) ? Number(settings.defaultUnitCount) : 1,
-    unitType: String(settings.defaultUnitType || 'PIECE').trim() || 'PIECE',
+    ...(Number.isFinite(configuredUnitCount) && configuredUnitCount > 0
+      ? { unitCount: configuredUnitCount }
+      : {}),
+    ...(configuredUnitType ? { unitType: configuredUnitType } : {}),
   };
   const searchTags = buildSearchTags({
     title: draft.title,
@@ -506,8 +510,8 @@ export async function runUploadFromUrl(inputUrl, settings = {}, runtime = {}) {
               contentText: contentHtml,
               notices,
               attributes: buildItemAttributesFromOptionValues(opt.values) || undefined,
-              unitCount: defaultItemUnit.unitCount,
-              unitType: defaultItemUnit.unitType,
+              unitCount: defaultItemUnit?.unitCount,
+              unitType: defaultItemUnit?.unitType,
             });
           })
         : undefined,
@@ -631,7 +635,12 @@ async function createWithErrorItemRetry({
 
   for (let attempt = 1; attempt <= CREATE_RETRY_MAX; attempt += 1) {
     const parsed = safeJson(response.body);
-    const errorItems = extractErrorItems(parsed);
+    const errorItemsRaw = extractErrorItems(parsed);
+    const errorSummary = extractCreateErrorSummary(parsed);
+    const errorItems =
+      errorItemsRaw.length > 0
+        ? errorItemsRaw
+        : (errorSummary ? [{ message: errorSummary }] : []);
     if (isCreateSuccess(parsed)) break;
     if (errorItems.length === 0) break;
 
@@ -640,7 +649,7 @@ async function createWithErrorItemRetry({
       retry = {
         attempts: attempt - 1,
         appliedFixes: retry.appliedFixes,
-        errorItems,
+        errorItems: errorItemsRaw.length > 0 ? errorItemsRaw : errorItems,
       };
       break;
     }
@@ -648,7 +657,7 @@ async function createWithErrorItemRetry({
     retry = {
       attempts: attempt,
       appliedFixes: [...retry.appliedFixes, ...fix.appliedFixes],
-      errorItems,
+      errorItems: errorItemsRaw.length > 0 ? errorItemsRaw : errorItems,
     };
 
     currentBody = fix.body;
@@ -668,6 +677,22 @@ function extractErrorItems(parsedBody) {
   if (!parsedBody || typeof parsedBody !== "object") return [];
   const items = parsedBody?.data?.errorItems || parsedBody?.errorItems || [];
   return Array.isArray(items) ? items : [];
+}
+
+function extractCreateErrorSummary(parsedBody) {
+  if (!parsedBody || typeof parsedBody !== "object") return "";
+  const candidates = [
+    parsedBody?.message,
+    parsedBody?.msg,
+    parsedBody?.error,
+    parsedBody?.data?.message,
+    parsedBody?.data?.errorMessage,
+  ];
+  return candidates
+    .map((v) => String(v || "").trim())
+    .filter(Boolean)
+    .join(" ")
+    .trim();
 }
 
 function extractSellerProductId(parsedBody) {
@@ -714,8 +739,17 @@ function applyErrorItemFixes({ body, errorItems, finalCategoryCode }) {
     textBlob.includes("unit count") ||
     textBlob.includes("unitcount") ||
     textBlob.includes("unit type") ||
+    textBlob.includes("item unit") ||
     textBlob.includes("단위수량") ||
-    textBlob.includes("단위 수량");
+    textBlob.includes("단위 수량") ||
+    textBlob.includes("단위");
+  const needsPurchaseOptionRelax =
+    textBlob.includes("purchase option") ||
+    textBlob.includes("option value") ||
+    textBlob.includes("구매 옵션") ||
+    textBlob.includes("구매옵션") ||
+    textBlob.includes("옵션 값") ||
+    textBlob.includes("옵션값");
   const needsDropSearchTags =
     textBlob.includes("searchtag") ||
     textBlob.includes("search tag") ||
@@ -743,22 +777,45 @@ function applyErrorItemFixes({ body, errorItems, finalCategoryCode }) {
   }
 
   if (needsItemUnit) {
-    let unitChanged = false;
+    let unitRemoved = false;
     for (const item of items) {
-      const count = Number(item?.unitCount);
-      if (!Number.isFinite(count) || count <= 0) {
-        item.unitCount = 1;
-        unitChanged = true;
+      if (Object.prototype.hasOwnProperty.call(item || {}, "unitCount")) {
+        delete item.unitCount;
+        unitRemoved = true;
       }
-      const type = String(item?.unitType || "").trim();
-      if (!type) {
-        item.unitType = "PIECE";
-        unitChanged = true;
+      if (Object.prototype.hasOwnProperty.call(item || {}, "unitType")) {
+        delete item.unitType;
+        unitRemoved = true;
       }
     }
-    if (unitChanged) {
+    if (unitRemoved) {
       changed = true;
-      appliedFixes.push("item_unit_autofill:1-PIECE");
+      appliedFixes.push("item_unit_removed");
+    }
+  }
+
+  if (needsPurchaseOptionRelax) {
+    const requiredAttrs = getRequiredAttributes(finalCategoryCode);
+    let optionRelaxed = false;
+    for (const item of items) {
+      const safeAttrs = mergeAttributes([], requiredAttrs);
+      const prev = Array.isArray(item?.attributes) ? item.attributes : [];
+      if (JSON.stringify(prev) !== JSON.stringify(safeAttrs)) {
+        item.attributes = safeAttrs;
+        optionRelaxed = true;
+      }
+      if (Object.prototype.hasOwnProperty.call(item || {}, "unitCount")) {
+        delete item.unitCount;
+        optionRelaxed = true;
+      }
+      if (Object.prototype.hasOwnProperty.call(item || {}, "unitType")) {
+        delete item.unitType;
+        optionRelaxed = true;
+      }
+    }
+    if (optionRelaxed) {
+      changed = true;
+      appliedFixes.push("purchase_option_relaxed");
     }
   }
 
