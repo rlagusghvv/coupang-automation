@@ -716,20 +716,55 @@ function parseRecommendationRunRequest(req) {
   return { keywords, targetCount, cooldownDays, strictMode };
 }
 
-function buildRecommendationRunSettings(baseSettings = {}, { strictMode = false } = {}) {
+function buildRecommendationRunSettings(baseSettings = {}, { strictMode = false, targetCount = 80 } = {}) {
   const base =
     baseSettings && typeof baseSettings === "object" ? { ...baseSettings } : {};
   const resolvedStrictMode = parseBooleanFlag(strictMode, false);
+  const resolvedTarget = Math.max(50, Math.min(100, Number(targetCount || 80) || 80));
+  const runtimeFloorMs =
+    resolvedTarget >= 90 ? 720_000 :
+    resolvedTarget >= 80 ? 600_000 :
+    resolvedTarget >= 70 ? 510_000 :
+    420_000;
+  const playwrightRetryBudgetFloor =
+    resolvedTarget >= 90 ? 60 :
+    resolvedTarget >= 80 ? 48 :
+    resolvedTarget >= 70 ? 36 :
+    24;
+  const normalizedRuntimeMs = Number(base.recommendationMaxRuntimeMs);
+  const normalizedRetryBudget = Number(base.recommendationPreviewPlaywrightRetryBudget);
+  const mergedRuntimeMs = Number.isFinite(normalizedRuntimeMs)
+    ? Math.max(runtimeFloorMs, Math.floor(normalizedRuntimeMs))
+    : runtimeFloorMs;
+  const mergedRetryBudget = Number.isFinite(normalizedRetryBudget)
+    ? Math.max(playwrightRetryBudgetFloor, Math.floor(normalizedRetryBudget))
+    : playwrightRetryBudgetFloor;
+  const normalizedOpenApiTimeoutMs = Number(base.recommendationPreviewOpenApiTimeoutMs);
+  const openApiTimeoutDefaultMs = resolvedTarget >= 80 ? 2600 : 3200;
+  const mergedOpenApiTimeoutMs = Number.isFinite(normalizedOpenApiTimeoutMs)
+    ? Math.max(1500, Math.min(9000, Math.floor(normalizedOpenApiTimeoutMs)))
+    : openApiTimeoutDefaultMs;
+
+  const baseOverrides = {
+    recommendationDisablePreviewTimeout: false,
+    recommendationDisablePreviewPlaywrightRetryBudget: false,
+    recommendationDisablePreviewPlaywrightBudget: false,
+    recommendationPreviewPlaywrightRetryBudget: mergedRetryBudget,
+    recommendationPreviewOpenApiTimeoutMs: mergedOpenApiTimeoutMs,
+    recommendationMaxRuntimeMs: mergedRuntimeMs,
+  };
 
   if (resolvedStrictMode) {
     return {
       ...base,
+      ...baseOverrides,
       recommendationStrictMode: true,
     };
   }
 
   return {
     ...base,
+    ...baseOverrides,
     recommendationStrictMode: false,
     recommendationAllowQuickFallback: true,
     recommendationAllowRelaxedExclusion: true,
@@ -3594,7 +3629,7 @@ app.post("/api/recommendations/fill/start", authRequired, async (req, res) => {
     const params = parseRecommendationRunRequest(req);
     const runSettings = buildRecommendationRunSettings(
       req.user.settings || {},
-      { strictMode: params.strictMode },
+      { strictMode: params.strictMode, targetCount: params.targetCount },
     );
     const started = startRecommendationRefreshJob({
       userId: req.user.id,
@@ -3620,7 +3655,7 @@ app.post("/api/recommendations/fill", authRequired, async (req, res) => {
     const params = parseRecommendationRunRequest(req);
     const runSettings = buildRecommendationRunSettings(
       req.user.settings || {},
-      { strictMode: params.strictMode },
+      { strictMode: params.strictMode, targetCount: params.targetCount },
     );
     // Product decision: "fill" is now replace-mode.
     const fill = await refreshRecommendationsForUser({
@@ -3650,7 +3685,7 @@ app.post("/api/recommendations/refresh", authRequired, async (req, res) => {
     const params = parseRecommendationRunRequest(req);
     const runSettings = buildRecommendationRunSettings(
       req.user.settings || {},
-      { strictMode: params.strictMode },
+      { strictMode: params.strictMode, targetCount: params.targetCount },
     );
     const started = startRecommendationRefreshJob({
       userId: req.user.id,

@@ -70,6 +70,12 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
     return '';
   }
 
+  bool _isJobNotFoundError(Object e) {
+    if (e is! ApiException) return false;
+    if (e.statusCode != 404) return false;
+    return e.message.trim().toLowerCase() == 'job_not_found';
+  }
+
   String _fillProgressMessage(Map<String, dynamic> progress) {
     final stage = (progress['stage'] ?? '').toString();
     switch (stage) {
@@ -108,6 +114,8 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
       case 'stopped':
         final count = int.tryParse((progress['count'] ?? 0).toString()) ?? 0;
         return '중단됨: 현재까지 $count개 수집';
+      case 'detached':
+        return '작업 추적 연결이 끊겨 목록 동기화로 전환됨';
       case 'done_empty':
         final hint = (progress['hint'] ?? '').toString().trim();
         final validated =
@@ -187,6 +195,8 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
         return '중단 요청됨: 현재 상품 처리 후 중단합니다.';
       case 'stopped':
         return '중단됨: 완료 $done/$total · 성공 $uploaded · 스킵 $skipped · 실패 $failed';
+      case 'detached':
+        return '작업 추적 연결이 끊겨 목록 동기화로 전환됨';
       case 'done':
         return '완료: 총 $done/$total · 성공 $uploaded · 스킵 $skipped · 실패 $failed';
       default:
@@ -508,7 +518,18 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
   Future<Map<String, dynamic>?> _pollFillJob(String jobId) async {
     for (var i = 0; i < 3600; i += 1) {
       await Future<void>.delayed(const Duration(seconds: 1));
-      final j = await widget.api.getJson('/api/jobs/$jobId');
+      Map<String, dynamic> j;
+      try {
+        j = await widget.api.getJson('/api/jobs/$jobId');
+      } on ApiException catch (e) {
+        if (_isJobNotFoundError(e)) {
+          return {
+            'detached': true,
+            'jobId': jobId,
+          };
+        }
+        rethrow;
+      }
       final job = (j['job'] as Map?)?.cast<String, dynamic>() ?? const {};
       final progress = (job['progress'] as Map?)?.cast<String, dynamic>() ??
           const <String, dynamic>{};
@@ -630,6 +651,28 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
               ),
             );
           }
+          return;
+        }
+        if (result['detached'] == true) {
+          await _reloadListQuietly();
+          if (!mounted) return;
+          setState(() {
+            _activeFillJobId = null;
+            _fillProgress = const {
+              'stage': 'detached',
+              'percent': 100,
+            };
+            _lastRunSummary =
+                '마지막 채우기 ${_nowLabel()} · 작업 추적 연결이 끊겨 목록 동기화로 전환';
+            _error = null;
+          });
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                '작업 추적 연결이 끊겨 목록만 동기화했습니다. 필요하면 한 번 더 실행하세요.',
+              ),
+            ),
+          );
           return;
         }
         await _applyFillResponse(result);
@@ -811,7 +854,18 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
   Future<Map<String, dynamic>?> _pollUploadJob(String jobId) async {
     for (var i = 0; i < 3600; i += 1) {
       await Future<void>.delayed(const Duration(seconds: 1));
-      final j = await widget.api.getJson('/api/jobs/$jobId');
+      Map<String, dynamic> j;
+      try {
+        j = await widget.api.getJson('/api/jobs/$jobId');
+      } on ApiException catch (e) {
+        if (_isJobNotFoundError(e)) {
+          return {
+            'detached': true,
+            'jobId': jobId,
+          };
+        }
+        rethrow;
+      }
       final job = (j['job'] as Map?)?.cast<String, dynamic>() ?? const {};
       final progress = (job['progress'] as Map?)?.cast<String, dynamic>() ??
           const <String, dynamic>{};
@@ -956,6 +1010,34 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
           }
           return;
         }
+        if (result['detached'] == true) {
+          await _reloadListQuietly();
+          if (!mounted) return;
+          setState(() {
+            _activeUploadJobId = null;
+            _uploadStartedAt = null;
+            _uploadProgress = {
+              'stage': 'detached',
+              'percent': 100,
+              'total': urls.length,
+              'doneCount': 0,
+              'uploaded': 0,
+              'skipped': 0,
+              'failed': 0,
+            };
+            _lastUploadSummary =
+                '마지막 업로드 ${_nowLabel()} · 작업 추적 연결이 끊겨 목록 동기화로 전환';
+            _error = null;
+          });
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                '업로드 작업 추적 연결이 끊겨 목록만 동기화했습니다. 필요하면 다시 실행하세요.',
+              ),
+            ),
+          );
+          return;
+        }
         await _applyUploadResponse(result, stopped: result['stopped'] == true);
       } else {
         // Fallback for older server runtimes without async bulk endpoint.
@@ -994,7 +1076,8 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
         num.tryParse((_fillProgress?['percent'] ?? '').toString());
     final fillDone = fillStage == 'done' ||
         fillStage == 'done_empty' ||
-        fillStage == 'stopped';
+        fillStage == 'stopped' ||
+        fillStage == 'detached';
     final fillEmptyDone = fillStage == 'done_empty' ||
         fillStage == 'stopped' ||
         (fillStage == 'done' && fillCount <= 0);
@@ -1003,7 +1086,9 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
     final uploadStage = (_uploadProgress?['stage'] ?? '').toString();
     final uploadPercent =
         num.tryParse((_uploadProgress?['percent'] ?? '').toString());
-    final uploadDone = uploadStage == 'done' || uploadStage == 'stopped';
+    final uploadDone = uploadStage == 'done' ||
+        uploadStage == 'stopped' ||
+        uploadStage == 'detached';
     final uploadRunning =
         ((_activeUploadJobId ?? '').isNotEmpty && !uploadDone) ||
             (_loading && _uploadProgress != null && !uploadDone);

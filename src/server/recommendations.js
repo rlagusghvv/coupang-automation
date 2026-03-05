@@ -2752,12 +2752,12 @@ async function generateRecommendationsBatch({
   );
   const configuredPreviewPlaywrightRetryBudget = Math.max(
     0,
-    Math.min(12, Number(normalizedSettings?.recommendationPreviewPlaywrightRetryBudget) || 6),
+    Math.min(80, Number(normalizedSettings?.recommendationPreviewPlaywrightRetryBudget) || 6),
   );
   const previewPlaywrightRetryBudgetDisabled = parseBoolean(
     normalizedSettings?.recommendationDisablePreviewPlaywrightRetryBudget ??
       normalizedSettings?.recommendationDisablePreviewPlaywrightBudget,
-    true,
+    false,
   );
   const previewPlaywrightRetryBudget = previewPlaywrightRetryBudgetDisabled
     ? Number.POSITIVE_INFINITY
@@ -2767,7 +2767,7 @@ async function generateRecommendationsBatch({
     : `${configuredPreviewPlaywrightRetryBudget}건`;
   const previewTimeoutDisabled = parseBoolean(
     normalizedSettings?.recommendationDisablePreviewTimeout,
-    true,
+    false,
   );
   let maxValidate = Math.max(topN * (policy.requireQcPass ? 12 : 2), 24);
   const maxValidateCap = policy.requireQcPass ? Math.max(600, topN * 12) : Math.max(180, topN * 6);
@@ -3121,9 +3121,21 @@ async function generateRecommendationsBatch({
       const normalizedSourceUrl = normalizeRecommendationSourceUrl(cand.sourceUrl);
       if (chosen.has(normalizedSourceUrl)) continue;
       chosen.add(normalizedSourceUrl);
+      const fallbackReasonRaw = String(cand.reason || '').trim();
+      const fallbackReason = fallbackReasonRaw
+        ? `${fallbackReasonRaw.replace(/detailImages=\d+/i, 'detailImages=0')} / quickFallback`
+        : 'quickFallback';
 
       final.push({
         ...cand,
+        reason: fallbackReason,
+        contentImageCount: 0,
+        previewImages: [],
+        qc: {
+          tier: 'C',
+          eligibleUpload: false,
+          detailImageCount: 0,
+        },
         payload: {
           ...cand.payload,
           qc: {
