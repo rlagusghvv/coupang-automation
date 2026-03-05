@@ -583,11 +583,13 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
     List<Map<String, dynamic>> targets,
   ) async {
     final controllers = <String, TextEditingController>{};
+    final targetByUrl = <String, Map<String, dynamic>>{};
     for (final item in targets) {
       final url = (item['sourceUrl'] ?? '').toString().trim();
       if (url.isEmpty || controllers.containsKey(url)) continue;
+      targetByUrl[url] = item;
       controllers[url] = TextEditingController(
-        text: (item['title'] ?? '').toString(),
+        text: (item['seoTitle'] ?? item['title'] ?? '').toString(),
       );
     }
     if (controllers.isEmpty) return {};
@@ -647,11 +649,27 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
     final overrides = <String, dynamic>{};
     if (ok == true) {
       for (final entry in controllers.entries) {
+        final url = entry.key;
+        final item = targetByUrl[url] ?? const <String, dynamic>{};
         final nextTitle = entry.value.text.trim();
-        if (nextTitle.isEmpty) continue;
-        overrides[entry.key] = {
-          'titleOverride': nextTitle,
-        };
+        final fallbackTitle = (item['seoTitle'] ?? item['title'] ?? '')
+            .toString()
+            .trim();
+        final seedTitle = (nextTitle.isNotEmpty ? nextTitle : fallbackTitle).trim();
+        final categoryCode = int.tryParse((item['categoryCode'] ?? '').toString());
+        final override = <String, dynamic>{};
+        if (nextTitle.isNotEmpty) {
+          override['titleOverride'] = nextTitle;
+        }
+        if (seedTitle.isNotEmpty) {
+          override['seedTitle'] = seedTitle;
+        }
+        if (categoryCode != null && categoryCode > 0) {
+          override['categoryOverrideCode'] = categoryCode;
+        }
+        if (override.isNotEmpty) {
+          overrides[url] = override;
+        }
       }
     }
 
@@ -1683,7 +1701,10 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
                         final productUrl =
                             (row['productUrl'] ?? '').toString().trim();
                         final reasonRaw =
-                            (row['skipReason'] ?? row['error'] ?? '')
+                            (row['errorDetail'] ??
+                                    row['skipReason'] ??
+                                    row['error'] ??
+                                    '')
                                 .toString()
                                 .trim();
                         final reason = _humanizeSkipReason(reasonRaw);

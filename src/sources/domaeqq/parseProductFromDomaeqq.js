@@ -1532,7 +1532,7 @@ export async function parseProductFromDomaeqq(url, opts = {}) {
         ? openApiItemView.detailImages.map((u) => normalizeUrl(u)).filter(Boolean)
         : [];
       const openApiDetailHtmlImageCount = openApiDetailHtml
-        ? extractImageUrlsFromHtml(openApiDetailHtml, refererUrl || url).length
+        ? extractImageUrlsFromHtml(openApiDetailHtml, url).length
         : 0;
       const quickDetail =
         !openApiDetailHtml
@@ -2073,16 +2073,21 @@ export async function parseProductFromDomaeqq(url, opts = {}) {
       }
     } catch {}
 
+    const pageTitleText = String(await page.title().catch(() => "") || "").trim();
+    const resolvedTitle =
+      String(titleText || "").trim() ||
+      String(openApiItemView?.title || "").trim() ||
+      previewSeedTitle ||
+      pageTitleText ||
+      "도매꾹 상품";
+
     if (previewPlaywrightFast) {
       const draft = makeDraft({
         sourceUrl: url,
-        title:
-          titleText ||
-          String(openApiItemView?.title || "").trim() ||
-          (await page.title().catch(() => "도매꾹 상품")),
+        title: resolvedTitle,
         price,
         imageUrl: imageUrl || "https://via.placeholder.com/1000",
-        contentText: finalContentHtml || titleText || "",
+        contentText: finalContentHtml || resolvedTitle || "",
         categoryText: "",
         options: [],
         shippingFee,
@@ -2318,13 +2323,10 @@ export async function parseProductFromDomaeqq(url, opts = {}) {
 
     const draft = makeDraft({
       sourceUrl: url,
-      title:
-        titleText ||
-        String(openApiItemView?.title || "").trim() ||
-        (await page.title().catch(() => "도매꾹 상품")),
+      title: resolvedTitle,
       price,
       imageUrl: imageUrl || "https://via.placeholder.com/1000",
-      contentText: finalContentHtml || titleText || "",
+      contentText: finalContentHtml || resolvedTitle || "",
       categoryText,
       options: finalOptions,
       shippingFee,

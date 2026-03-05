@@ -1241,6 +1241,35 @@ function getRunningUploadBulkJobForUser(userId) {
 }
 
 function normalizeBulkUploadJobRow({ url = "", outcome = null, error = "" } = {}) {
+  const summarizeDetail = (detail = null) => {
+    if (!detail || typeof detail !== "object") return null;
+    const message = pickFirstNonEmpty(detail.message);
+    const responseCode = pickFirstNonEmpty(detail.responseCode, detail.code);
+    let firstErrorItem = "";
+    const errorItems = Array.isArray(detail.errorItems) ? detail.errorItems : [];
+    if (errorItems.length > 0) {
+      const first = errorItems[0];
+      if (first && typeof first === "object") {
+        firstErrorItem = pickFirstNonEmpty(
+          first.message,
+          first.reason,
+          first.fieldName,
+          first.name,
+          first.code,
+        );
+      } else {
+        firstErrorItem = String(first || "").trim();
+      }
+    }
+    const parts = [];
+    if (message) parts.push(message);
+    if (firstErrorItem) parts.push(firstErrorItem);
+    if (!message && responseCode) parts.push(`code=${responseCode}`);
+    const joined = parts.join(" / ").trim();
+    if (!joined) return null;
+    return joined.length > 240 ? `${joined.slice(0, 237)}...` : joined;
+  };
+
   const followUp =
     outcome?.result?.followUp && typeof outcome.result.followUp === "object"
       ? outcome.result.followUp
@@ -1253,7 +1282,9 @@ function normalizeBulkUploadJobRow({ url = "", outcome = null, error = "" } = {}
   const hasOutcome = outcome && typeof outcome === "object";
   const skipped = hasOutcome ? Boolean(outcome?.skipped) : false;
   const ok = hasOutcome ? Boolean(outcome?.ok) : false;
-  const rowError = String(error || outcome?.error || "").trim();
+  const rowError = String(error || outcome?.error || outcome?.result?.error || "").trim();
+  const rowErrorDetail =
+    summarizeDetail(outcome?.detail) || summarizeDetail(outcome?.result?.detail) || null;
 
   return {
     url,
@@ -1261,6 +1292,7 @@ function normalizeBulkUploadJobRow({ url = "", outcome = null, error = "" } = {}
     skipped,
     skipReason: normalizeSkipReason(outcome),
     error: rowError || null,
+    errorDetail: rowErrorDetail,
     sellerProductId: hasOutcome ? resolveOutcomeSellerProductId(outcome) : null,
     productId: productId || null,
     productUrl: productUrl || null,
@@ -1354,6 +1386,9 @@ function startUploadBulkJob({
             const o = overridesByUrl?.[url];
             const overrides = {
               titleOverride: o?.titleOverride,
+              seedTitle: o?.seedTitle,
+              seedPrice: o?.seedPrice,
+              seedImageUrl: o?.seedImageUrl,
               imagesOverride: Array.isArray(o?.imagesOverride) ? o.imagesOverride : undefined,
               categoryOverrideCode: o?.categoryOverrideCode,
             };
@@ -1639,6 +1674,9 @@ app.post('/api/jobs/start', authRequired, async (req, res) => {
         force,
         overrides: {
           titleOverride: req.body?.titleOverride,
+          seedTitle: req.body?.seedTitle,
+          seedPrice: req.body?.seedPrice,
+          seedImageUrl: req.body?.seedImageUrl,
           imagesOverride: Array.isArray(req.body?.imagesOverride) ? req.body.imagesOverride : undefined,
           categoryOverrideCode: req.body?.categoryOverrideCode,
         },
@@ -2694,8 +2732,10 @@ app.post("/api/catalog/:id/deploy", authRequired, async (req, res) => {
         const latest = await getUploadedProductById(req.user.id, row.id);
         if (!latest) throw new Error("not_found");
         const meta = latest.meta && typeof latest.meta === "object" ? { ...latest.meta } : {};
+        const confirmedTitle = String(meta.confirmedTitle || "").trim();
         const overrides = {
-          titleOverride: String(meta.confirmedTitle || "").trim() || undefined,
+          titleOverride: confirmedTitle || undefined,
+          seedTitle: confirmedTitle || undefined,
           imagesOverride: Array.isArray(meta.detailImages)
             ? normalizeStringList(meta.detailImages, 200)
             : undefined,
@@ -3509,7 +3549,10 @@ function resolveRecommendationUploadOverrides(item = {}) {
   const categoryOverrideCode = toPositiveIntOrNull(item?.categoryCode ?? category?.code);
 
   const overrides = {};
-  if (titleOverride) overrides.titleOverride = titleOverride;
+  if (titleOverride) {
+    overrides.titleOverride = titleOverride;
+    overrides.seedTitle = titleOverride;
+  }
   if (categoryOverrideCode) overrides.categoryOverrideCode = categoryOverrideCode;
   return overrides;
 }
@@ -3593,6 +3636,15 @@ async function executeUploadForUrl({ url, user, force = false, overrides = {} })
     ...baseSettings,
     ...(String(overrides?.titleOverride || '').trim()
       ? { titleOverride: String(overrides.titleOverride).trim() }
+      : {}),
+    ...(String(overrides?.seedTitle || overrides?.titleOverride || '').trim()
+      ? { seedTitle: String(overrides.seedTitle || overrides.titleOverride).trim() }
+      : {}),
+    ...(Number.isFinite(Number(overrides?.seedPrice)) && Number(overrides.seedPrice) > 0
+      ? { seedPrice: Number(overrides.seedPrice) }
+      : {}),
+    ...(String(overrides?.seedImageUrl || '').trim()
+      ? { seedImageUrl: String(overrides.seedImageUrl).trim() }
       : {}),
     ...(Number.isFinite(Number(overrides?.categoryOverrideCode))
       ? { categoryOverrideCode: Number(overrides.categoryOverrideCode) }
@@ -3870,6 +3922,9 @@ async function handleSingleUpload(req, res) {
       const force = parseForceFlag(req.body?.force ?? req.query?.force);
       const overrides = {
         titleOverride: req.body?.titleOverride,
+        seedTitle: req.body?.seedTitle,
+        seedPrice: req.body?.seedPrice,
+        seedImageUrl: req.body?.seedImageUrl,
         imagesOverride: Array.isArray(req.body?.imagesOverride) ? req.body.imagesOverride : undefined,
         categoryOverrideCode: req.body?.categoryOverrideCode,
       };
@@ -3977,6 +4032,9 @@ app.post("/api/upload/bulk", authRequired, async (req, res) => {
           const o = overridesByUrlRaw?.[url];
           const overrides = {
             titleOverride: o?.titleOverride,
+            seedTitle: o?.seedTitle,
+            seedPrice: o?.seedPrice,
+            seedImageUrl: o?.seedImageUrl,
             imagesOverride: Array.isArray(o?.imagesOverride) ? o.imagesOverride : undefined,
             categoryOverrideCode: o?.categoryOverrideCode,
           };
