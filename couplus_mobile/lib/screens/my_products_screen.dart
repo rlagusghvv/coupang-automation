@@ -536,6 +536,25 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
     return _stringValue(pack, 'pinnedComment');
   }
 
+  String _bgmGuideText(Map<String, dynamic> json) {
+    final pack = _firstMarketingPack(json);
+    final guide = _stringValue(pack, 'bgmGuideText');
+    final keywords = _stringList(pack['bgmSearchKeywords']);
+    final lines = <String>[];
+    if (keywords.isNotEmpty) {
+      lines.add('추천 검색어');
+      for (var i = 0; i < keywords.length; i += 1) {
+        lines.add('${i + 1}. ${keywords[i]}');
+      }
+    }
+    if (guide.isNotEmpty) {
+      if (lines.isNotEmpty) lines.add('');
+      lines.add('사용 메모');
+      lines.add(guide);
+    }
+    return lines.join('\n').trim();
+  }
+
   String _instagramChecklistText(
     Map<String, dynamic> product,
     Map<String, dynamic> json,
@@ -544,6 +563,7 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
     final hooks = _stringList(pack['hooks']);
     final tracking = _firstMarketingTracking(json);
     final commentCtaText = _stringValue(pack, 'commentCtaText');
+    final hasBgmKeywords = _stringList(pack['bgmSearchKeywords']).isNotEmpty;
     final trackingUrl = (tracking['trackingUrl'] ?? '').toString().trim();
 
     final lines = <String>[
@@ -553,7 +573,8 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
       if (trackingUrl.isNotEmpty) '4. 프로필 링크에는 $trackingUrl 를 반영합니다.',
       if (commentCtaText.isNotEmpty)
         '5. 게시 후 댓글 유도 문구 "$commentCtaText" 흐름으로 운영합니다.',
-      '6. 영상 업로드 후 클릭 수를 확인합니다.',
+      if (hasBgmKeywords) '6. 업로드 직전 추천 검색어로 인스타 음악 라이브러리에서 BGM을 선택합니다.',
+      '7. 영상 업로드 후 클릭 수를 확인합니다.',
     ];
     return lines.join('\n');
   }
@@ -648,6 +669,7 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
     final pinnedComment = _stringValue(pack, 'pinnedComment');
     final commentReplyTemplate = _stringValue(pack, 'commentReplyTemplate');
     final dmReplyTemplate = _stringValue(pack, 'dmReplyTemplate');
+    final bgmGuideText = _bgmGuideText(json);
     final trackingUrl = (tracking['trackingUrl'] ?? '').toString().trim();
     final targetUrl = (item['targetUrl'] ?? _resolveMarketingTargetUrl(product))
         .toString()
@@ -728,6 +750,12 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
       lines.add(dmReplyTemplate);
     }
 
+    if (bgmGuideText.isNotEmpty) {
+      lines.add('');
+      lines.add('추천 BGM');
+      lines.add(bgmGuideText);
+    }
+
     if (thumbnailTexts.isNotEmpty) {
       lines.add('');
       lines.add('썸네일 문구');
@@ -772,6 +800,7 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
     final commentReplyTemplate = _commentReplyTemplateText(json);
     final dmReplyTemplate = _dmReplyTemplateText(json);
     final pinnedComment = _pinnedCommentText(json);
+    final bgmGuideText = _bgmGuideText(json);
     final instagramChecklist = _instagramChecklistText(product, json);
     final primaryPrompt = promptList.isNotEmpty ? promptList.first : prompts;
     final promptPreview = primaryPrompt.length > 3000
@@ -836,6 +865,17 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
                         },
                         icon: const Icon(Icons.reply_outlined, size: 18),
                         label: const Text('3. 댓글 답글 복사'),
+                      ),
+                    if (bgmGuideText.isNotEmpty)
+                      OutlinedButton.icon(
+                        onPressed: () async {
+                          await _copyText(
+                            bgmGuideText,
+                            '추천 BGM 검색어를 복사했어요.',
+                          );
+                        },
+                        icon: const Icon(Icons.music_note_outlined, size: 18),
+                        label: const Text('BGM 검색어 복사'),
                       ),
                     if (trackingUrl.isNotEmpty)
                       OutlinedButton.icon(
@@ -1069,6 +1109,22 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
                         const SizedBox(height: 6),
                         SelectableText(
                           dmReplyTemplate,
+                          style: const TextStyle(fontSize: 12, height: 1.4),
+                        ),
+                      ],
+                      if (bgmGuideText.isNotEmpty) ...[
+                        const SizedBox(height: 10),
+                        Text(
+                          '추천 BGM',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w800,
+                            color: Theme.of(context).colorScheme.onSurface,
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        SelectableText(
+                          bgmGuideText,
                           style: const TextStyle(fontSize: 12, height: 1.4),
                         ),
                       ],

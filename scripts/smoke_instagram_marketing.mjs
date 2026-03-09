@@ -235,6 +235,8 @@ async function main() {
     assertNonEmptyString(pack.instagramPostText, "reels pack should include instagram post text");
     assertNonEmptyString(pack.commentReplyTemplate, "reels pack should include comment reply template");
     assertNonEmptyString(pack.dmReplyTemplate, "reels pack should include dm reply template");
+    assert.ok(Array.isArray(pack.bgmSearchKeywords) && pack.bgmSearchKeywords.length >= 3, "reels pack should include bgm search keywords");
+    assertNonEmptyString(pack.bgmGuideText, "reels pack should include bgm guide text");
     assert.ok(
       Array.isArray(pack.soraVideoPrompts) && pack.soraVideoPrompts.length >= 3,
       "reels pack should include Sora prompts",

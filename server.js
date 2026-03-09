@@ -4545,6 +4545,15 @@ function buildReelsPack({
   const commentKeyword = "링크";
   const commentCtaText = `구매 링크가 필요하면 댓글에 "${commentKeyword}" 남겨주세요.`;
   const profileGuideText = "자세한 정보는 프로필 링크에서 확인해보세요.";
+  const bgmSearchKeywords = [
+    "cozy home instrumental",
+    "clean room vlog",
+    "soft lofi home",
+    "warm daily acoustic",
+    "calm lifestyle background",
+  ];
+  const bgmGuideText =
+    "인스타 업로드 직전 음악 라이브러리에서 잔잔한 instrumental 위주로 고르세요. 너무 센 유행곡보다 설명을 방해하지 않는 홈/브이로그 계열이 더 안정적입니다. 나중에 광고 집행이나 부스트까지 생각하면 일반 인기곡보다 권한이 명확한 음원을 우선 보세요.";
   const hashtags = buildHashtags({ title, keyword, extra: [String(item?.category || "").trim()] });
 
   const hooks = [
@@ -4608,15 +4617,16 @@ function buildReelsPack({
       `Tone: ${tone}. Product: ${shortTitle || keyword || "추천 상품"}.`,
       "Use the uploaded reference product images as the exact source of truth.",
       "Match the real product design, color, material, proportions, and component count exactly.",
-      'Do not invent new colors, accessories, labels, extra shelves, or exaggerated product features.',
-      `Hook overlay in Korean for the first 2 seconds: "${hook}"`,
+      "Do not invent new colors, accessories, labels, extra shelves, or exaggerated product features.",
+      "No people, no hands, no human figures, and no presenter shots.",
       `Storyboard: ${scenes.join(" | ")}`,
       "Keep the scenes realistic, commercially usable, and easy to edit into an actual product reel.",
-      "Use clean cuts, bold high-contrast Korean captions, realistic home lighting, and stable camera movement.",
-      "Keep audio silent or extremely subtle ambient only. No loud music, no strong beats, and no aggressive sound effects.",
-      `End card text in Korean: "${reelCtaText}".`,
-      "Do not render full URLs, QR codes, browser UI, or shopping-app screenshots inside the video.",
-      "Avoid fake discounts, impossible physics, warped geometry, flickering captions, deformed hands, and surreal transitions.",
+      "Use clean cuts, realistic home lighting, stable camera movement, and clear product close-ups.",
+      "Do not render any text, subtitles, captions, logos, URLs, QR codes, browser UI, or shopping-app screenshots inside the video.",
+      "Generate the video silent or with only extremely subtle neutral room ambience. Do not add music, vocals, beats, or strong sound effects.",
+      "The call to action will be added later inside Instagram, so do not bake CTA text into the video.",
+      `Use "${hook}" only as creative intent for the opening mood, not as on-screen text.`,
+      "Avoid fake discounts, impossible physics, warped geometry, flickering details, deformed hands, and surreal transitions.",
     ].join(" ");
   });
 
@@ -4633,6 +4643,8 @@ function buildReelsPack({
     pinnedComment,
     commentReplyTemplate,
     dmReplyTemplate,
+    bgmSearchKeywords,
+    bgmGuideText,
     soraVideoPrompts,
     grokVideoPrompts: soraVideoPrompts,
     thumbnailTexts: [hooks[0], hooks[1], `${keyword || "추천템"} 실사용 후기`],
