@@ -172,8 +172,22 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
     return num.tryParse((item['score'] ?? '').toString()) ?? 0;
   }
 
+  bool _isEligibleUploadItem(Map<String, dynamic> item) {
+    final qc = (item['qc'] as Map?)?.cast<String, dynamic>() ??
+        const <String, dynamic>{};
+    return qc['eligibleUpload'] == true;
+  }
+
+  List<Map<String, dynamic>> _onlyEligibleItems(
+    List<Map<String, dynamic>> source,
+  ) {
+    return source.where(_isEligibleUploadItem).toList();
+  }
+
   List<Map<String, dynamic>> get _visibleItems {
-    final source = _showSavedOnly ? _savedItems : _items;
+    final source = _showSavedOnly
+        ? _onlyEligibleItems(_savedItems)
+        : _onlyEligibleItems(_items);
     if (_selectedSortKey == 'default') return source;
     final sorted = List<Map<String, dynamic>>.from(source);
     sorted.sort((a, b) {
@@ -1249,7 +1263,11 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
   }
 
   Future<void> _uploadSelected() async {
-    final urls = _selected.toList();
+    final visibleUrls = _visibleItems
+        .map((it) => (it['sourceUrl'] ?? '').toString().trim())
+        .where((u) => u.isNotEmpty)
+        .toSet();
+    final urls = _selected.where(visibleUrls.contains).toList();
     if (urls.isEmpty) return;
     final byUrl = <String, Map<String, dynamic>>{};
     for (final it in [..._items, ..._savedItems]) {
@@ -1371,8 +1389,16 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final selectedCount = _selected.length;
     final visibleItems = _visibleItems;
+    final visibleUrls = visibleItems
+        .map((it) => (it['sourceUrl'] ?? '').toString().trim())
+        .where((u) => u.isNotEmpty)
+        .toSet();
+    final selectedCount =
+        _selected.where((u) => visibleUrls.contains(u)).length;
+    final visibleRecoCount = _onlyEligibleItems(_items).length;
+    final visibleSavedCount = _onlyEligibleItems(_savedItems).length;
+    final hiddenRecoCount = (_items.length - visibleRecoCount).clamp(0, 99999);
     final fillStage = (_fillProgress?['stage'] ?? '').toString();
     final fillCount =
         int.tryParse((_fillProgress?['count'] ?? 0).toString()) ?? 0;
@@ -1903,13 +1929,13 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
                 label: _loading
                     ? '불러오는 중…'
                     : (_showSavedOnly
-                        ? '저장함 ${_savedItems.length}개'
-                        : '추천 ${_items.length}개'),
+                        ? '저장함 $visibleSavedCount개'
+                        : '추천 $visibleRecoCount개'),
                 color: Theme.of(context).colorScheme.primary,
               ),
               const SizedBox(width: 8),
               FilterChip(
-                label: Text('저장함 ${_savedItems.length}'),
+                label: Text('저장함 $visibleSavedCount'),
                 selected: _showSavedOnly,
                 onSelected: _loading
                     ? null
@@ -1922,7 +1948,9 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
               ),
               const Spacer(),
               Text(
-                _showSavedOnly ? '저장한 후보만 표시 중' : '채우기 시 기존 추천 목록은 교체됩니다',
+                _showSavedOnly
+                    ? '저장한 업로드 가능 후보만 표시 중'
+                    : 'QC 검토 $hiddenRecoCount개 숨김 · 채우기 시 기존 추천 목록은 교체됩니다',
                 style: TextStyle(
                   color: Theme.of(context)
                       .colorScheme
@@ -1955,8 +1983,8 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
             AppCard(
               child: Text(
                 _showSavedOnly
-                    ? '저장한 후보가 아직 없어요. 추천 카드에서 북마크 버튼으로 저장할 수 있어요.'
-                    : '아직 추천이 없어요. 우측 상단 새로고침 버튼으로 채우기(기존 목록 교체)를 실행하세요.',
+                    ? '저장한 업로드 가능 후보가 아직 없어요.'
+                    : '업로드 가능한 추천이 없어요. 우측 상단 새로고침으로 다시 채우세요. (QC 검토 항목은 자동 숨김)',
                 style: TextStyle(
                   color: Theme.of(context)
                       .colorScheme
