@@ -4,7 +4,7 @@ import crypto from "node:crypto";
 import bcrypt from "bcryptjs";
 import sqlite3 from "sqlite3";
 
-const DATA_DIR = path.join(process.cwd(), "data");
+const DATA_DIR = resolveDataDir();
 const DB_PATH = path.join(DATA_DIR, "app.db");
 const UPLOADED_PRODUCTS_TABLE = "uploaded_products";
 const RECOMMENDATIONS_TABLE = "recommendations";
@@ -13,6 +13,11 @@ const RECOMMENDATIONS_SEEN_TABLE = "recommendations_seen";
 const RECOMMENDATIONS_SAVED_TABLE = "recommendations_saved";
 const MARKETING_LINKS_TABLE = "marketing_links";
 const MARKETING_CLICKS_TABLE = "marketing_clicks";
+
+function resolveDataDir() {
+  const override = String(process.env.COUPLEPHANT_DATA_DIR || "").trim();
+  return override ? path.resolve(override) : path.join(process.cwd(), "data");
+}
 
 function ensureDir() {
   if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });

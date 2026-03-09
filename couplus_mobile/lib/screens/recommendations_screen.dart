@@ -176,6 +176,8 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
   final TextEditingController _igPageIdCtrl = TextEditingController();
   Map<String, dynamic>? _instagramStatus;
   Map<String, dynamic>? _instagramFormat;
+  Map<String, dynamic>? _lastReelsPackResponse;
+  String? _lastManualUploadGuide;
 
   num? _seoScoreOf(Map<String, dynamic> item) {
     return num.tryParse((item['seoScore'] ?? '').toString());
@@ -276,9 +278,284 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
     ];
     for (final raw in candidates) {
       final text = raw.toString().trim();
-      if (text.startsWith('http://') || text.startsWith('https://')) return text;
+      if (text.startsWith('http://') || text.startsWith('https://')) {
+        return text;
+      }
     }
     return '';
+  }
+
+  bool _hasInstagramPageConfigOrConnection() {
+    if (_igPageIdCtrl.text.trim().isNotEmpty) return true;
+    final status = _instagramStatus ?? const <String, dynamic>{};
+    final page = (status['page'] as Map?)?.cast<String, dynamic>() ??
+        const <String, dynamic>{};
+    return (page['id'] ?? '').toString().trim().isNotEmpty;
+  }
+
+  Future<void> _copyText(String text, String message) async {
+    final value = text.trim();
+    if (value.isEmpty) return;
+    await Clipboard.setData(ClipboardData(text: value));
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
+    );
+  }
+
+  Future<void> _openExternalUrl(String rawUrl) async {
+    final uri = Uri.tryParse(rawUrl);
+    if (uri == null) return;
+    final launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    if (launched || !mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('브라우저 열기 실패: $rawUrl')),
+    );
+  }
+
+  Widget _buildConnectionChecklistItem({
+    required bool done,
+    required String title,
+    required String hint,
+  }) {
+    final color = done ? const Color(0xFF2F9E44) : Colors.orange;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(
+            done ? Icons.check_circle : Icons.radio_button_unchecked,
+            size: 16,
+            color: color,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: const TextStyle(
+                      fontSize: 13, fontWeight: FontWeight.w700),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  hint,
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Theme.of(context)
+                        .colorScheme
+                        .onSurface
+                        .withValues(alpha: 0.7),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _grokPromptTextFromPackResponse(Map<String, dynamic> json) {
+    final items = (json['items'] as List?) ?? const [];
+    final prompts = <String>[];
+    for (final raw in items) {
+      if (raw is! Map) continue;
+      final row = raw.cast<String, dynamic>();
+      final pack = (row['pack'] as Map?)?.cast<String, dynamic>() ??
+          const <String, dynamic>{};
+      final grokPrompts = (pack['grokVideoPrompts'] as List?) ?? const [];
+      prompts.addAll(
+        grokPrompts.map((e) => e.toString().trim()).where((e) => e.isNotEmpty),
+      );
+    }
+    return prompts.join('\n\n---\n\n');
+  }
+
+  String _manualUploadGuideFromPackResponse(Map<String, dynamic> json) {
+    final items = (json['items'] as List?) ?? const [];
+    final lines = <String>[];
+    var fallbackIndex = 1;
+    final recommendedSec = int.tryParse(
+          (((_instagramFormat?['durationSec'] as Map?)?['recommended'] ?? 20))
+              .toString(),
+        ) ??
+        20;
+
+    lines.add('캠페인: ${(json['campaign'] ?? '').toString().trim()}');
+    lines.add('톤: ${(json['tone'] ?? '').toString().trim()}');
+    lines.add(
+      '권장 포맷: ${(_instagramFormat?['ratio'] ?? '9:16')} / '
+      '${(_instagramFormat?['resolution'] ?? '1080x1920')} / $recommendedSec초',
+    );
+    lines.add('운영 메모: 페이지 생성이 막혀도 추적 링크 + 수동 게시로 먼저 유입 검증이 가능합니다.');
+
+    for (final raw in items) {
+      if (raw is! Map) continue;
+      final row = raw.cast<String, dynamic>();
+      final index = int.tryParse((row['index'] ?? 0).toString()) ?? 0;
+      final item = (row['item'] as Map?)?.cast<String, dynamic>() ??
+          const <String, dynamic>{};
+      final tracking = (row['tracking'] as Map?)?.cast<String, dynamic>() ??
+          const <String, dynamic>{};
+      final pack = (row['pack'] as Map?)?.cast<String, dynamic>() ??
+          const <String, dynamic>{};
+
+      final title = (item['title'] ?? '').toString().trim();
+      final hooks = ((pack['hooks'] as List?) ?? const [])
+          .map((e) => e.toString().trim())
+          .where((e) => e.isNotEmpty)
+          .toList();
+      final captions = ((pack['captions'] as List?) ?? const [])
+          .map((e) => e.toString().trim())
+          .where((e) => e.isNotEmpty)
+          .toList();
+      final hashtags = ((pack['hashtags'] as List?) ?? const [])
+          .map((e) => e.toString().trim())
+          .where((e) => e.isNotEmpty)
+          .toList();
+      final thumbnailTexts = ((pack['thumbnailTexts'] as List?) ?? const [])
+          .map((e) => e.toString().trim())
+          .where((e) => e.isNotEmpty)
+          .toList();
+      final storyboardVariants = (pack['storyboards'] as List?) ?? const [];
+      final firstStoryboard =
+          storyboardVariants.isNotEmpty && storyboardVariants.first is List
+              ? (storyboardVariants.first as List)
+                  .map((e) => e.toString().trim())
+                  .where((e) => e.isNotEmpty)
+                  .toList()
+              : const <String>[];
+      final trackingUrl = (tracking['trackingUrl'] ?? '').toString().trim();
+      final displayIndex = index > 0 ? index : fallbackIndex++;
+
+      lines.add('');
+      lines.add('[$displayIndex] ${title.isEmpty ? '상품' : title}');
+      lines.add('업로드 순서');
+      lines.add('1. 세로 9:16 릴스를 열고 첫 2초에 훅 문구를 넣습니다.');
+      if (hooks.isNotEmpty) {
+        lines.add('2. 첫 문구: ${hooks.first}');
+      }
+      if (firstStoryboard.isNotEmpty) {
+        lines.add('3. 장면 구성');
+        for (final scene in firstStoryboard) {
+          lines.add(' - $scene');
+        }
+      }
+      if (captions.isNotEmpty) {
+        lines.add('캡션');
+        lines.add(captions.first);
+      }
+      if (hashtags.isNotEmpty) {
+        lines.add('해시태그');
+        lines.add(hashtags.join(' '));
+      }
+      if (trackingUrl.isNotEmpty) {
+        lines.add('추적 링크');
+        lines.add(trackingUrl);
+      }
+      if (thumbnailTexts.isNotEmpty) {
+        lines.add('썸네일 문구');
+        lines.add(thumbnailTexts.join(' / '));
+      }
+      lines.add('게시 체크');
+      lines.add('고정댓글 또는 본문에 링크 안내 문구를 넣고, 게시 후 클릭 수를 다시 조회합니다.');
+    }
+
+    return lines.join('\n');
+  }
+
+  Future<void> _showManualUploadAssistDialog(Map<String, dynamic> json) async {
+    final guide =
+        (_lastManualUploadGuide ?? _manualUploadGuideFromPackResponse(json))
+            .trim();
+    final prompts = _grokPromptTextFromPackResponse(json).trim();
+    final previewText = const JsonEncoder.withIndent('  ').convert(json);
+    final guidePreview = guide.length > 14000
+        ? '${guide.substring(0, 14000)}\n\n... (생략)'
+        : guide;
+    final jsonPreview = previewText.length > 4000
+        ? '${previewText.substring(0, 4000)}\n\n... (생략)'
+        : previewText;
+
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('릴스 수동 업로드 보조'),
+        content: SizedBox(
+          width: 760,
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '현재는 Meta 업로드 자동화보다 수동 게시 보조가 더 빠른 실효안입니다. '
+                  '아래 문안과 추적 링크를 그대로 써서 먼저 유입을 검증하세요.',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Theme.of(context)
+                        .colorScheme
+                        .onSurface
+                        .withValues(alpha: 0.74),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                SelectableText(
+                  guidePreview,
+                  style: const TextStyle(fontSize: 12, height: 1.45),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  '원본 응답 미리보기',
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w800,
+                    color: Theme.of(context).colorScheme.onSurface,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                SelectableText(
+                  jsonPreview,
+                  style: const TextStyle(fontSize: 11, height: 1.35),
+                ),
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          if (prompts.isNotEmpty)
+            TextButton.icon(
+              onPressed: () async {
+                await _copyText(prompts, 'Grok 영상 프롬프트를 복사했어요.');
+              },
+              icon: const Icon(Icons.movie_creation_outlined, size: 18),
+              label: const Text('프롬프트 복사'),
+            ),
+          TextButton.icon(
+            onPressed: () async {
+              await _copyText(guide, '수동 업로드 보조 문안을 복사했어요.');
+            },
+            icon: const Icon(Icons.upload_file_outlined, size: 18),
+            label: const Text('보조 문안 복사'),
+          ),
+          TextButton.icon(
+            onPressed: () async {
+              await _copyText(previewText, '원본 JSON을 복사했어요.');
+            },
+            icon: const Icon(Icons.code_outlined, size: 18),
+            label: const Text('JSON 복사'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('닫기'),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _createMarketingLinkForItem(
@@ -315,7 +592,8 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
       if (trackingUrl.isNotEmpty) {
         setState(() {
           _marketingLinkBySourceUrl[sourceUrl] = link;
-          if (slug.isNotEmpty && !_marketingClickCountBySlug.containsKey(slug)) {
+          if (slug.isNotEmpty &&
+              !_marketingClickCountBySlug.containsKey(slug)) {
             _marketingClickCountBySlug[slug] = 0;
           }
         });
@@ -345,7 +623,8 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
 
   Future<void> _refreshMarketingClicksForItem(Map<String, dynamic> item) async {
     final sourceUrl = (item['sourceUrl'] ?? '').toString().trim();
-    final link = _marketingLinkBySourceUrl[sourceUrl] ?? const <String, dynamic>{};
+    final link =
+        _marketingLinkBySourceUrl[sourceUrl] ?? const <String, dynamic>{};
     final slug = (link['slug'] ?? '').toString().trim();
     if (slug.isEmpty) {
       if (!mounted) return;
@@ -355,7 +634,8 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
       return;
     }
     try {
-      final json = await widget.api.getJson('/api/marketing/links/$slug/clicks', query: {
+      final json =
+          await widget.api.getJson('/api/marketing/links/$slug/clicks', query: {
         'limit': '1',
       });
       final total = int.tryParse((json['total'] ?? 0).toString()) ?? 0;
@@ -393,7 +673,8 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
       if (u.isEmpty) continue;
       byUrl[u] = it;
     }
-    final picked = urls.map((u) => byUrl[u]).whereType<Map<String, dynamic>>().toList();
+    final picked =
+        urls.map((u) => byUrl[u]).whereType<Map<String, dynamic>>().toList();
     if (picked.isEmpty) return;
 
     final campaign = _marketingCampaign.trim().isNotEmpty
@@ -409,7 +690,8 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
         'autoCreateLinks': true,
         'items': picked
             .map((it) => {
-                  'title': (it['title'] ?? it['seoTitle'] ?? '').toString().trim(),
+                  'title':
+                      (it['title'] ?? it['seoTitle'] ?? '').toString().trim(),
                   'keyword': (it['keyword'] ?? '').toString().trim(),
                   'targetUrl': _marketingTargetUrlOf(it),
                   'sourceUrl': (it['sourceUrl'] ?? '').toString().trim(),
@@ -417,7 +699,8 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
                 })
             .toList(),
       };
-      final json = await widget.api.postJson('/api/marketing/reels/pack', payload);
+      final json =
+          await widget.api.postJson('/api/marketing/reels/pack', payload);
       final count = int.tryParse((json['count'] ?? 0).toString()) ?? 0;
       final rows = (json['items'] as List?) ?? const [];
       final prompts = <String>[];
@@ -439,18 +722,25 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
         if (sourceUrl.isNotEmpty && tracking.isNotEmpty) {
           _marketingLinkBySourceUrl[sourceUrl] = tracking;
           final slug = (tracking['slug'] ?? '').toString().trim();
-          if (slug.isNotEmpty && !_marketingClickCountBySlug.containsKey(slug)) {
+          if (slug.isNotEmpty &&
+              !_marketingClickCountBySlug.containsKey(slug)) {
             _marketingClickCountBySlug[slug] = 0;
           }
         }
       }
 
+      final manualGuide = _manualUploadGuideFromPackResponse(json);
+
       if (prompts.isNotEmpty) {
-        await Clipboard.setData(ClipboardData(text: prompts.join('\n\n---\n\n')));
+        await Clipboard.setData(
+            ClipboardData(text: prompts.join('\n\n---\n\n')));
       }
 
       if (!mounted) return;
-      setState(() {});
+      setState(() {
+        _lastReelsPackResponse = json;
+        _lastManualUploadGuide = manualGuide;
+      });
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
@@ -460,32 +750,7 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
           ),
         ),
       );
-
-      final previewText = const JsonEncoder.withIndent('  ').convert(json);
-      if (!mounted) return;
-      await showDialog<void>(
-        context: context,
-        builder: (ctx) => AlertDialog(
-          title: const Text('Reels 팩 생성 결과'),
-          content: SizedBox(
-            width: 700,
-            child: SingleChildScrollView(
-              child: SelectableText(
-                previewText.length > 12000
-                    ? '${previewText.substring(0, 12000)}\n\n... (생략)'
-                    : previewText,
-                style: const TextStyle(fontSize: 12, height: 1.4),
-              ),
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(ctx).pop(),
-              child: const Text('닫기'),
-            ),
-          ],
-        ),
-      );
+      await _showManualUploadAssistDialog(json);
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -770,7 +1035,8 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
         final row = raw.cast<String, dynamic>();
         final sourceUrl = (row['sourceUrl'] ?? '').toString().trim();
         final slug = (row['slug'] ?? '').toString().trim();
-        final clickCount = int.tryParse((row['clickCount'] ?? 0).toString()) ?? 0;
+        final clickCount =
+            int.tryParse((row['clickCount'] ?? 0).toString()) ?? 0;
         if (sourceUrl.isNotEmpty) {
           nextLinks[sourceUrl] = row;
         }
@@ -799,16 +1065,24 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
   Future<void> _loadInstagramConfig() async {
     try {
       final settingsJson = await widget.api.getJson('/api/settings');
-      final settings = (settingsJson['settings'] as Map?)?.cast<String, dynamic>() ??
-          const <String, dynamic>{};
+      final settings =
+          (settingsJson['settings'] as Map?)?.cast<String, dynamic>() ??
+              const <String, dynamic>{};
       final igUserId = (settings['instagramIgUserId'] ?? '').toString().trim();
-      final accessToken = (settings['instagramAccessToken'] ?? '').toString().trim();
+      final accessToken =
+          (settings['instagramAccessToken'] ?? '').toString().trim();
       final pageId = (settings['instagramPageId'] ?? '').toString().trim();
       if (!mounted) return;
       setState(() {
-        if (_igUserIdCtrl.text != igUserId) _igUserIdCtrl.text = igUserId;
-        if (_igAccessTokenCtrl.text != accessToken) _igAccessTokenCtrl.text = accessToken;
-        if (_igPageIdCtrl.text != pageId) _igPageIdCtrl.text = pageId;
+        if (_igUserIdCtrl.text != igUserId) {
+          _igUserIdCtrl.text = igUserId;
+        }
+        if (_igAccessTokenCtrl.text != accessToken) {
+          _igAccessTokenCtrl.text = accessToken;
+        }
+        if (_igPageIdCtrl.text != pageId) {
+          _igPageIdCtrl.text = pageId;
+        }
       });
     } catch (_) {}
   }
@@ -866,8 +1140,8 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
       final json = await widget.api.getJson('/api/instagram/reels/format');
       if (!mounted) return;
       setState(() {
-        _instagramFormat =
-            (json['format'] as Map?)?.cast<String, dynamic>() ?? const <String, dynamic>{};
+        _instagramFormat = (json['format'] as Map?)?.cast<String, dynamic>() ??
+            const <String, dynamic>{};
       });
     } catch (_) {}
   }
@@ -914,7 +1188,8 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
     } catch (_) {
       if (!mounted) return;
       setState(() {
-        _recoCategories = List<Map<String, String>>.from(_fallbackRecoCategories);
+        _recoCategories =
+            List<Map<String, String>>.from(_fallbackRecoCategories);
         if (!_hasRecoCategoryKey(_selectedRecoCategoryKey)) {
           _selectedRecoCategoryKey = 'all';
         }
@@ -1109,11 +1384,12 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
         final url = entry.key;
         final item = targetByUrl[url] ?? const <String, dynamic>{};
         final nextTitle = entry.value.text.trim();
-        final fallbackTitle = (item['seoTitle'] ?? item['title'] ?? '')
-            .toString()
-            .trim();
-        final seedTitle = (nextTitle.isNotEmpty ? nextTitle : fallbackTitle).trim();
-        final categoryCode = int.tryParse((item['categoryCode'] ?? '').toString());
+        final fallbackTitle =
+            (item['seoTitle'] ?? item['title'] ?? '').toString().trim();
+        final seedTitle =
+            (nextTitle.isNotEmpty ? nextTitle : fallbackTitle).trim();
+        final categoryCode =
+            int.tryParse((item['categoryCode'] ?? '').toString());
         final keyword = (item['keyword'] ?? '').toString().trim();
         final override = <String, dynamic>{};
         if (nextTitle.isNotEmpty) {
@@ -1920,7 +2196,9 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
                                 ? _selectedRecoCategoryKey
                                 : 'all',
                             isExpanded: true,
-                            onChanged: (_loading || fillRunning || _loadingRecoCategories)
+                            onChanged: (_loading ||
+                                    fillRunning ||
+                                    _loadingRecoCategories)
                                 ? null
                                 : (value) {
                                     if (value == null) return;
@@ -2014,11 +2292,14 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
                       ),
                     ),
                     FilledButton.tonalIcon(
-                      onPressed: (_loading || _marketingBusy || selectedCount <= 0)
-                          ? null
-                          : _generateReelsPackForSelected,
+                      onPressed:
+                          (_loading || _marketingBusy || selectedCount <= 0)
+                              ? null
+                              : _generateReelsPackForSelected,
                       icon: const Icon(Icons.movie_creation_outlined, size: 18),
-                      label: Text(selectedCount > 0 ? '선택 $selectedCount개 릴스팩' : '선택 릴스팩'),
+                      label: Text(selectedCount > 0
+                          ? '선택 $selectedCount개 릴스팩'
+                          : '선택 릴스팩'),
                     ),
                   ],
                 ),
@@ -2063,6 +2344,7 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
                       const SizedBox(height: 8),
                       TextFormField(
                         controller: _igUserIdCtrl,
+                        onChanged: (_) => setState(() {}),
                         decoration: const InputDecoration(
                           labelText: 'Instagram User ID',
                           isDense: true,
@@ -2071,6 +2353,7 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
                       const SizedBox(height: 8),
                       TextFormField(
                         controller: _igPageIdCtrl,
+                        onChanged: (_) => setState(() {}),
                         decoration: const InputDecoration(
                           labelText: 'Facebook Page ID (선택)',
                           isDense: true,
@@ -2079,6 +2362,7 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
                       const SizedBox(height: 8),
                       TextFormField(
                         controller: _igAccessTokenCtrl,
+                        onChanged: (_) => setState(() {}),
                         decoration: const InputDecoration(
                           labelText: 'Instagram Access Token',
                           isDense: true,
@@ -2109,21 +2393,29 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
                         const SizedBox(height: 8),
                         Text(
                           () {
-                            final status = _instagramStatus ?? const <String, dynamic>{};
+                            final status =
+                                _instagramStatus ?? const <String, dynamic>{};
                             if (status['connected'] == true) {
-                              final profile =
-                                  (status['profile'] as Map?)?.cast<String, dynamic>() ??
-                                      const <String, dynamic>{};
-                              final username = (profile['username'] ?? '').toString().trim();
-                              final followers =
-                                  int.tryParse((profile['followersCount'] ?? 0).toString()) ?? 0;
+                              final profile = (status['profile'] as Map?)
+                                      ?.cast<String, dynamic>() ??
+                                  const <String, dynamic>{};
+                              final username =
+                                  (profile['username'] ?? '').toString().trim();
+                              final followers = int.tryParse(
+                                      (profile['followersCount'] ?? 0)
+                                          .toString()) ??
+                                  0;
                               return username.isNotEmpty
                                   ? '연결 계정: @$username · 팔로워 $followers'
                                   : '연결 확인됨';
                             }
                             final reason =
-                                (status['error'] ?? status['reason'] ?? '').toString().trim();
-                            return reason.isNotEmpty ? '연결 상태: $reason' : '연결 상태: 미확인';
+                                (status['error'] ?? status['reason'] ?? '')
+                                    .toString()
+                                    .trim();
+                            return reason.isNotEmpty
+                                ? '연결 상태: $reason'
+                                : '연결 상태: 미확인';
                           }(),
                           style: TextStyle(
                             fontSize: 12,
@@ -2134,6 +2426,95 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
                           ),
                         ),
                       ],
+                      const SizedBox(height: 10),
+                      const Text(
+                        '연결 전 체크리스트',
+                        style: TextStyle(fontWeight: FontWeight.w800),
+                      ),
+                      const SizedBox(height: 6),
+                      _buildConnectionChecklistItem(
+                        done: _igUserIdCtrl.text.trim().isNotEmpty,
+                        title: 'Instagram User ID 저장',
+                        hint: '프로필 조회와 연결 상태 확인에 사용됩니다.',
+                      ),
+                      _buildConnectionChecklistItem(
+                        done: _igAccessTokenCtrl.text.trim().isNotEmpty,
+                        title: 'Access Token 저장',
+                        hint: 'Graph 응답 확인과 차후 업로드 자동화 전제조건입니다.',
+                      ),
+                      _buildConnectionChecklistItem(
+                        done: _hasInstagramPageConfigOrConnection(),
+                        title: 'Facebook Page 확보 또는 관리자 초대 수락',
+                        hint: '새 페이지 생성이 막히면 기존 페이지 관리자 초대를 받아도 됩니다.',
+                      ),
+                      _buildConnectionChecklistItem(
+                        done: _instagramStatus?['connected'] == true,
+                        title: '연결 확인 1회 통과',
+                        hint: '설정 저장 후 연결 확인으로 계정 응답 여부를 먼저 점검하세요.',
+                      ),
+                      const SizedBox(height: 10),
+                      const Text(
+                        '페이지 생성이 막히면',
+                        style: TextStyle(fontWeight: FontWeight.w800),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        '브라우저에서 직접 페이지를 만들거나, 기존 페이지 관리자 초대를 받아 '
+                        'Page ID만 연결해도 다음 단계 준비가 됩니다. 계정 상태/본인 확인 이슈가 있으면 '
+                        '먼저 해소한 뒤 다시 연결하세요.',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Theme.of(context)
+                              .colorScheme
+                              .onSurface
+                              .withValues(alpha: 0.72),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          OutlinedButton.icon(
+                            onPressed: (_loading || _marketingBusy)
+                                ? null
+                                : () => _openExternalUrl(
+                                      'https://www.facebook.com/pages/create',
+                                    ),
+                            icon: const Icon(Icons.open_in_browser_outlined,
+                                size: 18),
+                            label: const Text('브라우저 생성'),
+                          ),
+                          OutlinedButton.icon(
+                            onPressed: (_loading || _marketingBusy)
+                                ? null
+                                : () => _openExternalUrl(
+                                      'https://www.facebook.com/help/187316341316631',
+                                    ),
+                            icon:
+                                const Icon(Icons.group_add_outlined, size: 18),
+                            label: const Text('관리자 초대'),
+                          ),
+                          OutlinedButton.icon(
+                            onPressed: (_loading || _marketingBusy)
+                                ? null
+                                : () => _openExternalUrl(
+                                      'https://www.facebook.com/help/1392616391875085',
+                                    ),
+                            icon: const Icon(Icons.health_and_safety_outlined,
+                                size: 18),
+                            label: const Text('계정 상태'),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        '페이지가 없어도 지금은 링크 생성, 클릭 집계, 릴스팩 생성, 수동 업로드 보조까지는 진행할 수 있습니다.',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Theme.of(context).colorScheme.primary,
+                        ),
+                      ),
                     ],
                   ),
                 ),
@@ -2194,6 +2575,32 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
                         .withValues(alpha: 0.65),
                   ),
                 ),
+                const SizedBox(height: 6),
+                Text(
+                  '빠른 실효안: Meta 업로드 자동화 대신, 릴스팩 생성 후 수동 업로드 보조 문안과 추적 링크로 먼저 실주문 유입을 검증하세요.',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Theme.of(context)
+                        .colorScheme
+                        .onSurface
+                        .withValues(alpha: 0.65),
+                  ),
+                ),
+                if (_lastReelsPackResponse != null) ...[
+                  const SizedBox(height: 4),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: TextButton.icon(
+                      onPressed: _marketingBusy
+                          ? null
+                          : () => _showManualUploadAssistDialog(
+                                _lastReelsPackResponse!,
+                              ),
+                      icon: const Icon(Icons.upload_file_outlined, size: 18),
+                      label: const Text('최근 수동 업로드 보조 다시보기'),
+                    ),
+                  ),
+                ],
                 if (_instagramFormat != null) ...[
                   const SizedBox(height: 6),
                   Text(
@@ -2442,13 +2849,12 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
                             (row['statusName'] ?? '').toString().trim();
                         final productUrl =
                             (row['productUrl'] ?? '').toString().trim();
-                        final reasonRaw =
-                            (row['errorDetail'] ??
-                                    row['skipReason'] ??
-                                    row['error'] ??
-                                    '')
-                                .toString()
-                                .trim();
+                        final reasonRaw = (row['errorDetail'] ??
+                                row['skipReason'] ??
+                                row['error'] ??
+                                '')
+                            .toString()
+                            .trim();
                         final reason = _humanizeSkipReason(reasonRaw);
                         final statusText =
                             ok && !skipped ? '성공' : (skipped ? '스킵' : '실패');
@@ -2817,9 +3223,8 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
                                   if (searchTags.length > 5)
                                     InfoChip(
                                       label: '+${searchTags.length - 5}',
-                                      color: Theme.of(context)
-                                          .colorScheme
-                                          .outline,
+                                      color:
+                                          Theme.of(context).colorScheme.outline,
                                     ),
                                 ],
                               ),
@@ -2941,9 +3346,11 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
                                   onPressed: (url.isEmpty || _marketingBusy)
                                       ? null
                                       : () => _createMarketingLinkForItem(it),
-                                  icon:
-                                      const Icon(Icons.campaign_outlined, size: 18),
-                                  label: Text(marketingSlug.isNotEmpty ? '링크갱신' : '링크생성'),
+                                  icon: const Icon(Icons.campaign_outlined,
+                                      size: 18),
+                                  label: Text(marketingSlug.isNotEmpty
+                                      ? '링크갱신'
+                                      : '링크생성'),
                                 ),
                                 if (marketingSlug.isNotEmpty) ...[
                                   const SizedBox(width: 4),
@@ -2951,16 +3358,19 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
                                     onPressed: _marketingBusy
                                         ? null
                                         : () async {
-                                            final messenger = ScaffoldMessenger.of(context);
-                                            final text = marketingTrackingUrl.isNotEmpty
-                                                ? marketingTrackingUrl
-                                                : '/go/m/$marketingSlug';
+                                            final messenger =
+                                                ScaffoldMessenger.of(context);
+                                            final text =
+                                                marketingTrackingUrl.isNotEmpty
+                                                    ? marketingTrackingUrl
+                                                    : '/go/m/$marketingSlug';
                                             await Clipboard.setData(
                                                 ClipboardData(text: text));
                                             if (!mounted) return;
                                             messenger.showSnackBar(
                                               const SnackBar(
-                                                  content: Text('마케팅 링크를 복사했어요.')),
+                                                  content:
+                                                      Text('마케팅 링크를 복사했어요.')),
                                             );
                                           },
                                     icon: const Icon(Icons.link, size: 18),
@@ -2970,7 +3380,8 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
                                   TextButton.icon(
                                     onPressed: _marketingBusy
                                         ? null
-                                        : () => _refreshMarketingClicksForItem(it),
+                                        : () =>
+                                            _refreshMarketingClicksForItem(it),
                                     icon: const Icon(Icons.bar_chart, size: 18),
                                     label: Text('클릭 $marketingClickCount'),
                                   ),

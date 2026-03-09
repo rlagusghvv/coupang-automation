@@ -86,8 +86,11 @@ const SERVER_STARTED_AT = new Date().toISOString();
 const PACKAGE_JSON_PATH = path.join(process.cwd(), "package.json");
 const GIT_DIR = path.join(process.cwd(), ".git");
 const IP_CHECK_URLS = ["https://ifconfig.me/ip", "https://api.ipify.org"];
-const DATA_DIR = path.join(process.cwd(), "data");
-const UPLOAD_HISTORY_PATH = path.join(process.cwd(), "data", "upload_history.json");
+const DATA_DIR = (() => {
+  const override = String(process.env.COUPLEPHANT_DATA_DIR || "").trim();
+  return override ? path.resolve(override) : path.join(process.cwd(), "data");
+})();
+const UPLOAD_HISTORY_PATH = path.join(DATA_DIR, "upload_history.json");
 const UPLOAD_HISTORY_LIMIT = 200;
 const ECON_AUTH_PATH = path.join(DATA_DIR, 'econ_auth.json');
 const ECON_PROGRESS_PATH = path.join(DATA_DIR, 'econ_progress.json');

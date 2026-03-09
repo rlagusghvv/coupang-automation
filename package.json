@@ -5,6 +5,7 @@
   "main": "index.js",
   "scripts": {
     "start": "node server.js",
+    "smoke:instagram": "node scripts/smoke_instagram_marketing.mjs",
     "test": "node --test",
     "reels:pack": "node scripts/generate_instagram_reels_pack.mjs"
   },
