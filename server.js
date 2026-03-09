@@ -28,6 +28,11 @@ import {
   getUploadedProductBySourceUrl,
   getUploadedProductBySellerProductId,
   updateUploadedProductById,
+  createMarketingLink,
+  listMarketingLinks,
+  listMarketingClicksBySlug,
+  getMarketingLinkBySlug,
+  recordMarketingClick,
 } from "./src/server/storage_sqlite.js";
 import { exportOrdersToDomeme } from "./src/pipeline/exportOrdersToDomeme.js";
 import { uploadDomemeExcel } from "./src/pipeline/uploadDomemeExcel.js";
@@ -4440,6 +4445,297 @@ app.get("/api/upload/history", authRequired, (req, res) => {
   return res.json({ ok: true, history: loadUploadHistory() });
 });
 
+function getRequestBaseUrl(req) {
+  const protoRaw = String(req.headers["x-forwarded-proto"] || req.protocol || "https")
+    .split(",")[0]
+    .trim()
+    .toLowerCase();
+  const hostRaw = String(req.headers["x-forwarded-host"] || req.get("host") || "")
+    .split(",")[0]
+    .trim();
+  const proto = protoRaw === "http" ? "http" : "https";
+  if (!hostRaw) return "";
+  return `${proto}://${hostRaw}`;
+}
+
+function buildTrackingUrl(req, slug) {
+  const safeSlug = String(slug || "").trim();
+  if (!safeSlug) return "";
+  const pathOnly = `/go/m/${encodeURIComponent(safeSlug)}`;
+  const base = getRequestBaseUrl(req);
+  return base ? `${base}${pathOnly}` : pathOnly;
+}
+
+function normalizeKeywordTokens(raw, max = 6) {
+  const words = String(raw || "")
+    .replace(/[^0-9A-Za-z가-힣\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .split(" ")
+    .map((x) => x.trim())
+    .filter((x) => x.length >= 2);
+  return Array.from(new Set(words)).slice(0, Math.max(1, Math.min(12, Number(max) || 6)));
+}
+
+function toHashtagToken(raw) {
+  const cleaned = String(raw || "")
+    .replace(/[^0-9A-Za-z가-힣\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!cleaned) return "";
+  return cleaned.replace(/\s+/g, "");
+}
+
+function buildHashtags({ title = "", keyword = "", extra = [] } = {}) {
+  const head = [
+    "쿠팡추천",
+    "오늘의특가",
+    "생활템",
+    "가성비템",
+    ...normalizeKeywordTokens(keyword, 4),
+    ...normalizeKeywordTokens(title, 6),
+    ...(Array.isArray(extra) ? extra : []),
+  ];
+  const tags = [];
+  const seen = new Set();
+  for (const raw of head) {
+    const token = toHashtagToken(raw);
+    if (!token) continue;
+    const key = token.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    tags.push(`#${token}`);
+    if (tags.length >= 12) break;
+  }
+  return tags;
+}
+
+function buildReelsPack({
+  item = {},
+  trackedUrl = "",
+  brand = "쿠팡코끼리",
+  tone = "실용적",
+} = {}) {
+  const title = String(item?.title || item?.seoTitle || "").trim();
+  const keyword = String(item?.keyword || "").trim();
+  const price = Number(item?.finalPrice);
+  const sourcePrice = Number(item?.sourcePrice);
+  const margin = Number(item?.marginRate);
+  const priceText = Number.isFinite(price) ? `${Math.round(price).toLocaleString("ko-KR")}원` : "가격 확인";
+  const sourcePriceText = Number.isFinite(sourcePrice)
+    ? `${Math.round(sourcePrice).toLocaleString("ko-KR")}원`
+    : "";
+  const marginText = Number.isFinite(margin) ? `${Math.round(margin * 100)}%` : "";
+  const shortTitle = title.length > 38 ? `${title.slice(0, 38)}…` : title;
+  const landingUrl = String(trackedUrl || item?.targetUrl || item?.productUrl || "").trim();
+  const ctaUrlText = landingUrl || "프로필 링크";
+  const hashtags = buildHashtags({ title, keyword, extra: [String(item?.category || "").trim()] });
+
+  const hooks = [
+    `${keyword || "생활 정리"} 고민, 10초 안에 끝`,
+    `이 가격에 이 구성? ${priceText}`,
+    `실사용 후 가장 만족한 ${keyword || "생활템"}`,
+  ];
+
+  const storyboards = [
+    [
+      "0-2초: 문제 제기 (어지러운 상태/불편한 장면)",
+      `2-7초: 제품 등장 + 핵심 포인트 2개 (${shortTitle || keyword || "추천 상품"})`,
+      `7-13초: 사용 장면 전/후 비교 + 가격 노출(${priceText})`,
+      `13-18초: CTA (지금 확인: ${ctaUrlText})`,
+    ],
+    [
+      "0-3초: 후킹 문구 + 제품 클로즈업",
+      "3-9초: 사용 방법 3스텝",
+      `9-14초: 가격/마진 포인트 (${sourcePriceText ? `원가 ${sourcePriceText} → ` : ""}${priceText}${marginText ? ` / 마진 ${marginText}` : ""})`,
+      `14-20초: CTA + 신뢰 문구 (${brand})`,
+    ],
+    [
+      "0-2초: 타겟 상황(산책/정리/차량/주방 등) 공감 문구",
+      "2-8초: 불편 해결 시연",
+      "8-14초: 디테일 컷(재질/크기/수납력)",
+      `14-20초: CTA (${ctaUrlText})`,
+    ],
+  ];
+
+  const captions = [
+    `${shortTitle}\n\n${keyword ? `${keyword} 찾는 분들` : "실사용 중심"}에게 맞춘 추천템입니다.\n가격: ${priceText}\n지금 확인: ${ctaUrlText}`,
+    `요즘 반응 좋은 ${keyword || "생활템"}.\n핵심만 짧게 보여드렸어요.\n${sourcePriceText ? `원가 ${sourcePriceText} / ` : ""}판매가 ${priceText}\n링크: ${ctaUrlText}`,
+    `광고보다 실사용 중심으로 편집했습니다.\n${shortTitle}\n${marginText ? `수익률 참고: ${marginText}\n` : ""}자세히 보기: ${ctaUrlText}`,
+  ];
+
+  const grokVideoPrompts = hooks.map((hook, idx) => {
+    const scenes = storyboards[idx] || [];
+    return [
+      `Create a vertical 9:16 Instagram Reel, 20 seconds, style=${tone}, Korean text overlays.`,
+      `Product: ${shortTitle || keyword || "추천 상품"}.`,
+      `Hook overlay: "${hook}"`,
+      `Scenes: ${scenes.join(" | ")}`,
+      `End card text: "지금 확인하기" and show URL hint "${ctaUrlText}".`,
+      "Use clean cuts, high contrast captions, no exaggerated claims.",
+    ].join(" ");
+  });
+
+  return {
+    title,
+    keyword,
+    hooks,
+    storyboards,
+    captions,
+    hashtags,
+    grokVideoPrompts,
+    thumbnailTexts: [hooks[0], hooks[1], `${keyword || "추천템"} 실사용 후기`],
+  };
+}
+
+app.post("/api/marketing/links", authRequired, async (req, res) => {
+  try {
+    const targetUrl = String(req.body?.targetUrl || "").trim();
+    if (!isHttpUrl(targetUrl)) {
+      return res.status(400).json({ ok: false, error: "invalid_target_url" });
+    }
+    const link = await createMarketingLink({
+      userId: req.user.id,
+      slug: String(req.body?.slug || "").trim(),
+      targetUrl,
+      sourceUrl: String(req.body?.sourceUrl || "").trim(),
+      title: String(req.body?.title || "").trim(),
+      platform: String(req.body?.platform || "instagram").trim().toLowerCase(),
+      campaign: String(req.body?.campaign || "").trim(),
+      content: String(req.body?.content || "").trim(),
+      term: String(req.body?.term || "").trim(),
+      extra: req.body?.extra && typeof req.body.extra === "object" ? req.body.extra : {},
+    });
+    return res.json({
+      ok: true,
+      link: {
+        ...link,
+        trackingPath: `/go/m/${encodeURIComponent(String(link?.slug || ""))}`,
+        trackingUrl: buildTrackingUrl(req, link?.slug),
+      },
+    });
+  } catch (e) {
+    const msg = String(e?.message || e);
+    const status = msg === "slug_already_exists" || msg === "invalid_target_url" ? 400 : 500;
+    return res.status(status).json({ ok: false, error: msg });
+  }
+});
+
+app.get("/api/marketing/links", authRequired, async (req, res) => {
+  try {
+    const result = await listMarketingLinks({
+      userId: req.user.id,
+      q: String(req.query?.q || "").trim(),
+      platform: String(req.query?.platform || "").trim(),
+      campaign: String(req.query?.campaign || "").trim(),
+      limit: Number(req.query?.limit || 100),
+      offset: Number(req.query?.offset || 0),
+    });
+    const items = (result.items || []).map((row) => ({
+      ...row,
+      trackingPath: `/go/m/${encodeURIComponent(String(row?.slug || ""))}`,
+      trackingUrl: buildTrackingUrl(req, row?.slug),
+    }));
+    return res.json({ ok: true, ...result, items });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+app.get("/api/marketing/links/:slug/clicks", authRequired, async (req, res) => {
+  try {
+    const slug = String(req.params?.slug || "").trim();
+    const result = await listMarketingClicksBySlug({
+      userId: req.user.id,
+      slug,
+      limit: Number(req.query?.limit || 200),
+      offset: Number(req.query?.offset || 0),
+    });
+    return res.json({ ok: true, slug, ...result });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+app.post("/api/marketing/reels/pack", authRequired, async (req, res) => {
+  try {
+    const items = Array.isArray(req.body?.items) ? req.body.items : [];
+    const safeItems = items
+      .filter((x) => x && typeof x === "object")
+      .slice(0, 30)
+      .map((x) => ({ ...x }));
+    const brand = String(req.body?.brand || "쿠팡코끼리").trim() || "쿠팡코끼리";
+    const tone = String(req.body?.tone || "실용적").trim() || "실용적";
+    const platform = String(req.body?.platform || "instagram").trim().toLowerCase() || "instagram";
+    const campaign = String(req.body?.campaign || "").trim();
+    const autoCreateLinks = parseBooleanFlag(req.body?.autoCreateLinks, true);
+
+    const out = [];
+    for (let i = 0; i < safeItems.length; i += 1) {
+      const item = safeItems[i];
+      const targetUrl = pickFirstNonEmpty(item?.targetUrl, item?.productUrl, item?.coupangUrl);
+      let tracked = "";
+      let link = null;
+      if (autoCreateLinks && isHttpUrl(targetUrl)) {
+        link = await createMarketingLink({
+          userId: req.user.id,
+          targetUrl,
+          sourceUrl: String(item?.sourceUrl || "").trim(),
+          title: String(item?.title || item?.seoTitle || "").trim(),
+          platform,
+          campaign: campaign || String(item?.campaign || "").trim(),
+          content: String(item?.content || `v${i + 1}`).trim(),
+          term: String(item?.keyword || "").trim(),
+          extra: {
+            category: String(item?.category || item?.categoryLabel || "").trim(),
+          },
+        });
+        tracked = buildTrackingUrl(req, link?.slug);
+      }
+      const pack = buildReelsPack({
+        item: {
+          ...item,
+          targetUrl,
+        },
+        trackedUrl: tracked || targetUrl,
+        brand,
+        tone,
+      });
+      out.push({
+        index: i + 1,
+        item: {
+          title: String(item?.title || item?.seoTitle || "").trim(),
+          keyword: String(item?.keyword || "").trim(),
+          targetUrl: targetUrl || "",
+        },
+        tracking: link
+          ? {
+              slug: link.slug,
+              trackingPath: `/go/m/${encodeURIComponent(String(link.slug || ""))}`,
+              trackingUrl: tracked,
+            }
+          : {
+              slug: "",
+              trackingPath: "",
+              trackingUrl: isHttpUrl(targetUrl) ? targetUrl : "",
+            },
+        pack,
+      });
+    }
+
+    return res.json({
+      ok: true,
+      platform,
+      brand,
+      tone,
+      count: out.length,
+      items: out,
+    });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
 // ✅ 도매매 세션 생성 시작 (네이버 로그인)
 app.post("/api/domeme/session/start", authRequired, (req, res) => {
   try {
@@ -4470,6 +4766,39 @@ app.get("/api/domeme/session/status", authRequired, (req, res) => {
     });
   } catch (e) {
     return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+// ✅ /go/m/:slug -> 302 redirect + click tracking
+app.get("/go/m/:slug", async (req, res) => {
+  try {
+    const slug = String(req.params?.slug || "").trim().toLowerCase();
+    if (!slug) return res.status(400).type("text").send("missing slug");
+
+    const link = await getMarketingLinkBySlug(slug);
+    if (!link?.targetUrl || !isHttpUrl(link.targetUrl)) {
+      return res.status(404).type("text").send("link not found");
+    }
+
+    const ip =
+      String(req.headers["x-forwarded-for"] || "")
+        .split(",")[0]
+        .trim() || String(req.ip || "").trim();
+
+    recordMarketingClick({
+      slug,
+      referer: String(req.headers.referer || req.headers.referrer || "").trim(),
+      userAgent: String(req.headers["user-agent"] || "").trim(),
+      ip,
+      query: req.query || {},
+    }).catch((e) => {
+      log("[go/m] click tracking failed", slug, String(e?.message || e));
+    });
+
+    return res.redirect(302, link.targetUrl);
+  } catch (e) {
+    log("[go/m] error", e?.message);
+    return res.status(500).type("text").send("go marketing error");
   }
 });
 

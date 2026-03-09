@@ -11,6 +11,8 @@ const RECOMMENDATIONS_TABLE = "recommendations";
 const RECOMMENDATIONS_STATE_TABLE = "recommendations_state";
 const RECOMMENDATIONS_SEEN_TABLE = "recommendations_seen";
 const RECOMMENDATIONS_SAVED_TABLE = "recommendations_saved";
+const MARKETING_LINKS_TABLE = "marketing_links";
+const MARKETING_CLICKS_TABLE = "marketing_clicks";
 
 function ensureDir() {
   if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -241,6 +243,68 @@ export async function initDb() {
     db,
     `CREATE INDEX IF NOT EXISTS idx_recommendations_saved_user_saved_at
       ON ${RECOMMENDATIONS_SAVED_TABLE} (user_id, saved_at DESC)`,
+  );
+
+  await dbRun(
+    db,
+    `CREATE TABLE IF NOT EXISTS ${MARKETING_LINKS_TABLE} (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      slug TEXT NOT NULL UNIQUE,
+      target_url TEXT NOT NULL,
+      source_url TEXT NOT NULL DEFAULT '',
+      title TEXT NOT NULL DEFAULT '',
+      platform TEXT NOT NULL DEFAULT '',
+      campaign TEXT NOT NULL DEFAULT '',
+      content TEXT NOT NULL DEFAULT '',
+      term TEXT NOT NULL DEFAULT '',
+      extra_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL
+    )`,
+  );
+  await dbRun(
+    db,
+    `CREATE INDEX IF NOT EXISTS idx_marketing_links_user_created_at
+      ON ${MARKETING_LINKS_TABLE} (user_id, created_at DESC)`,
+  );
+  await dbRun(
+    db,
+    `CREATE INDEX IF NOT EXISTS idx_marketing_links_user_platform
+      ON ${MARKETING_LINKS_TABLE} (user_id, platform, created_at DESC)`,
+  );
+  await dbRun(
+    db,
+    `CREATE INDEX IF NOT EXISTS idx_marketing_links_user_campaign
+      ON ${MARKETING_LINKS_TABLE} (user_id, campaign, created_at DESC)`,
+  );
+
+  await dbRun(
+    db,
+    `CREATE TABLE IF NOT EXISTS ${MARKETING_CLICKS_TABLE} (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      slug TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      clicked_at TEXT NOT NULL,
+      referer TEXT NOT NULL DEFAULT '',
+      user_agent TEXT NOT NULL DEFAULT '',
+      ip TEXT NOT NULL DEFAULT '',
+      utm_source TEXT NOT NULL DEFAULT '',
+      utm_medium TEXT NOT NULL DEFAULT '',
+      utm_campaign TEXT NOT NULL DEFAULT '',
+      utm_content TEXT NOT NULL DEFAULT '',
+      utm_term TEXT NOT NULL DEFAULT '',
+      query_json TEXT NOT NULL DEFAULT '{}'
+    )`,
+  );
+  await dbRun(
+    db,
+    `CREATE INDEX IF NOT EXISTS idx_marketing_clicks_user_clicked_at
+      ON ${MARKETING_CLICKS_TABLE} (user_id, clicked_at DESC)`,
+  );
+  await dbRun(
+    db,
+    `CREATE INDEX IF NOT EXISTS idx_marketing_clicks_slug_clicked_at
+      ON ${MARKETING_CLICKS_TABLE} (slug, clicked_at DESC)`,
   );
 
   db.close();
@@ -757,6 +821,362 @@ export async function updateUploadedProductById({ userId, id, patch = {} } = {})
       [uid, Math.floor(nid)],
     );
     return normalizeRow(updated);
+  } finally {
+    db.close();
+  }
+}
+
+function normalizeMarketingSlug(raw) {
+  return String(raw || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]/g, "")
+    .slice(0, 40);
+}
+
+function randomMarketingSlug(length = 8) {
+  return crypto
+    .randomBytes(Math.max(4, Math.ceil(length)))
+    .toString("base64url")
+    .replace(/[^a-zA-Z0-9_-]/g, "")
+    .toLowerCase()
+    .slice(0, Math.max(6, Math.min(32, Number(length) || 8)));
+}
+
+function isHttpUrl(rawUrl) {
+  try {
+    const u = new URL(String(rawUrl || "").trim());
+    return u.protocol === "http:" || u.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+function normalizeMarketingLinkRow(row) {
+  if (!row) return null;
+  let extra = {};
+  try {
+    extra = JSON.parse(row.extra_json || "{}");
+  } catch {
+    extra = {};
+  }
+  return {
+    id: String(row.id || "").trim(),
+    userId: String(row.user_id || "").trim(),
+    slug: String(row.slug || "").trim(),
+    targetUrl: String(row.target_url || "").trim(),
+    sourceUrl: String(row.source_url || "").trim(),
+    title: String(row.title || "").trim(),
+    platform: String(row.platform || "").trim(),
+    campaign: String(row.campaign || "").trim(),
+    content: String(row.content || "").trim(),
+    term: String(row.term || "").trim(),
+    extra,
+    createdAt: String(row.created_at || "").trim(),
+    clickCount: Number(row.click_count || 0) || 0,
+    lastClickedAt: String(row.last_clicked_at || "").trim() || null,
+  };
+}
+
+function normalizeMarketingClickRow(row) {
+  if (!row) return null;
+  let query = {};
+  try {
+    query = JSON.parse(row.query_json || "{}");
+  } catch {
+    query = {};
+  }
+  return {
+    id: Number(row.id || 0) || 0,
+    slug: String(row.slug || "").trim(),
+    userId: String(row.user_id || "").trim(),
+    clickedAt: String(row.clicked_at || "").trim(),
+    referer: String(row.referer || "").trim(),
+    userAgent: String(row.user_agent || "").trim(),
+    ip: String(row.ip || "").trim(),
+    utmSource: String(row.utm_source || "").trim(),
+    utmMedium: String(row.utm_medium || "").trim(),
+    utmCampaign: String(row.utm_campaign || "").trim(),
+    utmContent: String(row.utm_content || "").trim(),
+    utmTerm: String(row.utm_term || "").trim(),
+    query,
+  };
+}
+
+export async function createMarketingLink({
+  userId,
+  slug = "",
+  targetUrl,
+  sourceUrl = "",
+  title = "",
+  platform = "",
+  campaign = "",
+  content = "",
+  term = "",
+  extra = {},
+} = {}) {
+  const uid = String(userId || "global").trim() || "global";
+  const target = String(targetUrl || "").trim();
+  if (!isHttpUrl(target)) throw new Error("invalid_target_url");
+
+  const source = String(sourceUrl || "").trim();
+  const sourceSafe = isHttpUrl(source) ? source : "";
+  const titleSafe = String(title || "").trim().slice(0, 200);
+  const platformSafe = String(platform || "").trim().toLowerCase().slice(0, 50);
+  const campaignSafe = String(campaign || "").trim().slice(0, 120);
+  const contentSafe = String(content || "").trim().slice(0, 120);
+  const termSafe = String(term || "").trim().slice(0, 120);
+  const extraSafe =
+    extra && typeof extra === "object"
+      ? Object.fromEntries(
+          Object.entries(extra)
+            .slice(0, 20)
+            .map(([k, v]) => [String(k).slice(0, 60), String(v).slice(0, 240)]),
+        )
+      : {};
+
+  const db = openDb();
+  try {
+    let finalSlug = normalizeMarketingSlug(slug);
+    if (finalSlug) {
+      const exists = await dbGet(
+        db,
+        `SELECT slug FROM ${MARKETING_LINKS_TABLE} WHERE slug = ? LIMIT 1`,
+        [finalSlug],
+      );
+      if (exists) throw new Error("slug_already_exists");
+    }
+
+    if (!finalSlug) {
+      for (let i = 0; i < 8; i += 1) {
+        const candidate = randomMarketingSlug(9);
+        const exists = await dbGet(
+          db,
+          `SELECT slug FROM ${MARKETING_LINKS_TABLE} WHERE slug = ? LIMIT 1`,
+          [candidate],
+        );
+        if (!exists) {
+          finalSlug = candidate;
+          break;
+        }
+      }
+      if (!finalSlug) throw new Error("slug_generation_failed");
+    }
+
+    const id = crypto.randomUUID();
+    const createdAt = new Date().toISOString();
+    await dbRun(
+      db,
+      `INSERT INTO ${MARKETING_LINKS_TABLE}
+      (id, user_id, slug, target_url, source_url, title, platform, campaign, content, term, extra_json, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        id,
+        uid,
+        finalSlug,
+        target,
+        sourceSafe,
+        titleSafe,
+        platformSafe,
+        campaignSafe,
+        contentSafe,
+        termSafe,
+        JSON.stringify(extraSafe),
+        createdAt,
+      ],
+    );
+
+    const row = await dbGet(
+      db,
+      `SELECT * FROM ${MARKETING_LINKS_TABLE} WHERE id = ? LIMIT 1`,
+      [id],
+    );
+    return normalizeMarketingLinkRow(row);
+  } finally {
+    db.close();
+  }
+}
+
+export async function getMarketingLinkBySlug(slug) {
+  const safeSlug = normalizeMarketingSlug(slug);
+  if (!safeSlug) return null;
+  const db = openDb();
+  try {
+    const row = await dbGet(
+      db,
+      `SELECT * FROM ${MARKETING_LINKS_TABLE} WHERE slug = ? LIMIT 1`,
+      [safeSlug],
+    );
+    return normalizeMarketingLinkRow(row);
+  } finally {
+    db.close();
+  }
+}
+
+export async function listMarketingLinks({
+  userId,
+  q = "",
+  platform = "",
+  campaign = "",
+  limit = 100,
+  offset = 0,
+} = {}) {
+  const uid = String(userId || "global").trim() || "global";
+  const where = ["l.user_id = ?"];
+  const params = [uid];
+
+  const keyword = String(q || "").trim();
+  if (keyword) {
+    const like = `%${keyword}%`;
+    where.push("(l.title LIKE ? OR l.target_url LIKE ? OR l.source_url LIKE ? OR l.slug LIKE ?)");
+    params.push(like, like, like, like);
+  }
+  const platformText = String(platform || "").trim().toLowerCase();
+  if (platformText) {
+    where.push("l.platform = ?");
+    params.push(platformText);
+  }
+  const campaignText = String(campaign || "").trim();
+  if (campaignText) {
+    where.push("l.campaign = ?");
+    params.push(campaignText);
+  }
+
+  const safeLimit = Math.max(1, Math.min(300, Number(limit) || 100));
+  const safeOffset = Math.max(0, Number(offset) || 0);
+  const whereSql = where.length > 0 ? `WHERE ${where.join(" AND ")}` : "";
+
+  const db = openDb();
+  try {
+    const rows = await dbAll(
+      db,
+      `SELECT
+         l.*,
+         COUNT(c.id) AS click_count,
+         MAX(c.clicked_at) AS last_clicked_at
+       FROM ${MARKETING_LINKS_TABLE} l
+       LEFT JOIN ${MARKETING_CLICKS_TABLE} c
+         ON c.slug = l.slug AND c.user_id = l.user_id
+       ${whereSql}
+       GROUP BY l.id
+       ORDER BY l.created_at DESC
+       LIMIT ? OFFSET ?`,
+      [...params, safeLimit, safeOffset],
+    );
+    const cnt = await dbGet(
+      db,
+      `SELECT COUNT(1) AS cnt
+       FROM ${MARKETING_LINKS_TABLE} l
+       ${whereSql}`,
+      params,
+    );
+    return {
+      items: rows.map(normalizeMarketingLinkRow),
+      total: Number(cnt?.cnt || 0) || 0,
+      limit: safeLimit,
+      offset: safeOffset,
+    };
+  } finally {
+    db.close();
+  }
+}
+
+export async function listMarketingClicksBySlug({
+  userId,
+  slug,
+  limit = 200,
+  offset = 0,
+} = {}) {
+  const uid = String(userId || "global").trim() || "global";
+  const safeSlug = normalizeMarketingSlug(slug);
+  if (!safeSlug) return { items: [], total: 0, limit: 0, offset: 0 };
+  const safeLimit = Math.max(1, Math.min(500, Number(limit) || 200));
+  const safeOffset = Math.max(0, Number(offset) || 0);
+
+  const db = openDb();
+  try {
+    const rows = await dbAll(
+      db,
+      `SELECT *
+       FROM ${MARKETING_CLICKS_TABLE}
+       WHERE user_id = ? AND slug = ?
+       ORDER BY clicked_at DESC
+       LIMIT ? OFFSET ?`,
+      [uid, safeSlug, safeLimit, safeOffset],
+    );
+    const cnt = await dbGet(
+      db,
+      `SELECT COUNT(1) AS cnt
+       FROM ${MARKETING_CLICKS_TABLE}
+       WHERE user_id = ? AND slug = ?`,
+      [uid, safeSlug],
+    );
+    return {
+      items: rows.map(normalizeMarketingClickRow),
+      total: Number(cnt?.cnt || 0) || 0,
+      limit: safeLimit,
+      offset: safeOffset,
+    };
+  } finally {
+    db.close();
+  }
+}
+
+export async function recordMarketingClick({
+  slug,
+  referer = "",
+  userAgent = "",
+  ip = "",
+  query = {},
+} = {}) {
+  const safeSlug = normalizeMarketingSlug(slug);
+  if (!safeSlug) return null;
+
+  const db = openDb();
+  try {
+    const link = await dbGet(
+      db,
+      `SELECT user_id, slug FROM ${MARKETING_LINKS_TABLE} WHERE slug = ? LIMIT 1`,
+      [safeSlug],
+    );
+    if (!link?.user_id) return null;
+
+    const queryObj = query && typeof query === "object" ? query : {};
+    const clickedAt = new Date().toISOString();
+    const utmSource = String(queryObj.utm_source || "").trim().slice(0, 80);
+    const utmMedium = String(queryObj.utm_medium || "").trim().slice(0, 80);
+    const utmCampaign = String(queryObj.utm_campaign || "").trim().slice(0, 120);
+    const utmContent = String(queryObj.utm_content || "").trim().slice(0, 120);
+    const utmTerm = String(queryObj.utm_term || "").trim().slice(0, 120);
+
+    await dbRun(
+      db,
+      `INSERT INTO ${MARKETING_CLICKS_TABLE}
+      (slug, user_id, clicked_at, referer, user_agent, ip, utm_source, utm_medium, utm_campaign, utm_content, utm_term, query_json)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        safeSlug,
+        String(link.user_id),
+        clickedAt,
+        String(referer || "").trim().slice(0, 400),
+        String(userAgent || "").trim().slice(0, 500),
+        String(ip || "").trim().slice(0, 120),
+        utmSource,
+        utmMedium,
+        utmCampaign,
+        utmContent,
+        utmTerm,
+        JSON.stringify(
+          Object.fromEntries(
+            Object.entries(queryObj)
+              .slice(0, 30)
+              .map(([k, v]) => [String(k).slice(0, 60), String(v).slice(0, 240)]),
+          ),
+        ),
+      ],
+    );
+
+    return { slug: safeSlug, userId: String(link.user_id), clickedAt };
   } finally {
     db.close();
   }
