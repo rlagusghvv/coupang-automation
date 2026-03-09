@@ -31,7 +31,7 @@ const OUTBOUND_SHIPPING_PLACE_CODE = "24093380";
 const DISPLAY_CATEGORY_CODE = 0;
 const IP_CHECK_URLS = ["https://ifconfig.me/ip", "https://api.ipify.org"];
 const IMAGE_CHECK_TIMEOUT_MS = 8000;
-const CREATE_RETRY_MAX = 1;
+const CREATE_RETRY_MAX = 2;
 
 const CATEGORY_REQUIRED_ATTRIBUTES = {
   78838: [
@@ -464,12 +464,10 @@ export async function runUploadFromUrl(inputUrl, settings = {}, runtime = {}) {
       : [];
 
   const configuredUnitCount = Number(settings.defaultUnitCount);
-  const configuredUnitType = String(settings.defaultUnitType || "").trim();
+  const configuredUnitType = String(settings.defaultUnitType || "PIECE").trim();
   const defaultItemUnit = {
-    ...(Number.isFinite(configuredUnitCount) && configuredUnitCount > 0
-      ? { unitCount: configuredUnitCount }
-      : {}),
-    ...(configuredUnitType ? { unitType: configuredUnitType } : {}),
+    unitCount: Number.isFinite(configuredUnitCount) && configuredUnitCount > 0 ? configuredUnitCount : 1,
+    unitType: configuredUnitType || "PIECE",
   };
   const searchTags = buildSearchTags({
     title: draft.title,
@@ -777,20 +775,42 @@ function applyErrorItemFixes({ body, errorItems, finalCategoryCode }) {
   }
 
   if (needsItemUnit) {
-    let unitRemoved = false;
-    for (const item of items) {
-      if (Object.prototype.hasOwnProperty.call(item || {}, "unitCount")) {
-        delete item.unitCount;
-        unitRemoved = true;
+    const allNormalized = items.every((item) => {
+      const count = Number(item?.unitCount);
+      const type = String(item?.unitType || "").trim().toUpperCase();
+      return Number.isFinite(count) && count === 1 && type === "PIECE";
+    });
+
+    let unitChanged = false;
+    if (!allNormalized) {
+      for (const item of items) {
+        const count = Number(item?.unitCount);
+        const type = String(item?.unitType || "").trim().toUpperCase();
+        if (!Number.isFinite(count) || count <= 0 || count !== 1) {
+          item.unitCount = 1;
+          unitChanged = true;
+        }
+        if (!type || type !== "PIECE") {
+          item.unitType = "PIECE";
+          unitChanged = true;
+        }
       }
-      if (Object.prototype.hasOwnProperty.call(item || {}, "unitType")) {
-        delete item.unitType;
-        unitRemoved = true;
+    } else {
+      for (const item of items) {
+        if (Object.prototype.hasOwnProperty.call(item || {}, "unitCount")) {
+          delete item.unitCount;
+          unitChanged = true;
+        }
+        if (Object.prototype.hasOwnProperty.call(item || {}, "unitType")) {
+          delete item.unitType;
+          unitChanged = true;
+        }
       }
     }
-    if (unitRemoved) {
+
+    if (unitChanged) {
       changed = true;
-      appliedFixes.push("item_unit_removed");
+      appliedFixes.push(allNormalized ? "item_unit_removed_fallback" : "item_unit_normalized:1-PIECE");
     }
   }
 
