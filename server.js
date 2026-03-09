@@ -4542,6 +4542,9 @@ function buildReelsPack({
   const landingUrl = String(trackedUrl || item?.targetUrl || item?.productUrl || "").trim();
   const ctaUrlText = landingUrl || "프로필 링크";
   const reelCtaText = "프로필 링크에서 확인";
+  const commentKeyword = "링크";
+  const commentCtaText = `구매 링크가 필요하면 댓글에 "${commentKeyword}" 남겨주세요.`;
+  const profileGuideText = "자세한 정보는 프로필 링크에서 확인해보세요.";
   const hashtags = buildHashtags({ title, keyword, extra: [String(item?.category || "").trim()] });
 
   const hooks = [
@@ -4572,10 +4575,32 @@ function buildReelsPack({
   ];
 
   const captions = [
-    `${shortTitle}\n\n${keyword ? `${keyword} 찾는 분들` : "실사용 중심"}에게 맞춘 추천템입니다.\n가격: ${priceText}\n지금 확인: ${ctaUrlText}`,
-    `요즘 반응 좋은 ${keyword || "생활템"}.\n핵심만 짧게 보여드렸어요.\n${sourcePriceText ? `원가 ${sourcePriceText} / ` : ""}판매가 ${priceText}\n링크: ${ctaUrlText}`,
-    `광고보다 실사용 중심으로 편집했습니다.\n${shortTitle}\n${marginText ? `수익률 참고: ${marginText}\n` : ""}자세히 보기: ${ctaUrlText}`,
+    `${shortTitle}\n\n${keyword ? `${keyword} 찾는 분들` : "실사용 중심"}에게 맞춘 추천템입니다.\n가격: ${priceText}\n${profileGuideText}\n${commentCtaText}`,
+    `요즘 반응 좋은 ${keyword || "생활템"}.\n핵심만 짧게 보여드렸어요.\n${sourcePriceText ? `원가 ${sourcePriceText} / ` : ""}판매가 ${priceText}\n${profileGuideText}\n${commentCtaText}`,
+    `광고보다 실사용 중심으로 편집했습니다.\n${shortTitle}\n${marginText ? `수익률 참고: ${marginText}\n` : ""}${profileGuideText}\n${commentCtaText}`,
   ];
+
+  const instagramPostText = [
+    hooks[0],
+    "",
+    shortTitle || keyword || "추천 상품",
+    keyword ? `${keyword} 찾는 분들께 먼저 보여드리고 싶은 생활템입니다.` : "실사용 중심으로 보기 좋은 생활템입니다.",
+    `가격: ${priceText}`,
+    profileGuideText,
+    commentCtaText,
+    "",
+    hashtags.join(" "),
+  ].join("\n");
+
+  const pinnedComment = landingUrl
+    ? `요청 주신 구매 링크입니다 👇\n${landingUrl}`
+    : `구매 링크는 프로필 링크에서 확인해 주세요.`;
+  const commentReplyTemplate = landingUrl
+    ? `링크 보내드려요 👇\n${landingUrl}\n궁금한 점 있으면 답글 남겨주세요.`
+    : `링크는 프로필 링크에서 확인해 주세요.`;
+  const dmReplyTemplate = landingUrl
+    ? `${shortTitle || keyword || "추천 상품"}\n요청하신 링크 보내드려요 👇\n${landingUrl}\n필요한 정보 더 있으면 편하게 답장 주세요.`
+    : `${shortTitle || keyword || "추천 상품"}\n구매 링크는 프로필 링크에서 확인해 주세요.`;
 
   const soraVideoPrompts = hooks.map((hook, idx) => {
     const scenes = storyboards[idx] || [];
@@ -4589,6 +4614,7 @@ function buildReelsPack({
       `Storyboard: ${scenes.join(" | ")}`,
       "Keep the scenes realistic, commercially usable, and easy to edit into an actual product reel.",
       "Use clean cuts, bold high-contrast Korean captions, realistic home lighting, and stable camera movement.",
+      "Keep audio silent or extremely subtle ambient only. No loud music, no strong beats, and no aggressive sound effects.",
       `End card text in Korean: "${reelCtaText}".`,
       "Do not render full URLs, QR codes, browser UI, or shopping-app screenshots inside the video.",
       "Avoid fake discounts, impossible physics, warped geometry, flickering captions, deformed hands, and surreal transitions.",
@@ -4602,6 +4628,12 @@ function buildReelsPack({
     storyboards,
     captions,
     hashtags,
+    instagramPostText,
+    commentKeyword,
+    commentCtaText,
+    pinnedComment,
+    commentReplyTemplate,
+    dmReplyTemplate,
     soraVideoPrompts,
     grokVideoPrompts: soraVideoPrompts,
     thumbnailTexts: [hooks[0], hooks[1], `${keyword || "추천템"} 실사용 후기`],

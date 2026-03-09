@@ -421,6 +421,12 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
           .map((e) => e.toString().trim())
           .where((e) => e.isNotEmpty)
           .toList();
+      final instagramPostText =
+          (pack['instagramPostText'] ?? '').toString().trim();
+      final commentCtaText = (pack['commentCtaText'] ?? '').toString().trim();
+      final commentReplyTemplate =
+          (pack['commentReplyTemplate'] ?? '').toString().trim();
+      final dmReplyTemplate = (pack['dmReplyTemplate'] ?? '').toString().trim();
       final hashtags = ((pack['hashtags'] as List?) ?? const [])
           .map((e) => e.toString().trim())
           .where((e) => e.isNotEmpty)
@@ -453,13 +459,26 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
           lines.add(' - $scene');
         }
       }
-      if (captions.isNotEmpty) {
-        lines.add('캡션');
-        lines.add(captions.first);
+      if (instagramPostText.isNotEmpty || captions.isNotEmpty) {
+        lines.add('업로드 문안');
+        lines.add(
+            instagramPostText.isNotEmpty ? instagramPostText : captions.first);
       }
       if (hashtags.isNotEmpty) {
         lines.add('해시태그');
         lines.add(hashtags.join(' '));
+      }
+      if (commentCtaText.isNotEmpty) {
+        lines.add('댓글 유도 문구');
+        lines.add(commentCtaText);
+      }
+      if (commentReplyTemplate.isNotEmpty) {
+        lines.add('댓글 답글 템플릿');
+        lines.add(commentReplyTemplate);
+      }
+      if (dmReplyTemplate.isNotEmpty) {
+        lines.add('DM 템플릿');
+        lines.add(dmReplyTemplate);
       }
       if (trackingUrl.isNotEmpty) {
         lines.add('추적 링크');

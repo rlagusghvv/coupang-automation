@@ -480,14 +480,20 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
         .toList();
   }
 
+  String _stringValue(Map<String, dynamic> map, String key) {
+    return (map[key] ?? '').toString().trim();
+  }
+
   String _instagramCaptionText(
     Map<String, dynamic> product,
     Map<String, dynamic> json,
   ) {
     final pack = _firstMarketingPack(json);
     final tracking = _firstMarketingTracking(json);
+    final oneShot = _stringValue(pack, 'instagramPostText');
     final captions = _stringList(pack['captions']);
     final hashtags = _stringList(pack['hashtags']);
+    if (oneShot.isNotEmpty) return oneShot;
     final lines = <String>[];
 
     if (captions.isNotEmpty) {
@@ -510,6 +516,26 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
     return lines.join('\n').trim();
   }
 
+  String _commentCtaText(Map<String, dynamic> json) {
+    final pack = _firstMarketingPack(json);
+    return _stringValue(pack, 'commentCtaText');
+  }
+
+  String _commentReplyTemplateText(Map<String, dynamic> json) {
+    final pack = _firstMarketingPack(json);
+    return _stringValue(pack, 'commentReplyTemplate');
+  }
+
+  String _dmReplyTemplateText(Map<String, dynamic> json) {
+    final pack = _firstMarketingPack(json);
+    return _stringValue(pack, 'dmReplyTemplate');
+  }
+
+  String _pinnedCommentText(Map<String, dynamic> json) {
+    final pack = _firstMarketingPack(json);
+    return _stringValue(pack, 'pinnedComment');
+  }
+
   String _instagramChecklistText(
     Map<String, dynamic> product,
     Map<String, dynamic> json,
@@ -517,14 +543,17 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
     final pack = _firstMarketingPack(json);
     final hooks = _stringList(pack['hooks']);
     final tracking = _firstMarketingTracking(json);
+    final commentCtaText = _stringValue(pack, 'commentCtaText');
     final trackingUrl = (tracking['trackingUrl'] ?? '').toString().trim();
 
     final lines = <String>[
-      '1. 인스타 본문 복사 버튼으로 캡션/해시태그를 복사합니다.',
+      '1. 인스타 업로드 문안 복사 버튼으로 메인 문구/본문/해시태그를 한 번에 복사합니다.',
       '2. 아래 사진 미리보기에서 메인 1장 + 상세 2~4장을 고릅니다.',
       if (hooks.isNotEmpty) '3. 첫 2초 자막은 "${hooks.first}" 로 시작합니다.',
-      if (trackingUrl.isNotEmpty) '4. 본문 또는 프로필 링크에 $trackingUrl 를 반영합니다.',
-      '5. 영상 업로드 후 클릭 수를 확인합니다.',
+      if (trackingUrl.isNotEmpty) '4. 프로필 링크에는 $trackingUrl 를 반영합니다.',
+      if (commentCtaText.isNotEmpty)
+        '5. 게시 후 댓글 유도 문구 "$commentCtaText" 흐름으로 운영합니다.',
+      '6. 영상 업로드 후 클릭 수를 확인합니다.',
     ];
     return lines.join('\n');
   }
@@ -614,6 +643,11 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
     final thumbnailTexts = _stringList(pack['thumbnailTexts']);
     final prompts = _soraPromptsText(json);
     final images = _marketingImagesOf(product);
+    final instagramPostText = _stringValue(pack, 'instagramPostText');
+    final commentCtaText = _stringValue(pack, 'commentCtaText');
+    final pinnedComment = _stringValue(pack, 'pinnedComment');
+    final commentReplyTemplate = _stringValue(pack, 'commentReplyTemplate');
+    final dmReplyTemplate = _stringValue(pack, 'dmReplyTemplate');
     final trackingUrl = (tracking['trackingUrl'] ?? '').toString().trim();
     final targetUrl = (item['targetUrl'] ?? _resolveMarketingTargetUrl(product))
         .toString()
@@ -659,14 +693,39 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
 
     if (captions.isNotEmpty) {
       lines.add('');
-      lines.add('추천 캡션');
-      lines.add(captions.first);
+      lines.add('인스타 업로드 문안');
+      lines.add(
+          instagramPostText.isNotEmpty ? instagramPostText : captions.first);
     }
 
     if (hashtags.isNotEmpty) {
       lines.add('');
       lines.add('해시태그');
       lines.add(hashtags.join(' '));
+    }
+
+    if (commentCtaText.isNotEmpty) {
+      lines.add('');
+      lines.add('댓글 유도 문구');
+      lines.add(commentCtaText);
+    }
+
+    if (pinnedComment.isNotEmpty) {
+      lines.add('');
+      lines.add('고정댓글 템플릿');
+      lines.add(pinnedComment);
+    }
+
+    if (commentReplyTemplate.isNotEmpty) {
+      lines.add('');
+      lines.add('수동 답글 템플릿');
+      lines.add(commentReplyTemplate);
+    }
+
+    if (dmReplyTemplate.isNotEmpty) {
+      lines.add('');
+      lines.add('DM 템플릿');
+      lines.add(dmReplyTemplate);
     }
 
     if (thumbnailTexts.isNotEmpty) {
@@ -709,6 +768,10 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
     final hashtags = _stringList(pack['hashtags']);
     final thumbnailTexts = _stringList(pack['thumbnailTexts']);
     final instagramCaption = _instagramCaptionText(product, json);
+    final commentCtaText = _commentCtaText(json);
+    final commentReplyTemplate = _commentReplyTemplateText(json);
+    final dmReplyTemplate = _dmReplyTemplateText(json);
+    final pinnedComment = _pinnedCommentText(json);
     final instagramChecklist = _instagramChecklistText(product, json);
     final primaryPrompt = promptList.isNotEmpty ? promptList.first : prompts;
     final promptPreview = primaryPrompt.length > 3000
@@ -757,12 +820,23 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
                           : () async {
                               await _copyText(
                                 instagramCaption,
-                                '인스타 본문을 복사했어요.',
+                                '인스타 업로드 문안을 복사했어요.',
                               );
                             },
                       icon: const Icon(Icons.copy_all_outlined, size: 18),
-                      label: const Text('2. 인스타 본문 복사'),
+                      label: const Text('2. 인스타 업로드 문안 복사'),
                     ),
+                    if (commentReplyTemplate.isNotEmpty)
+                      OutlinedButton.icon(
+                        onPressed: () async {
+                          await _copyText(
+                            commentReplyTemplate,
+                            '댓글 답글 템플릿을 복사했어요.',
+                          );
+                        },
+                        icon: const Icon(Icons.reply_outlined, size: 18),
+                        label: const Text('3. 댓글 답글 복사'),
+                      ),
                     if (trackingUrl.isNotEmpty)
                       OutlinedButton.icon(
                         onPressed: () async {
@@ -798,7 +872,7 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
                   context,
                   icon: Icons.campaign_outlined,
                   title: '1. 인스타 업로드',
-                  subtitle: '본문/링크/썸네일 문구를 복사해서 인스타에 바로 붙여 넣는 단계입니다.',
+                  subtitle: '메인 문구부터 해시태그, 댓글 유도, 답글 템플릿까지 복사해서 바로 쓰는 단계입니다.',
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
@@ -831,7 +905,7 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
                         const SizedBox(height: 8),
                       ],
                       Text(
-                        '인스타 본문',
+                        '인스타 업로드 문안',
                         style: TextStyle(
                           fontSize: 12,
                           fontWeight: FontWeight.w800,
@@ -872,12 +946,47 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
                                 : () async {
                                     await _copyText(
                                       instagramCaption,
-                                      '인스타 본문을 복사했어요.',
+                                      '인스타 업로드 문안을 복사했어요.',
                                     );
                                   },
                             icon: const Icon(Icons.copy_outlined, size: 18),
-                            label: const Text('본문 복사'),
+                            label: const Text('업로드 문안 복사'),
                           ),
+                          if (commentCtaText.isNotEmpty)
+                            OutlinedButton.icon(
+                              onPressed: () async {
+                                await _copyText(
+                                  commentCtaText,
+                                  '댓글 유도 문구를 복사했어요.',
+                                );
+                              },
+                              icon: const Icon(Icons.chat_bubble_outline,
+                                  size: 18),
+                              label: const Text('댓글 유도 복사'),
+                            ),
+                          if (commentReplyTemplate.isNotEmpty)
+                            OutlinedButton.icon(
+                              onPressed: () async {
+                                await _copyText(
+                                  commentReplyTemplate,
+                                  '댓글 답글 템플릿을 복사했어요.',
+                                );
+                              },
+                              icon: const Icon(Icons.reply_outlined, size: 18),
+                              label: const Text('답글 템플릿 복사'),
+                            ),
+                          if (dmReplyTemplate.isNotEmpty)
+                            OutlinedButton.icon(
+                              onPressed: () async {
+                                await _copyText(
+                                  dmReplyTemplate,
+                                  'DM 템플릿을 복사했어요.',
+                                );
+                              },
+                              icon: const Icon(Icons.mark_chat_unread_outlined,
+                                  size: 18),
+                              label: const Text('DM 템플릿 복사'),
+                            ),
                           if (thumbnailTexts.isNotEmpty)
                             OutlinedButton.icon(
                               onPressed: () async {
@@ -899,6 +1008,70 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
                             ),
                         ],
                       ),
+                      if (commentCtaText.isNotEmpty) ...[
+                        const SizedBox(height: 10),
+                        Text(
+                          '댓글 유도 문구',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w800,
+                            color: Theme.of(context).colorScheme.onSurface,
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        SelectableText(
+                          commentCtaText,
+                          style: const TextStyle(fontSize: 12, height: 1.4),
+                        ),
+                      ],
+                      if (pinnedComment.isNotEmpty) ...[
+                        const SizedBox(height: 10),
+                        Text(
+                          '고정댓글 템플릿',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w800,
+                            color: Theme.of(context).colorScheme.onSurface,
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        SelectableText(
+                          pinnedComment,
+                          style: const TextStyle(fontSize: 12, height: 1.4),
+                        ),
+                      ],
+                      if (commentReplyTemplate.isNotEmpty) ...[
+                        const SizedBox(height: 10),
+                        Text(
+                          '수동 댓글 답글 템플릿',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w800,
+                            color: Theme.of(context).colorScheme.onSurface,
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        SelectableText(
+                          commentReplyTemplate,
+                          style: const TextStyle(fontSize: 12, height: 1.4),
+                        ),
+                      ],
+                      if (dmReplyTemplate.isNotEmpty) ...[
+                        const SizedBox(height: 10),
+                        Text(
+                          '수동 DM 템플릿',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w800,
+                            color: Theme.of(context).colorScheme.onSurface,
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        SelectableText(
+                          dmReplyTemplate,
+                          style: const TextStyle(fontSize: 12, height: 1.4),
+                        ),
+                      ],
                     ],
                   ),
                 ),
@@ -928,7 +1101,8 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
                           '3. Sora에 대표 프롬프트를 그대로 붙여 넣습니다.',
                           '4. 저장한 상품 사진을 reference 이미지로 함께 넣습니다.',
                           '5. 세로 9:16, 15~20초 영상으로 생성하고 가장 자연스러운 1개만 채택합니다.',
-                          '6. Sora에는 상품 URL, 추적 링크, 원본 URL, 운영 메모 전체 텍스트를 넣지 않습니다.',
+                          '6. 기본 프롬프트는 저음량/무음 기준이므로, 큰 배경음 없이 생성되도록 그대로 사용합니다.',
+                          '7. Sora에는 상품 URL, 추적 링크, 원본 URL, 운영 메모 전체 텍스트를 넣지 않습니다.',
                         ].join('\n'),
                         style: const TextStyle(fontSize: 12, height: 1.45),
                       ),
