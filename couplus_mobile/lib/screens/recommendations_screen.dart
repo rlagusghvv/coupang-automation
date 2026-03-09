@@ -465,7 +465,7 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
       lines.add('');
       lines.add('[$displayIndex] ${title.isEmpty ? '상품' : title}');
       lines.add('업로드 순서');
-      lines.add('1. 상품 메인 페이지 캐러셀에서 글씨 없는 상품 사진만 1~4장 고릅니다.');
+      lines.add('1. 메인 이미지와 글씨 없는 디테일 상품컷 1~4장을 고릅니다.');
       lines.add('2. 세로 9:16 릴스를 열고 첫 2초에 훅 문구를 넣습니다.');
       if (hooks.isNotEmpty) {
         lines.add('3. 첫 문구: ${hooks.first}');

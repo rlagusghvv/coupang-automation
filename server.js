@@ -4608,10 +4608,10 @@ function extractProductFeatureHints(item = {}) {
 
 function buildReferenceImageGuide() {
   return [
-    "상품 메인 페이지 캐러셀의 깨끗한 상품 사진만 reference로 넣습니다.",
-    "상세페이지 캡처, 글씨/가격/규격표, 콜라주, 사람 모델컷은 넣지 않습니다.",
-    "정면 1장, 사선 1장, 디테일 1장처럼 깔끔한 상품 이미지 1~4장만 고릅니다.",
-    "reference 이미지가 적으면 새로운 각도를 만들기보다 줌인, 슬로우 팬, 근접 크롭 중심으로 생성합니다.",
+    "메인 이미지와 글씨 없는 디테일 상품컷을 reference로 넣을 수 있습니다.",
+    "상세페이지 전체 캡처, 가격/규격표, 글씨 많은 콜라주 이미지는 넣지 않습니다.",
+    "정면 1장, 사선 1장, 디테일 1장처럼 깔끔한 상품 사진 1~4장을 고릅니다.",
+    "얼굴 보이는 사람 컷은 제외하고, 손만 나온 사용컷은 필요하면 reference로 허용합니다.",
   ];
 }
 
@@ -4710,22 +4710,21 @@ function buildReelsPack({
     return [
       "Create a photorealistic vertical 9:16 social commerce video for Instagram Reels, 20 seconds total.",
       `Tone: ${tone}. Product: ${shortTitle || keyword || "추천 상품"}.`,
-      "Use only clean main product-page photos from the product image carousel as references.",
+      "Use the uploaded reference product images as the exact source of truth.",
       "Match the real product design, color, material, proportions, and component count exactly.",
-      "Do not use detail-page screenshots, infographics, charts, text-heavy images, or collage images as reference.",
       "Do not invent new colors, accessories, labels, extra shelves, or exaggerated product features.",
-      "No people, no hands, no human figures, and no presenter shots.",
+      "Clean detail photos are allowed, but avoid text-heavy screenshots, spec tables, and infographic layouts as references.",
+      "Do not show human faces or presenter shots. Hands or partial arms are allowed only when they look natural and are used to demonstrate the product.",
       productFeatureHints.length > 0
-        ? `If these traits are clearly visible in the uploaded photos, preserve and emphasize them: ${productFeatureHints.join(", ")}.`
+        ? `If clearly visible, preserve these product traits: ${productFeatureHints.join(", ")}.`
         : "Preserve only the product traits that are clearly visible in the uploaded photos.",
       `Storyboard: ${scenes.join(" | ")}`,
       "Keep the scenes realistic, commercially usable, and easy to edit into an actual product reel.",
-      "Use clean cuts, realistic home lighting, stable camera movement, and clear product close-ups.",
-      "When the available references are limited, prefer subtle zooms, pans, reframing, and close-up crops instead of inventing unsupported viewpoints.",
+      "Use clean cuts, realistic home lighting, stable camera movement, natural ad-style compositions, and clear product close-ups.",
       "Do not render any text, subtitles, captions, logos, URLs, QR codes, browser UI, or shopping-app screenshots inside the video.",
-      "Generate the video silent or with only extremely subtle neutral room ambience. Do not add music, vocals, beats, or strong sound effects.",
-      "The call to action will be added later inside Instagram, so do not bake CTA text into the video.",
       `Use "${hook}" only as creative intent for the opening mood, not as on-screen text.`,
+      "Generate the video completely silent. Do not add music, vocals, ambience, beats, or sound effects.",
+      "The call to action will be added later inside Instagram, so do not bake CTA text into the video.",
       "Avoid fake discounts, impossible physics, warped geometry, flickering details, deformed hands, and surreal transitions.",
     ].join(" ");
   });
