@@ -4532,6 +4532,7 @@ function buildReelsPack({
   const shortTitle = title.length > 38 ? `${title.slice(0, 38)}…` : title;
   const landingUrl = String(trackedUrl || item?.targetUrl || item?.productUrl || "").trim();
   const ctaUrlText = landingUrl || "프로필 링크";
+  const reelCtaText = "프로필 링크에서 확인";
   const hashtags = buildHashtags({ title, keyword, extra: [String(item?.category || "").trim()] });
 
   const hooks = [
@@ -4545,19 +4546,19 @@ function buildReelsPack({
       "0-2초: 문제 제기 (어지러운 상태/불편한 장면)",
       `2-7초: 제품 등장 + 핵심 포인트 2개 (${shortTitle || keyword || "추천 상품"})`,
       `7-13초: 사용 장면 전/후 비교 + 가격 노출(${priceText})`,
-      `13-18초: CTA (지금 확인: ${ctaUrlText})`,
+      `13-18초: CTA (${reelCtaText})`,
     ],
     [
       "0-3초: 후킹 문구 + 제품 클로즈업",
       "3-9초: 사용 방법 3스텝",
       `9-14초: 가격/마진 포인트 (${sourcePriceText ? `원가 ${sourcePriceText} → ` : ""}${priceText}${marginText ? ` / 마진 ${marginText}` : ""})`,
-      `14-20초: CTA + 신뢰 문구 (${brand})`,
+      `14-20초: CTA + 신뢰 문구 (${brand}, ${reelCtaText})`,
     ],
     [
       "0-2초: 타겟 상황(산책/정리/차량/주방 등) 공감 문구",
       "2-8초: 불편 해결 시연",
       "8-14초: 디테일 컷(재질/크기/수납력)",
-      `14-20초: CTA (${ctaUrlText})`,
+      `14-20초: CTA (${reelCtaText})`,
     ],
   ];
 
@@ -4579,7 +4580,8 @@ function buildReelsPack({
       `Storyboard: ${scenes.join(" | ")}`,
       "Keep the scenes realistic, commercially usable, and easy to edit into an actual product reel.",
       "Use clean cuts, bold high-contrast Korean captions, realistic home lighting, and stable camera movement.",
-      `End card text in Korean: "지금 확인하기". Show a subtle URL hint: "${ctaUrlText}".`,
+      `End card text in Korean: "${reelCtaText}".`,
+      "Do not render full URLs, QR codes, browser UI, or shopping-app screenshots inside the video.",
       "Avoid fake discounts, impossible physics, warped geometry, flickering captions, deformed hands, and surreal transitions.",
     ].join(" ");
   });

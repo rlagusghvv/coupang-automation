@@ -657,13 +657,10 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  '인스타에는 본문만 복사하고, Sora에는 프롬프트와 상품 사진만 넣은 뒤 영상만 받아서 업로드하면 되도록 나눴습니다.',
+                  'Sora에는 아래 "대표 프롬프트 복사"만 넣고, 상품 URL/추적 링크/운영 메모 전체 텍스트는 넣지 마세요.',
                   style: TextStyle(
                     fontSize: 12,
-                    color: Theme.of(context)
-                        .colorScheme
-                        .onSurface
-                        .withValues(alpha: 0.72),
+                    color: Theme.of(context).colorScheme.error,
                   ),
                 ),
                 const SizedBox(height: 12),
@@ -671,18 +668,6 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
                   spacing: 8,
                   runSpacing: 8,
                   children: [
-                    FilledButton.icon(
-                      onPressed: instagramCaption.isEmpty
-                          ? null
-                          : () async {
-                              await _copyText(
-                                instagramCaption,
-                                '인스타 본문을 복사했어요.',
-                              );
-                            },
-                      icon: const Icon(Icons.copy_all_outlined, size: 18),
-                      label: const Text('인스타 본문 복사'),
-                    ),
                     FilledButton.tonalIcon(
                       onPressed: primaryPrompt.trim().isEmpty
                           ? null
@@ -693,7 +678,19 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
                               );
                             },
                       icon: const Icon(Icons.movie_creation_outlined, size: 18),
-                      label: const Text('Sora 프롬프트 복사'),
+                      label: const Text('1. Sora 프롬프트 복사'),
+                    ),
+                    FilledButton.icon(
+                      onPressed: instagramCaption.isEmpty
+                          ? null
+                          : () async {
+                              await _copyText(
+                                instagramCaption,
+                                '인스타 본문을 복사했어요.',
+                              );
+                            },
+                      icon: const Icon(Icons.copy_all_outlined, size: 18),
+                      label: const Text('2. 인스타 본문 복사'),
                     ),
                     if (trackingUrl.isNotEmpty)
                       OutlinedButton.icon(
@@ -849,6 +846,7 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
                           '2. Sora에 대표 프롬프트를 그대로 붙여 넣습니다.',
                           '3. 고른 상품 사진을 reference 이미지로 함께 넣습니다.',
                           '4. 세로 9:16, 15~20초 영상으로 생성하고 가장 자연스러운 1개만 채택합니다.',
+                          '5. Sora에는 상품 URL, 추적 링크, 원본 URL, 운영 메모 전체 텍스트를 넣지 않습니다.',
                         ].join('\n'),
                         style: const TextStyle(fontSize: 12, height: 1.45),
                       ),
@@ -988,10 +986,10 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
                       const SizedBox(height: 10),
                       TextButton.icon(
                         onPressed: () async {
-                          await _copyText(bundleText, '전체 원샷 내용을 복사했어요.');
+                          await _copyText(bundleText, '운영 메모를 복사했어요.');
                         },
                         icon: const Icon(Icons.copy_all_outlined, size: 18),
-                        label: const Text('전체 원샷 복사'),
+                        label: const Text('운영 메모 복사'),
                       ),
                     ],
                   ),
@@ -1048,10 +1046,10 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
         actions: [
           TextButton.icon(
             onPressed: () async {
-              await _copyText(bundleText, '전체 원샷 내용을 복사했어요.');
+              await _copyText(bundleText, '운영 메모를 복사했어요.');
             },
             icon: const Icon(Icons.copy_all_outlined, size: 18),
-            label: const Text('원샷 복사'),
+            label: const Text('운영 메모 복사'),
           ),
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(),
