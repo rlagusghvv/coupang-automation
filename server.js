@@ -4706,6 +4706,7 @@ app.post("/api/marketing/reels/pack", authRequired, async (req, res) => {
         item: {
           title: String(item?.title || item?.seoTitle || "").trim(),
           keyword: String(item?.keyword || "").trim(),
+          sourceUrl: String(item?.sourceUrl || "").trim(),
           targetUrl: targetUrl || "",
         },
         tracking: link

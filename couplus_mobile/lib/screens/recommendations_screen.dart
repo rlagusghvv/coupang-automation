@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:couplus_mobile/api/api_client.dart';
 import 'package:couplus_mobile/screens/recommendation_detail_screen.dart';
 import 'package:couplus_mobile/ui/widgets.dart';
@@ -163,6 +165,12 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
       List<Map<String, String>>.from(_fallbackRecoCategories);
   String _selectedRecoCategoryKey = 'all';
   String _selectedSortKey = 'default';
+  bool _marketingBusy = false;
+  String _marketingCampaign = '';
+  String _marketingTone = '실용적';
+  final Map<String, Map<String, dynamic>> _marketingLinkBySourceUrl =
+      <String, Map<String, dynamic>>{};
+  final Map<String, int> _marketingClickCountBySlug = <String, int>{};
 
   num? _seoScoreOf(Map<String, dynamic> item) {
     return num.tryParse((item['seoScore'] ?? '').toString());
@@ -236,6 +244,243 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
       }
     }
     return '전체 (기본)';
+  }
+
+  String _defaultMarketingCampaign() {
+    final now = DateTime.now();
+    final y = now.year.toString();
+    final m = now.month.toString().padLeft(2, '0');
+    final d = now.day.toString().padLeft(2, '0');
+    return 'ig_reels_$y$m$d';
+  }
+
+  String _marketingTargetUrlOf(Map<String, dynamic> item) {
+    final candidates = <dynamic>[
+      item['productUrl'],
+      item['coupangUrl'],
+      item['targetUrl'],
+      item['sourceUrl'],
+    ];
+    for (final raw in candidates) {
+      final text = raw.toString().trim();
+      if (text.startsWith('http://') || text.startsWith('https://')) return text;
+    }
+    return '';
+  }
+
+  Future<void> _createMarketingLinkForItem(
+    Map<String, dynamic> item, {
+    bool copyOnSuccess = true,
+  }) async {
+    final sourceUrl = (item['sourceUrl'] ?? '').toString().trim();
+    final targetUrl = _marketingTargetUrlOf(item);
+    if (targetUrl.isEmpty || sourceUrl.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('링크 생성 대상 URL이 비어 있습니다.')),
+      );
+      return;
+    }
+    final campaign = _marketingCampaign.trim().isNotEmpty
+        ? _marketingCampaign.trim()
+        : _defaultMarketingCampaign();
+    setState(() => _marketingBusy = true);
+    try {
+      final json = await widget.api.postJson('/api/marketing/links', {
+        'targetUrl': targetUrl,
+        'sourceUrl': sourceUrl,
+        'title': (item['title'] ?? item['seoTitle'] ?? '').toString().trim(),
+        'platform': 'instagram',
+        'campaign': campaign,
+        'content': 'reco_card',
+        'term': (item['keyword'] ?? '').toString().trim(),
+      });
+      final link = (json['link'] as Map?)?.cast<String, dynamic>() ??
+          const <String, dynamic>{};
+      final trackingUrl = (link['trackingUrl'] ?? '').toString().trim();
+      final slug = (link['slug'] ?? '').toString().trim();
+      if (trackingUrl.isNotEmpty) {
+        setState(() {
+          _marketingLinkBySourceUrl[sourceUrl] = link;
+          if (slug.isNotEmpty && !_marketingClickCountBySlug.containsKey(slug)) {
+            _marketingClickCountBySlug[slug] = 0;
+          }
+        });
+        if (copyOnSuccess) {
+          await Clipboard.setData(ClipboardData(text: trackingUrl));
+        }
+      }
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            trackingUrl.isNotEmpty
+                ? (copyOnSuccess ? '마케팅 링크 생성 + 복사 완료' : '마케팅 링크 생성 완료')
+                : '마케팅 링크 생성 완료',
+          ),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('마케팅 링크 생성 실패: $e')),
+      );
+    } finally {
+      if (mounted) setState(() => _marketingBusy = false);
+    }
+  }
+
+  Future<void> _refreshMarketingClicksForItem(Map<String, dynamic> item) async {
+    final sourceUrl = (item['sourceUrl'] ?? '').toString().trim();
+    final link = _marketingLinkBySourceUrl[sourceUrl] ?? const <String, dynamic>{};
+    final slug = (link['slug'] ?? '').toString().trim();
+    if (slug.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('먼저 마케팅 링크를 생성해 주세요.')),
+      );
+      return;
+    }
+    try {
+      final json = await widget.api.getJson('/api/marketing/links/$slug/clicks', query: {
+        'limit': '1',
+      });
+      final total = int.tryParse((json['total'] ?? 0).toString()) ?? 0;
+      if (!mounted) return;
+      setState(() {
+        _marketingClickCountBySlug[slug] = total;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('클릭 $total건')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('클릭 조회 실패: $e')),
+      );
+    }
+  }
+
+  Future<void> _generateReelsPackForSelected() async {
+    final visibleUrls = _visibleItems
+        .map((it) => (it['sourceUrl'] ?? '').toString().trim())
+        .where((u) => u.isNotEmpty)
+        .toSet();
+    final urls = _selected.where(visibleUrls.contains).take(12).toList();
+    if (urls.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('선택한 상품이 없어요.')),
+      );
+      return;
+    }
+    final byUrl = <String, Map<String, dynamic>>{};
+    for (final it in _visibleItems) {
+      final u = (it['sourceUrl'] ?? '').toString().trim();
+      if (u.isEmpty) continue;
+      byUrl[u] = it;
+    }
+    final picked = urls.map((u) => byUrl[u]).whereType<Map<String, dynamic>>().toList();
+    if (picked.isEmpty) return;
+
+    final campaign = _marketingCampaign.trim().isNotEmpty
+        ? _marketingCampaign.trim()
+        : _defaultMarketingCampaign();
+    setState(() => _marketingBusy = true);
+    try {
+      final payload = {
+        'platform': 'instagram',
+        'campaign': campaign,
+        'brand': '쿠팡코끼리',
+        'tone': _marketingTone,
+        'autoCreateLinks': true,
+        'items': picked
+            .map((it) => {
+                  'title': (it['title'] ?? it['seoTitle'] ?? '').toString().trim(),
+                  'keyword': (it['keyword'] ?? '').toString().trim(),
+                  'targetUrl': _marketingTargetUrlOf(it),
+                  'sourceUrl': (it['sourceUrl'] ?? '').toString().trim(),
+                  'category': (it['categoryLabel'] ?? '').toString().trim(),
+                })
+            .toList(),
+      };
+      final json = await widget.api.postJson('/api/marketing/reels/pack', payload);
+      final count = int.tryParse((json['count'] ?? 0).toString()) ?? 0;
+      final rows = (json['items'] as List?) ?? const [];
+      final prompts = <String>[];
+
+      for (final raw in rows) {
+        if (raw is! Map) continue;
+        final row = raw.cast<String, dynamic>();
+        final itemMap = (row['item'] as Map?)?.cast<String, dynamic>() ??
+            const <String, dynamic>{};
+        final sourceUrl = (itemMap['sourceUrl'] ?? '').toString().trim();
+        final tracking = (row['tracking'] as Map?)?.cast<String, dynamic>() ??
+            const <String, dynamic>{};
+        final pack = (row['pack'] as Map?)?.cast<String, dynamic>() ??
+            const <String, dynamic>{};
+        final grokPrompts = (pack['grokVideoPrompts'] as List?) ?? const [];
+        if (grokPrompts.isNotEmpty) {
+          prompts.addAll(grokPrompts.map((e) => e.toString()));
+        }
+        if (sourceUrl.isNotEmpty && tracking.isNotEmpty) {
+          _marketingLinkBySourceUrl[sourceUrl] = tracking;
+          final slug = (tracking['slug'] ?? '').toString().trim();
+          if (slug.isNotEmpty && !_marketingClickCountBySlug.containsKey(slug)) {
+            _marketingClickCountBySlug[slug] = 0;
+          }
+        }
+      }
+
+      if (prompts.isNotEmpty) {
+        await Clipboard.setData(ClipboardData(text: prompts.join('\n\n---\n\n')));
+      }
+
+      if (!mounted) return;
+      setState(() {});
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            prompts.isNotEmpty
+                ? 'Reels 팩 $count건 생성 완료 (프롬프트 복사됨)'
+                : 'Reels 팩 $count건 생성 완료',
+          ),
+        ),
+      );
+
+      final previewText = const JsonEncoder.withIndent('  ').convert(json);
+      if (!mounted) return;
+      await showDialog<void>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Reels 팩 생성 결과'),
+          content: SizedBox(
+            width: 700,
+            child: SingleChildScrollView(
+              child: SelectableText(
+                previewText.length > 12000
+                    ? '${previewText.substring(0, 12000)}\n\n... (생략)'
+                    : previewText,
+                style: const TextStyle(fontSize: 12, height: 1.4),
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: const Text('닫기'),
+            ),
+          ],
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Reels 팩 생성 실패: $e')),
+      );
+    } finally {
+      if (mounted) setState(() => _marketingBusy = false);
+    }
   }
 
   String _diagnosticsHint(Map<String, dynamic> diagnostics) {
@@ -498,6 +743,46 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
     return out;
   }
 
+  Future<void> _loadMarketingLinks({bool silent = true}) async {
+    try {
+      final json = await widget.api.getJson('/api/marketing/links', query: {
+        'limit': '300',
+        'platform': 'instagram',
+      });
+      final rows = (json['items'] as List?) ?? const [];
+      final nextLinks = <String, Map<String, dynamic>>{};
+      final nextClicks = <String, int>{};
+      for (final raw in rows) {
+        if (raw is! Map) continue;
+        final row = raw.cast<String, dynamic>();
+        final sourceUrl = (row['sourceUrl'] ?? '').toString().trim();
+        final slug = (row['slug'] ?? '').toString().trim();
+        final clickCount = int.tryParse((row['clickCount'] ?? 0).toString()) ?? 0;
+        if (sourceUrl.isNotEmpty) {
+          nextLinks[sourceUrl] = row;
+        }
+        if (slug.isNotEmpty) {
+          nextClicks[slug] = clickCount;
+        }
+      }
+      if (!mounted) return;
+      setState(() {
+        _marketingLinkBySourceUrl
+          ..clear()
+          ..addAll(nextLinks);
+        _marketingClickCountBySlug
+          ..clear()
+          ..addAll(nextClicks);
+      });
+    } catch (e) {
+      if (!silent && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('마케팅 링크 로드 실패: $e')),
+        );
+      }
+    }
+  }
+
   Future<void> _loadRecoCategories() async {
     setState(() => _loadingRecoCategories = true);
     try {
@@ -555,6 +840,8 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
   @override
   void initState() {
     super.initState();
+    _marketingCampaign = _defaultMarketingCampaign();
+    _loadMarketingLinks();
     _loadRecoCategories();
     _refresh();
   }
@@ -584,6 +871,7 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
               .map((e) => (e['sourceUrl'] ?? '').toString().trim())
               .where((u) => u.isNotEmpty));
       });
+      await _loadMarketingLinks();
     } catch (e) {
       setState(() => _error = e.toString());
     } finally {
@@ -613,6 +901,7 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
               .map((e) => (e['sourceUrl'] ?? '').toString().trim())
               .where((u) => u.isNotEmpty));
       });
+      await _loadMarketingLinks();
     } catch (_) {
       // best-effort sync only
     }
@@ -1614,6 +1903,100 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
             ),
           ),
           const SizedBox(height: 10),
+          AppCard(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Icon(
+                      Icons.campaign_outlined,
+                      size: 18,
+                      color: Theme.of(context).colorScheme.primary,
+                    ),
+                    const SizedBox(width: 8),
+                    const Expanded(
+                      child: Text(
+                        '인스타 마케팅',
+                        style: TextStyle(fontWeight: FontWeight.w800),
+                      ),
+                    ),
+                    FilledButton.tonalIcon(
+                      onPressed: (_loading || _marketingBusy || selectedCount <= 0)
+                          ? null
+                          : _generateReelsPackForSelected,
+                      icon: const Icon(Icons.movie_creation_outlined, size: 18),
+                      label: Text(selectedCount > 0 ? '선택 $selectedCount개 릴스팩' : '선택 릴스팩'),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextFormField(
+                        initialValue: _marketingCampaign,
+                        onChanged: (v) => _marketingCampaign = v.trim(),
+                        decoration: const InputDecoration(
+                          labelText: '캠페인 코드',
+                          isDense: true,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    SizedBox(
+                      width: 140,
+                      child: DropdownButtonFormField<String>(
+                        initialValue: _marketingTone,
+                        isExpanded: true,
+                        decoration: const InputDecoration(
+                          labelText: '톤',
+                          isDense: true,
+                        ),
+                        items: const [
+                          DropdownMenuItem(value: '실용적', child: Text('실용적')),
+                          DropdownMenuItem(value: '감성적', child: Text('감성적')),
+                          DropdownMenuItem(value: '비교형', child: Text('비교형')),
+                        ],
+                        onChanged: _marketingBusy
+                            ? null
+                            : (v) {
+                                if (v == null) return;
+                                setState(() => _marketingTone = v);
+                              },
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    TextButton.icon(
+                      onPressed: (_marketingBusy || _loading)
+                          ? null
+                          : () => _loadMarketingLinks(silent: false),
+                      icon: const Icon(Icons.sync, size: 18),
+                      label: const Text('링크 새로고침'),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  '카드별 링크생성 후 인스타/블로그에 붙여 넣으세요. 선택 릴스팩은 Grok 영상 프롬프트까지 자동 생성됩니다.',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Theme.of(context)
+                        .colorScheme
+                        .onSurface
+                        .withValues(alpha: 0.65),
+                  ),
+                ),
+                if (_marketingBusy) ...[
+                  const SizedBox(height: 8),
+                  LinearProgressIndicator(
+                    color: Theme.of(context).colorScheme.primary,
+                  ),
+                ],
+              ],
+            ),
+          ),
+          const SizedBox(height: 10),
           if (selectedCount > 0) ...[
             AppCard(
               child: Row(
@@ -2032,6 +2415,15 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
 
                 final selected = url.isNotEmpty && _selected.contains(url);
                 final saved = url.isNotEmpty && _savedUrls.contains(url);
+                final marketingLink =
+                    _marketingLinkBySourceUrl[url] ?? const <String, dynamic>{};
+                final marketingSlug =
+                    (marketingLink['slug'] ?? '').toString().trim();
+                final marketingTrackingUrl =
+                    (marketingLink['trackingUrl'] ?? '').toString().trim();
+                final marketingClickCount = marketingSlug.isNotEmpty
+                    ? (_marketingClickCountBySlug[marketingSlug] ?? 0)
+                    : 0;
 
                 return AppCard(
                   onTap: url.isEmpty
@@ -2179,6 +2571,12 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
                                     color:
                                         Theme.of(context).colorScheme.tertiary,
                                   ),
+                                if (marketingSlug.isNotEmpty)
+                                  InfoChip(
+                                    label: '유입 $marketingClickCount',
+                                    color:
+                                        Theme.of(context).colorScheme.secondary,
+                                  ),
                               ],
                             ),
                             if (searchTags.isNotEmpty) ...[
@@ -2316,6 +2714,45 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
                                   icon: const Icon(Icons.copy, size: 18),
                                   label: const Text('복사'),
                                 ),
+                                const SizedBox(width: 4),
+                                TextButton.icon(
+                                  onPressed: (url.isEmpty || _marketingBusy)
+                                      ? null
+                                      : () => _createMarketingLinkForItem(it),
+                                  icon:
+                                      const Icon(Icons.campaign_outlined, size: 18),
+                                  label: Text(marketingSlug.isNotEmpty ? '링크갱신' : '링크생성'),
+                                ),
+                                if (marketingSlug.isNotEmpty) ...[
+                                  const SizedBox(width: 4),
+                                  TextButton.icon(
+                                    onPressed: _marketingBusy
+                                        ? null
+                                        : () async {
+                                            final messenger = ScaffoldMessenger.of(context);
+                                            final text = marketingTrackingUrl.isNotEmpty
+                                                ? marketingTrackingUrl
+                                                : '/go/m/$marketingSlug';
+                                            await Clipboard.setData(
+                                                ClipboardData(text: text));
+                                            if (!mounted) return;
+                                            messenger.showSnackBar(
+                                              const SnackBar(
+                                                  content: Text('마케팅 링크를 복사했어요.')),
+                                            );
+                                          },
+                                    icon: const Icon(Icons.link, size: 18),
+                                    label: const Text('링크복사'),
+                                  ),
+                                  const SizedBox(width: 4),
+                                  TextButton.icon(
+                                    onPressed: _marketingBusy
+                                        ? null
+                                        : () => _refreshMarketingClicksForItem(it),
+                                    icon: const Icon(Icons.bar_chart, size: 18),
+                                    label: Text('클릭 $marketingClickCount'),
+                                  ),
+                                ],
                               ],
                             ),
                             if (reason.isNotEmpty) ...[
