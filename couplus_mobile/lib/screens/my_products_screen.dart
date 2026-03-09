@@ -2,6 +2,8 @@ import 'package:couplus_mobile/api/api_client.dart';
 import 'package:couplus_mobile/screens/product_detail_screen.dart';
 import 'package:couplus_mobile/ui/widgets.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 class MyProductsScreen extends StatefulWidget {
   const MyProductsScreen({super.key, required this.api});
@@ -15,6 +17,8 @@ class MyProductsScreen extends StatefulWidget {
 class _MyProductsScreenState extends State<MyProductsScreen> {
   bool _loading = false;
   bool _syncingStatus = false;
+  bool _marketingBusy = false;
+  String? _marketingBusyId;
   String? _error;
   String? _lastSyncSummary;
   List<Map<String, dynamic>> _products = const [];
@@ -284,6 +288,433 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
     setState(() => _selected.clear());
   }
 
+  String _defaultMarketingCampaign() {
+    final now = DateTime.now();
+    final y = now.year.toString();
+    final m = now.month.toString().padLeft(2, '0');
+    final d = now.day.toString().padLeft(2, '0');
+    return 'ig_catalog_$y$m$d';
+  }
+
+  String _productTitle(Map<String, dynamic> product) {
+    return (product['confirmedTitle'] ?? '').toString().trim();
+  }
+
+  String _productSourceUrl(Map<String, dynamic> product) {
+    return (product['sourceUrl'] ?? '').toString().trim();
+  }
+
+  String _resolveMarketingTargetUrl(Map<String, dynamic> product) {
+    final direct = (product['productUrl'] ?? '').toString().trim();
+    if (direct.startsWith('http://') || direct.startsWith('https://')) {
+      return direct;
+    }
+    final productId = (product['productId'] ?? '').toString().trim();
+    if (productId.isNotEmpty) {
+      return 'https://www.coupang.com/vp/products/$productId?failRedirectApp=true';
+    }
+    final sourceUrl = _productSourceUrl(product);
+    if (sourceUrl.startsWith('http://') || sourceUrl.startsWith('https://')) {
+      return sourceUrl;
+    }
+    return '';
+  }
+
+  bool _canGenerateMarketingOneShot(Map<String, dynamic> product) {
+    return _resolveMarketingTargetUrl(product).isNotEmpty &&
+        _productSourceUrl(product).isNotEmpty &&
+        _productTitle(product).isNotEmpty;
+  }
+
+  List<String> _marketingImagesOf(Map<String, dynamic> product) {
+    final values = <String>[
+      (product['mainImageUrl'] ?? '').toString().trim(),
+      ...((product['detailImages'] as List?) ?? const [])
+          .map((e) => e.toString().trim()),
+    ];
+    final seen = <String>{};
+    final out = <String>[];
+    for (final raw in values) {
+      final url = raw.trim();
+      if (!(url.startsWith('http://') || url.startsWith('https://'))) continue;
+      if (seen.add(url)) out.add(url);
+    }
+    return out;
+  }
+
+  Future<void> _copyText(String text, String message) async {
+    final value = text.trim();
+    if (value.isEmpty) return;
+    await Clipboard.setData(ClipboardData(text: value));
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
+    );
+  }
+
+  Future<void> _openExternalUrl(String rawUrl) async {
+    final uri = Uri.tryParse(rawUrl);
+    if (uri == null) return;
+    final launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    if (launched || !mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('열기 실패: $rawUrl')),
+    );
+  }
+
+  String _grokPromptsText(Map<String, dynamic> json) {
+    final rows = (json['items'] as List?) ?? const [];
+    final prompts = <String>[];
+    for (final raw in rows) {
+      if (raw is! Map) continue;
+      final row = raw.cast<String, dynamic>();
+      final pack = (row['pack'] as Map?)?.cast<String, dynamic>() ??
+          const <String, dynamic>{};
+      prompts.addAll(
+        ((pack['grokVideoPrompts'] as List?) ?? const [])
+            .map((e) => e.toString().trim())
+            .where((e) => e.isNotEmpty),
+      );
+    }
+    return prompts.join('\n\n---\n\n');
+  }
+
+  String _buildMarketingOneShotBundle(
+    Map<String, dynamic> product,
+    Map<String, dynamic> json,
+  ) {
+    final rows = (json['items'] as List?) ?? const [];
+    final row = rows.isNotEmpty && rows.first is Map
+        ? (rows.first as Map).cast<String, dynamic>()
+        : const <String, dynamic>{};
+    final item = (row['item'] as Map?)?.cast<String, dynamic>() ??
+        const <String, dynamic>{};
+    final tracking = (row['tracking'] as Map?)?.cast<String, dynamic>() ??
+        const <String, dynamic>{};
+    final pack = (row['pack'] as Map?)?.cast<String, dynamic>() ??
+        const <String, dynamic>{};
+    final hooks = ((pack['hooks'] as List?) ?? const [])
+        .map((e) => e.toString().trim())
+        .where((e) => e.isNotEmpty)
+        .toList();
+    final storyboards = (pack['storyboards'] as List?) ?? const [];
+    final firstStoryboard = storyboards.isNotEmpty && storyboards.first is List
+        ? (storyboards.first as List)
+            .map((e) => e.toString().trim())
+            .where((e) => e.isNotEmpty)
+            .toList()
+        : const <String>[];
+    final captions = ((pack['captions'] as List?) ?? const [])
+        .map((e) => e.toString().trim())
+        .where((e) => e.isNotEmpty)
+        .toList();
+    final hashtags = ((pack['hashtags'] as List?) ?? const [])
+        .map((e) => e.toString().trim())
+        .where((e) => e.isNotEmpty)
+        .toList();
+    final thumbnailTexts = ((pack['thumbnailTexts'] as List?) ?? const [])
+        .map((e) => e.toString().trim())
+        .where((e) => e.isNotEmpty)
+        .toList();
+    final prompts = _grokPromptsText(json);
+    final images = _marketingImagesOf(product);
+    final trackingUrl = (tracking['trackingUrl'] ?? '').toString().trim();
+    final targetUrl = (item['targetUrl'] ?? _resolveMarketingTargetUrl(product))
+        .toString()
+        .trim();
+    final lines = <String>[
+      '상품명: ${_productTitle(product)}',
+      '캠페인: ${(json['campaign'] ?? '').toString().trim()}',
+      '톤: ${(json['tone'] ?? '').toString().trim()}',
+      if (targetUrl.isNotEmpty) '상품 URL: $targetUrl',
+      if (trackingUrl.isNotEmpty) '추적 링크: $trackingUrl',
+      if (_productSourceUrl(product).isNotEmpty)
+        '원본 URL: ${_productSourceUrl(product)}',
+      '',
+      '업로드 준비',
+      '1. 아래 이미지 중 메인 1장 + 상세 컷 2~4장을 골라 세로 9:16로 편집',
+      '2. 첫 2초에 훅 문구 삽입',
+      '3. 본문/고정댓글에 추적 링크 반영',
+    ];
+
+    if (images.isNotEmpty) {
+      lines.add('');
+      lines.add('사진 URL');
+      for (var i = 0; i < images.length; i += 1) {
+        lines.add('${i + 1}. ${images[i]}');
+      }
+    }
+
+    if (hooks.isNotEmpty) {
+      lines.add('');
+      lines.add('훅 후보');
+      for (var i = 0; i < hooks.length; i += 1) {
+        lines.add('${i + 1}. ${hooks[i]}');
+      }
+    }
+
+    if (firstStoryboard.isNotEmpty) {
+      lines.add('');
+      lines.add('권장 장면 구성');
+      for (var i = 0; i < firstStoryboard.length; i += 1) {
+        lines.add('${i + 1}. ${firstStoryboard[i]}');
+      }
+    }
+
+    if (captions.isNotEmpty) {
+      lines.add('');
+      lines.add('추천 캡션');
+      lines.add(captions.first);
+    }
+
+    if (hashtags.isNotEmpty) {
+      lines.add('');
+      lines.add('해시태그');
+      lines.add(hashtags.join(' '));
+    }
+
+    if (thumbnailTexts.isNotEmpty) {
+      lines.add('');
+      lines.add('썸네일 문구');
+      for (var i = 0; i < thumbnailTexts.length; i += 1) {
+        lines.add('${i + 1}. ${thumbnailTexts[i]}');
+      }
+    }
+
+    if (prompts.trim().isNotEmpty) {
+      lines.add('');
+      lines.add('Grok 프롬프트');
+      lines.add(prompts.trim());
+    }
+
+    return lines.join('\n');
+  }
+
+  Future<void> _showMarketingOneShotDialog(
+    Map<String, dynamic> product,
+    Map<String, dynamic> json,
+  ) async {
+    final rows = (json['items'] as List?) ?? const [];
+    final row = rows.isNotEmpty && rows.first is Map
+        ? (rows.first as Map).cast<String, dynamic>()
+        : const <String, dynamic>{};
+    final tracking = (row['tracking'] as Map?)?.cast<String, dynamic>() ??
+        const <String, dynamic>{};
+    final pack = (row['pack'] as Map?)?.cast<String, dynamic>() ??
+        const <String, dynamic>{};
+    final images = _marketingImagesOf(product);
+    final bundleText = _buildMarketingOneShotBundle(product, json);
+    final prompts = _grokPromptsText(json);
+    final trackingUrl = (tracking['trackingUrl'] ?? '').toString().trim();
+    final hashtags = ((pack['hashtags'] as List?) ?? const [])
+        .map((e) => e.toString().trim())
+        .where((e) => e.isNotEmpty)
+        .join(' ');
+    final captions = ((pack['captions'] as List?) ?? const [])
+        .map((e) => e.toString().trim())
+        .where((e) => e.isNotEmpty)
+        .toList();
+    final previewText = bundleText.length > 14000
+        ? '${bundleText.substring(0, 14000)}\n\n... (생략)'
+        : bundleText;
+
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('마케팅 원샷'),
+        content: SizedBox(
+          width: 780,
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '상품 카드에서 바로 추적 링크, 사진 URL, 업로드 문안, Grok 프롬프트를 한 번에 꺼낸 결과입니다.',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Theme.of(context)
+                        .colorScheme
+                        .onSurface
+                        .withValues(alpha: 0.72),
+                  ),
+                ),
+                if (images.isNotEmpty) ...[
+                  const SizedBox(height: 10),
+                  SizedBox(
+                    height: 78,
+                    child: ListView.separated(
+                      scrollDirection: Axis.horizontal,
+                      itemCount: images.length > 8 ? 8 : images.length,
+                      separatorBuilder: (_, __) => const SizedBox(width: 8),
+                      itemBuilder: (ctx, i) {
+                        final imageUrl = images[i];
+                        return InkWell(
+                          onTap: () => _openExternalUrl(imageUrl),
+                          borderRadius: BorderRadius.circular(10),
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(10),
+                            child: Image.network(
+                              widget.api.proxyImageUrl(imageUrl),
+                              width: 78,
+                              height: 78,
+                              fit: BoxFit.cover,
+                              errorBuilder: (_, __, ___) => Container(
+                                width: 78,
+                                height: 78,
+                                color: Theme.of(context)
+                                    .colorScheme
+                                    .surfaceContainerHighest,
+                                child: Icon(
+                                  Icons.broken_image_outlined,
+                                  color: Theme.of(context)
+                                      .colorScheme
+                                      .onSurface
+                                      .withValues(alpha: 0.5),
+                                ),
+                              ),
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 12),
+                SelectableText(
+                  previewText,
+                  style: const TextStyle(fontSize: 12, height: 1.45),
+                ),
+                if (captions.isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  Text(
+                    '대표 캡션',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w800,
+                      color: Theme.of(context).colorScheme.onSurface,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  SelectableText(
+                    captions.first,
+                    style: const TextStyle(fontSize: 12, height: 1.4),
+                  ),
+                ],
+                if (hashtags.isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  Text(
+                    '해시태그',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w800,
+                      color: Theme.of(context).colorScheme.onSurface,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  SelectableText(
+                    hashtags,
+                    style: const TextStyle(fontSize: 12, height: 1.4),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          if (trackingUrl.isNotEmpty)
+            TextButton.icon(
+              onPressed: () async {
+                await _copyText(trackingUrl, '추적 링크를 복사했어요.');
+              },
+              icon: const Icon(Icons.link, size: 18),
+              label: const Text('링크 복사'),
+            ),
+          if (images.isNotEmpty)
+            TextButton.icon(
+              onPressed: () async {
+                await _copyText(images.join('\n'), '사진 URL 목록을 복사했어요.');
+              },
+              icon: const Icon(Icons.photo_library_outlined, size: 18),
+              label: const Text('사진 URL 복사'),
+            ),
+          if (prompts.trim().isNotEmpty)
+            TextButton.icon(
+              onPressed: () async {
+                await _copyText(prompts, 'Grok 프롬프트를 복사했어요.');
+              },
+              icon: const Icon(Icons.movie_creation_outlined, size: 18),
+              label: const Text('프롬프트 복사'),
+            ),
+          TextButton.icon(
+            onPressed: () async {
+              await _copyText(bundleText, '마케팅 원샷 내용을 복사했어요.');
+            },
+            icon: const Icon(Icons.copy_all_outlined, size: 18),
+            label: const Text('원샷 복사'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('닫기'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _generateMarketingOneShot(Map<String, dynamic> product) async {
+    final title = _productTitle(product);
+    final sourceUrl = _productSourceUrl(product);
+    final targetUrl = _resolveMarketingTargetUrl(product);
+    final id = (product['id'] ?? '').toString().trim();
+    if (title.isEmpty || sourceUrl.isEmpty || targetUrl.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('상품 URL/제목이 부족해 원샷을 만들 수 없습니다.')),
+      );
+      return;
+    }
+
+    setState(() {
+      _marketingBusy = true;
+      _marketingBusyId = id;
+    });
+    try {
+      final json = await widget.api.postJson('/api/marketing/reels/pack', {
+        'platform': 'instagram',
+        'campaign': _defaultMarketingCampaign(),
+        'brand': '쿠팡코끼리',
+        'tone': '실용적',
+        'autoCreateLinks': true,
+        'items': [
+          {
+            'title': title,
+            'keyword': '',
+            'targetUrl': targetUrl,
+            'sourceUrl': sourceUrl,
+            'category': _statusLabel((product['status'] ?? '').toString()),
+            'content': id.isEmpty ? 'catalog_oneshot' : 'catalog_$id',
+          },
+        ],
+      });
+      if (!mounted) return;
+      await _showMarketingOneShotDialog(product, json);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('마케팅 원샷 생성 실패: $e')),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _marketingBusy = false;
+          _marketingBusyId = null;
+        });
+      }
+    }
+  }
+
   Widget _thumbPlaceholder(BuildContext context) {
     return Container(
       width: 66,
@@ -498,6 +929,8 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
                 final img = (p['mainImageUrl'] ?? '').toString();
                 final sellerProductId = (p['sellerProductId'] ?? '').toString();
                 final selected = _selected.contains(id);
+                final canGenerateOneShot = _canGenerateMarketingOneShot(p);
+                final marketingBusy = _marketingBusy && _marketingBusyId == id;
 
                 return AppCard(
                   onTap: id.isEmpty
@@ -585,6 +1018,49 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
                                     label: 'SPID $sellerProductId',
                                     color: const Color(0xFF2F9E44),
                                   ),
+                              ],
+                            ),
+                            const SizedBox(height: 8),
+                            Row(
+                              children: [
+                                TextButton.icon(
+                                  onPressed: id.isEmpty || _loading
+                                      ? null
+                                      : () async {
+                                          await Navigator.of(context).push(
+                                            MaterialPageRoute(
+                                              builder: (_) =>
+                                                  ProductDetailScreen(
+                                                api: widget.api,
+                                                productId: id,
+                                              ),
+                                            ),
+                                          );
+                                          if (mounted) {
+                                            await _refresh(syncRemote: false);
+                                          }
+                                        },
+                                  icon: const Icon(Icons.open_in_new, size: 18),
+                                  label: const Text('상세'),
+                                ),
+                                const SizedBox(width: 4),
+                                TextButton.icon(
+                                  onPressed: (_loading ||
+                                          marketingBusy ||
+                                          !canGenerateOneShot)
+                                      ? null
+                                      : () => _generateMarketingOneShot(p),
+                                  icon: marketingBusy
+                                      ? const SizedBox(
+                                          width: 16,
+                                          height: 16,
+                                          child: CircularProgressIndicator(
+                                              strokeWidth: 2),
+                                        )
+                                      : const Icon(Icons.bolt_outlined,
+                                          size: 18),
+                                  label: const Text('마케팅 원샷'),
+                                ),
                               ],
                             ),
                           ],
