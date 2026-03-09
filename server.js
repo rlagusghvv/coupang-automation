@@ -4588,6 +4588,70 @@ function buildReelsPack({
   };
 }
 
+const INSTAGRAM_GRAPH_VERSION =
+  String(process.env.INSTAGRAM_GRAPH_VERSION || "v22.0").trim() || "v22.0";
+
+function instagramReelsFormatSpec() {
+  return {
+    platform: "instagram_reels",
+    ratio: "9:16",
+    resolution: "1080x1920",
+    durationSec: { min: 15, recommended: 20, max: 30 },
+    fps: 30,
+    video: {
+      codec: "H.264",
+      container: "MP4",
+      audio: "AAC",
+      maxFileMB: 100,
+    },
+    creative: {
+      hookSec: "0-2",
+      problemSec: "2-6",
+      solutionSec: "6-14",
+      ctaSec: "14-20",
+    },
+    copy: {
+      overlayMaxChars: 24,
+      captionMaxChars: 2200,
+      hashtagRecommendedCount: 8,
+    },
+    caution: [
+      "과장/허위 표현 금지",
+      "의학적/효능 단정 표현 금지",
+      "저작권 없는 음원/이미지만 사용",
+    ],
+  };
+}
+
+async function instagramGraphGet(pathname, { accessToken, params = {} } = {}) {
+  const token = String(accessToken || "").trim();
+  if (!token) throw new Error("instagram_access_token_missing");
+  const pathPart = String(pathname || "").replace(/^\/+/, "").trim();
+  if (!pathPart) throw new Error("instagram_path_missing");
+
+  const u = new URL(`https://graph.facebook.com/${INSTAGRAM_GRAPH_VERSION}/${pathPart}`);
+  u.searchParams.set("access_token", token);
+  for (const [k, v] of Object.entries(params || {})) {
+    const value = String(v ?? "").trim();
+    if (!value) continue;
+    u.searchParams.set(k, value);
+  }
+
+  const r = await fetch(u.toString(), { method: "GET" });
+  const raw = await r.text();
+  const parsed = safeJsonParse(raw, null);
+  const graphError = parsed && typeof parsed === "object" ? parsed.error : null;
+
+  if (!r.ok || graphError) {
+    const msg = String(graphError?.message || raw || `instagram_graph_http_${r.status}`).trim();
+    const err = new Error(msg || "instagram_graph_error");
+    err.status = r.status;
+    err.body = parsed || raw;
+    throw err;
+  }
+  return parsed && typeof parsed === "object" ? parsed : {};
+}
+
 app.post("/api/marketing/links", authRequired, async (req, res) => {
   try {
     const targetUrl = String(req.body?.targetUrl || "").trim();
@@ -4654,6 +4718,89 @@ app.get("/api/marketing/links/:slug/clicks", authRequired, async (req, res) => {
     return res.json({ ok: true, slug, ...result });
   } catch (e) {
     return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+app.get("/api/instagram/reels/format", authRequired, async (_req, res) => {
+  return res.json({
+    ok: true,
+    format: instagramReelsFormatSpec(),
+    graphVersion: INSTAGRAM_GRAPH_VERSION,
+  });
+});
+
+app.get("/api/instagram/connection/status", authRequired, async (req, res) => {
+  try {
+    const settings = req.user?.settings || {};
+    const igUserId = String(settings.instagramIgUserId || "").trim();
+    const accessToken = String(settings.instagramAccessToken || "").trim();
+    const pageId = String(settings.instagramPageId || "").trim();
+
+    if (!igUserId || !accessToken) {
+      return res.json({
+        ok: true,
+        connected: false,
+        reason: "missing_settings",
+        igUserId,
+        pageId,
+        hasAccessToken: Boolean(accessToken),
+        graphVersion: INSTAGRAM_GRAPH_VERSION,
+      });
+    }
+
+    const profile = await instagramGraphGet(igUserId, {
+      accessToken,
+      params: {
+        fields: "id,username,account_type,media_count,followers_count",
+      },
+    });
+
+    let page = null;
+    if (pageId) {
+      try {
+        const pageInfo = await instagramGraphGet(pageId, {
+          accessToken,
+          params: {
+            fields: "id,name,instagram_business_account",
+          },
+        });
+        page = {
+          id: String(pageInfo?.id || pageId),
+          name: String(pageInfo?.name || "").trim(),
+          instagramBusinessAccountId: String(
+            pageInfo?.instagram_business_account?.id || "",
+          ).trim(),
+        };
+      } catch (e) {
+        page = {
+          id: pageId,
+          name: "",
+          error: String(e?.message || e),
+        };
+      }
+    }
+
+    return res.json({
+      ok: true,
+      connected: true,
+      graphVersion: INSTAGRAM_GRAPH_VERSION,
+      profile: {
+        id: String(profile?.id || igUserId),
+        username: String(profile?.username || "").trim(),
+        accountType: String(profile?.account_type || "").trim(),
+        mediaCount: Number(profile?.media_count || 0) || 0,
+        followersCount: Number(profile?.followers_count || 0) || 0,
+      },
+      page,
+    });
+  } catch (e) {
+    return res.json({
+      ok: true,
+      connected: false,
+      reason: "graph_error",
+      error: String(e?.message || e),
+      graphVersion: INSTAGRAM_GRAPH_VERSION,
+    });
   }
 });
 

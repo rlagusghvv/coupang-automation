@@ -171,6 +171,11 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
   final Map<String, Map<String, dynamic>> _marketingLinkBySourceUrl =
       <String, Map<String, dynamic>>{};
   final Map<String, int> _marketingClickCountBySlug = <String, int>{};
+  final TextEditingController _igUserIdCtrl = TextEditingController();
+  final TextEditingController _igAccessTokenCtrl = TextEditingController();
+  final TextEditingController _igPageIdCtrl = TextEditingController();
+  Map<String, dynamic>? _instagramStatus;
+  Map<String, dynamic>? _instagramFormat;
 
   num? _seoScoreOf(Map<String, dynamic> item) {
     return num.tryParse((item['seoScore'] ?? '').toString());
@@ -216,6 +221,14 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
       return _recommendScoreOf(b).compareTo(_recommendScoreOf(a));
     });
     return sorted;
+  }
+
+  @override
+  void dispose() {
+    _igUserIdCtrl.dispose();
+    _igAccessTokenCtrl.dispose();
+    _igPageIdCtrl.dispose();
+    super.dispose();
   }
 
   String _nowLabel() {
@@ -783,6 +796,82 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
     }
   }
 
+  Future<void> _loadInstagramConfig() async {
+    try {
+      final settingsJson = await widget.api.getJson('/api/settings');
+      final settings = (settingsJson['settings'] as Map?)?.cast<String, dynamic>() ??
+          const <String, dynamic>{};
+      final igUserId = (settings['instagramIgUserId'] ?? '').toString().trim();
+      final accessToken = (settings['instagramAccessToken'] ?? '').toString().trim();
+      final pageId = (settings['instagramPageId'] ?? '').toString().trim();
+      if (!mounted) return;
+      setState(() {
+        if (_igUserIdCtrl.text != igUserId) _igUserIdCtrl.text = igUserId;
+        if (_igAccessTokenCtrl.text != accessToken) _igAccessTokenCtrl.text = accessToken;
+        if (_igPageIdCtrl.text != pageId) _igPageIdCtrl.text = pageId;
+      });
+    } catch (_) {}
+  }
+
+  Future<void> _saveInstagramConfig() async {
+    final igUserId = _igUserIdCtrl.text.trim();
+    final accessToken = _igAccessTokenCtrl.text.trim();
+    final pageId = _igPageIdCtrl.text.trim();
+    try {
+      setState(() => _marketingBusy = true);
+      await widget.api.postJson('/api/settings', {
+        'instagramIgUserId': igUserId,
+        'instagramAccessToken': accessToken,
+        'instagramPageId': pageId,
+      });
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('인스타 설정 저장 완료')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('인스타 설정 저장 실패: $e')),
+      );
+    } finally {
+      if (mounted) setState(() => _marketingBusy = false);
+    }
+  }
+
+  Future<void> _checkInstagramConnection() async {
+    try {
+      setState(() => _marketingBusy = true);
+      final json = await widget.api.getJson('/api/instagram/connection/status');
+      if (!mounted) return;
+      setState(() {
+        _instagramStatus = json;
+      });
+      final connected = json['connected'] == true;
+      final msg = connected
+          ? '인스타 계정 연결 확인 완료'
+          : '인스타 연결 실패: ${(json['error'] ?? json['reason'] ?? 'unknown').toString()}';
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('인스타 연결 확인 실패: $e')),
+      );
+    } finally {
+      if (mounted) setState(() => _marketingBusy = false);
+    }
+  }
+
+  Future<void> _loadInstagramFormat() async {
+    try {
+      final json = await widget.api.getJson('/api/instagram/reels/format');
+      if (!mounted) return;
+      setState(() {
+        _instagramFormat =
+            (json['format'] as Map?)?.cast<String, dynamic>() ?? const <String, dynamic>{};
+      });
+    } catch (_) {}
+  }
+
   Future<void> _loadRecoCategories() async {
     setState(() => _loadingRecoCategories = true);
     try {
@@ -841,6 +930,9 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
   void initState() {
     super.initState();
     _marketingCampaign = _defaultMarketingCampaign();
+    _loadInstagramConfig();
+    _loadInstagramFormat();
+    _checkInstagramConnection();
     _loadMarketingLinks();
     _loadRecoCategories();
     _refresh();
@@ -1931,6 +2023,121 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
                   ],
                 ),
                 const SizedBox(height: 10),
+                Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(10),
+                    color: Theme.of(context)
+                        .colorScheme
+                        .surfaceContainerHighest
+                        .withValues(alpha: 0.35),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          const Text(
+                            '인스타 계정 연결',
+                            style: TextStyle(fontWeight: FontWeight.w800),
+                          ),
+                          const SizedBox(width: 8),
+                          InfoChip(
+                            label: (_instagramStatus?['connected'] == true)
+                                ? '연결됨'
+                                : '미연결',
+                            color: (_instagramStatus?['connected'] == true)
+                                ? const Color(0xFF2F9E44)
+                                : Colors.orange,
+                          ),
+                          const Spacer(),
+                          TextButton.icon(
+                            onPressed: (_loading || _marketingBusy)
+                                ? null
+                                : _checkInstagramConnection,
+                            icon: const Icon(Icons.verified_outlined, size: 18),
+                            label: const Text('연결 확인'),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      TextFormField(
+                        controller: _igUserIdCtrl,
+                        decoration: const InputDecoration(
+                          labelText: 'Instagram User ID',
+                          isDense: true,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      TextFormField(
+                        controller: _igPageIdCtrl,
+                        decoration: const InputDecoration(
+                          labelText: 'Facebook Page ID (선택)',
+                          isDense: true,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      TextFormField(
+                        controller: _igAccessTokenCtrl,
+                        decoration: const InputDecoration(
+                          labelText: 'Instagram Access Token',
+                          isDense: true,
+                        ),
+                        maxLines: 2,
+                      ),
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          FilledButton.tonalIcon(
+                            onPressed: (_loading || _marketingBusy)
+                                ? null
+                                : _saveInstagramConfig,
+                            icon: const Icon(Icons.save_outlined, size: 18),
+                            label: const Text('설정 저장'),
+                          ),
+                          const SizedBox(width: 8),
+                          TextButton.icon(
+                            onPressed: (_loading || _marketingBusy)
+                                ? null
+                                : _loadInstagramConfig,
+                            icon: const Icon(Icons.download_outlined, size: 18),
+                            label: const Text('불러오기'),
+                          ),
+                        ],
+                      ),
+                      if (_instagramStatus != null) ...[
+                        const SizedBox(height: 8),
+                        Text(
+                          () {
+                            final status = _instagramStatus ?? const <String, dynamic>{};
+                            if (status['connected'] == true) {
+                              final profile =
+                                  (status['profile'] as Map?)?.cast<String, dynamic>() ??
+                                      const <String, dynamic>{};
+                              final username = (profile['username'] ?? '').toString().trim();
+                              final followers =
+                                  int.tryParse((profile['followersCount'] ?? 0).toString()) ?? 0;
+                              return username.isNotEmpty
+                                  ? '연결 계정: @$username · 팔로워 $followers'
+                                  : '연결 확인됨';
+                            }
+                            final reason =
+                                (status['error'] ?? status['reason'] ?? '').toString().trim();
+                            return reason.isNotEmpty ? '연결 상태: $reason' : '연결 상태: 미확인';
+                          }(),
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Theme.of(context)
+                                .colorScheme
+                                .onSurface
+                                .withValues(alpha: 0.72),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 10),
                 Row(
                   children: [
                     Expanded(
@@ -1987,6 +2194,21 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
                         .withValues(alpha: 0.65),
                   ),
                 ),
+                if (_instagramFormat != null) ...[
+                  const SizedBox(height: 6),
+                  Text(
+                    '권장 포맷: ${(_instagramFormat?['ratio'] ?? '9:16')} · '
+                    '${(_instagramFormat?['resolution'] ?? '1080x1920')} · '
+                    '${((_instagramFormat?['durationSec'] as Map?)?['recommended'] ?? 20)}초',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Theme.of(context)
+                          .colorScheme
+                          .onSurface
+                          .withValues(alpha: 0.62),
+                    ),
+                  ),
+                ],
                 if (_marketingBusy) ...[
                   const SizedBox(height: 8),
                   LinearProgressIndicator(
