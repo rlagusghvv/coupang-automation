@@ -362,7 +362,13 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
     );
   }
 
-  String _grokPromptsText(Map<String, dynamic> json) {
+  List<String> _videoPromptList(Map<String, dynamic> pack) {
+    final soraPrompts = _stringList(pack['soraVideoPrompts']);
+    if (soraPrompts.isNotEmpty) return soraPrompts;
+    return _stringList(pack['grokVideoPrompts']);
+  }
+
+  String _soraPromptsText(Map<String, dynamic> json) {
     final rows = (json['items'] as List?) ?? const [];
     final prompts = <String>[];
     for (final raw in rows) {
@@ -370,11 +376,7 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
       final row = raw.cast<String, dynamic>();
       final pack = (row['pack'] as Map?)?.cast<String, dynamic>() ??
           const <String, dynamic>{};
-      prompts.addAll(
-        ((pack['grokVideoPrompts'] as List?) ?? const [])
-            .map((e) => e.toString().trim())
-            .where((e) => e.isNotEmpty),
-      );
+      prompts.addAll(_videoPromptList(pack));
     }
     return prompts.join('\n\n---\n\n');
   }
@@ -539,7 +541,7 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
     final captions = _stringList(pack['captions']);
     final hashtags = _stringList(pack['hashtags']);
     final thumbnailTexts = _stringList(pack['thumbnailTexts']);
-    final prompts = _grokPromptsText(json);
+    final prompts = _soraPromptsText(json);
     final images = _marketingImagesOf(product);
     final trackingUrl = (tracking['trackingUrl'] ?? '').toString().trim();
     final targetUrl = (item['targetUrl'] ?? _resolveMarketingTargetUrl(product))
@@ -606,7 +608,7 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
 
     if (prompts.trim().isNotEmpty) {
       lines.add('');
-      lines.add('Grok 프롬프트');
+      lines.add('Sora 프롬프트');
       lines.add(prompts.trim());
     }
 
@@ -624,8 +626,8 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
     final pack = _firstMarketingPack(json);
     final images = _marketingImagesOf(product);
     final bundleText = _buildMarketingOneShotBundle(product, json);
-    final prompts = _grokPromptsText(json).trim();
-    final promptList = _stringList(pack['grokVideoPrompts']);
+    final prompts = _soraPromptsText(json).trim();
+    final promptList = _videoPromptList(pack);
     final trackingUrl = (tracking['trackingUrl'] ?? '').toString().trim();
     final targetUrl = (item['targetUrl'] ?? _resolveMarketingTargetUrl(product))
         .toString()
@@ -646,7 +648,7 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
     await showDialog<void>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('인스타/Grok 원샷'),
+        title: const Text('인스타/Sora 원샷'),
         content: SizedBox(
           width: 780,
           child: SingleChildScrollView(
@@ -655,7 +657,7 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  '인스타에는 본문만 복사하고, Grok에는 프롬프트만 넣고, 사진 선택 후 업로드만 하면 되도록 나눴습니다.',
+                  '인스타에는 본문만 복사하고, Sora에는 프롬프트와 상품 사진만 넣은 뒤 영상만 받아서 업로드하면 되도록 나눴습니다.',
                   style: TextStyle(
                     fontSize: 12,
                     color: Theme.of(context)
@@ -687,11 +689,11 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
                           : () async {
                               await _copyText(
                                 primaryPrompt,
-                                'Grok 프롬프트를 복사했어요.',
+                                'Sora 프롬프트를 복사했어요.',
                               );
                             },
                       icon: const Icon(Icons.movie_creation_outlined, size: 18),
-                      label: const Text('Grok 프롬프트 복사'),
+                      label: const Text('Sora 프롬프트 복사'),
                     ),
                     if (trackingUrl.isNotEmpty)
                       OutlinedButton.icon(
@@ -826,11 +828,31 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
                 _buildOneShotSection(
                   context,
                   icon: Icons.movie_creation_outlined,
-                  title: '2. Grok 영상 생성',
-                  subtitle: '아래 프롬프트를 Grok에 넣고 영상만 받아오면 됩니다.',
+                  title: '2. Sora 영상 생성',
+                  subtitle:
+                      '아래 프롬프트를 Sora에 넣고, 선택한 상품 이미지를 같이 올린 뒤 영상만 받아오면 됩니다.',
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
+                      Text(
+                        'Sora 사용 순서',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w800,
+                          color: Theme.of(context).colorScheme.onSurface,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      SelectableText(
+                        [
+                          '1. 아래 사진 미리보기에서 메인 1장 + 상세 2~4장을 고릅니다.',
+                          '2. Sora에 대표 프롬프트를 그대로 붙여 넣습니다.',
+                          '3. 고른 상품 사진을 reference 이미지로 함께 넣습니다.',
+                          '4. 세로 9:16, 15~20초 영상으로 생성하고 가장 자연스러운 1개만 채택합니다.',
+                        ].join('\n'),
+                        style: const TextStyle(fontSize: 12, height: 1.45),
+                      ),
+                      const SizedBox(height: 10),
                       Text(
                         '추천 프롬프트',
                         style: TextStyle(
@@ -857,7 +879,7 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
                                 : () async {
                                     await _copyText(
                                       primaryPrompt,
-                                      'Grok 프롬프트를 복사했어요.',
+                                      'Sora 프롬프트를 복사했어요.',
                                     );
                                   },
                             icon: const Icon(Icons.copy_outlined, size: 18),
@@ -868,7 +890,7 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
                               onPressed: () async {
                                 await _copyText(
                                   prompts,
-                                  '전체 Grok 프롬프트를 복사했어요.',
+                                  '전체 Sora 프롬프트를 복사했어요.',
                                 );
                               },
                               icon:
@@ -1436,7 +1458,7 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
                                         )
                                       : const Icon(Icons.bolt_outlined,
                                           size: 18),
-                                  label: const Text('인스타/Grok 원샷'),
+                                  label: const Text('인스타/Sora 원샷'),
                                 ),
                               ],
                             ),

@@ -358,7 +358,19 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
     );
   }
 
-  String _grokPromptTextFromPackResponse(Map<String, dynamic> json) {
+  List<String> _videoPromptListFromPack(Map<String, dynamic> pack) {
+    final soraPrompts = ((pack['soraVideoPrompts'] as List?) ?? const [])
+        .map((e) => e.toString().trim())
+        .where((e) => e.isNotEmpty)
+        .toList();
+    if (soraPrompts.isNotEmpty) return soraPrompts;
+    return ((pack['grokVideoPrompts'] as List?) ?? const [])
+        .map((e) => e.toString().trim())
+        .where((e) => e.isNotEmpty)
+        .toList();
+  }
+
+  String _videoPromptTextFromPackResponse(Map<String, dynamic> json) {
     final items = (json['items'] as List?) ?? const [];
     final prompts = <String>[];
     for (final raw in items) {
@@ -366,10 +378,7 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
       final row = raw.cast<String, dynamic>();
       final pack = (row['pack'] as Map?)?.cast<String, dynamic>() ??
           const <String, dynamic>{};
-      final grokPrompts = (pack['grokVideoPrompts'] as List?) ?? const [];
-      prompts.addAll(
-        grokPrompts.map((e) => e.toString().trim()).where((e) => e.isNotEmpty),
-      );
+      prompts.addAll(_videoPromptListFromPack(pack));
     }
     return prompts.join('\n\n---\n\n');
   }
@@ -471,7 +480,7 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
     final guide =
         (_lastManualUploadGuide ?? _manualUploadGuideFromPackResponse(json))
             .trim();
-    final prompts = _grokPromptTextFromPackResponse(json).trim();
+    final prompts = _videoPromptTextFromPackResponse(json).trim();
     final previewText = const JsonEncoder.withIndent('  ').convert(json);
     final guidePreview = guide.length > 14000
         ? '${guide.substring(0, 14000)}\n\n... (생략)'
@@ -530,7 +539,7 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
           if (prompts.isNotEmpty)
             TextButton.icon(
               onPressed: () async {
-                await _copyText(prompts, 'Grok 영상 프롬프트를 복사했어요.');
+                await _copyText(prompts, 'Sora 영상 프롬프트를 복사했어요.');
               },
               icon: const Icon(Icons.movie_creation_outlined, size: 18),
               label: const Text('프롬프트 복사'),
@@ -715,9 +724,9 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
             const <String, dynamic>{};
         final pack = (row['pack'] as Map?)?.cast<String, dynamic>() ??
             const <String, dynamic>{};
-        final grokPrompts = (pack['grokVideoPrompts'] as List?) ?? const [];
-        if (grokPrompts.isNotEmpty) {
-          prompts.addAll(grokPrompts.map((e) => e.toString()));
+        final videoPrompts = _videoPromptListFromPack(pack);
+        if (videoPrompts.isNotEmpty) {
+          prompts.addAll(videoPrompts);
         }
         if (sourceUrl.isNotEmpty && tracking.isNotEmpty) {
           _marketingLinkBySourceUrl[sourceUrl] = tracking;
@@ -2566,7 +2575,7 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
                 ),
                 const SizedBox(height: 6),
                 Text(
-                  '카드별 링크생성 후 인스타/블로그에 붙여 넣으세요. 선택 릴스팩은 Grok 영상 프롬프트까지 자동 생성됩니다.',
+                  '카드별 링크생성 후 인스타/블로그에 붙여 넣으세요. 선택 릴스팩은 Sora 영상 프롬프트까지 자동 생성됩니다.',
                   style: TextStyle(
                     fontSize: 12,
                     color: Theme.of(context)

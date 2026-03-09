@@ -4567,15 +4567,20 @@ function buildReelsPack({
     `광고보다 실사용 중심으로 편집했습니다.\n${shortTitle}\n${marginText ? `수익률 참고: ${marginText}\n` : ""}자세히 보기: ${ctaUrlText}`,
   ];
 
-  const grokVideoPrompts = hooks.map((hook, idx) => {
+  const soraVideoPrompts = hooks.map((hook, idx) => {
     const scenes = storyboards[idx] || [];
     return [
-      `Create a vertical 9:16 Instagram Reel, 20 seconds, style=${tone}, Korean text overlays.`,
-      `Product: ${shortTitle || keyword || "추천 상품"}.`,
-      `Hook overlay: "${hook}"`,
-      `Scenes: ${scenes.join(" | ")}`,
-      `End card text: "지금 확인하기" and show URL hint "${ctaUrlText}".`,
-      "Use clean cuts, high contrast captions, no exaggerated claims.",
+      "Create a photorealistic vertical 9:16 social commerce video for Instagram Reels, 20 seconds total.",
+      `Tone: ${tone}. Product: ${shortTitle || keyword || "추천 상품"}.`,
+      "Use the uploaded reference product images as the exact source of truth.",
+      "Match the real product design, color, material, proportions, and component count exactly.",
+      'Do not invent new colors, accessories, labels, extra shelves, or exaggerated product features.',
+      `Hook overlay in Korean for the first 2 seconds: "${hook}"`,
+      `Storyboard: ${scenes.join(" | ")}`,
+      "Keep the scenes realistic, commercially usable, and easy to edit into an actual product reel.",
+      "Use clean cuts, bold high-contrast Korean captions, realistic home lighting, and stable camera movement.",
+      `End card text in Korean: "지금 확인하기". Show a subtle URL hint: "${ctaUrlText}".`,
+      "Avoid fake discounts, impossible physics, warped geometry, flickering captions, deformed hands, and surreal transitions.",
     ].join(" ");
   });
 
@@ -4586,7 +4591,8 @@ function buildReelsPack({
     storyboards,
     captions,
     hashtags,
-    grokVideoPrompts,
+    soraVideoPrompts,
+    grokVideoPrompts: soraVideoPrompts,
     thumbnailTexts: [hooks[0], hooks[1], `${keyword || "추천템"} 실사용 후기`],
   };
 }

@@ -233,8 +233,12 @@ async function main() {
     assert.ok(Array.isArray(pack.captions) && pack.captions.length >= 3, "reels pack should include captions");
     assert.ok(Array.isArray(pack.hashtags) && pack.hashtags.length >= 3, "reels pack should include hashtags");
     assert.ok(
+      Array.isArray(pack.soraVideoPrompts) && pack.soraVideoPrompts.length >= 3,
+      "reels pack should include Sora prompts",
+    );
+    assert.ok(
       Array.isArray(pack.grokVideoPrompts) && pack.grokVideoPrompts.length >= 3,
-      "reels pack should include Grok prompts",
+      "reels pack should include legacy Grok-compatible prompts",
     );
 
     console.log(JSON.stringify({

@@ -35,7 +35,8 @@ Request:
 Response includes:
 - `tracking.slug`, `tracking.trackingUrl`
 - `pack.hooks`, `pack.storyboards`, `pack.captions`, `pack.hashtags`
-- `pack.grokVideoPrompts` (copy to Grok video workflow)
+- `pack.soraVideoPrompts` (preferred: copy to Sora video workflow)
+- `pack.grokVideoPrompts` (legacy compatibility field)
 
 ## CLI Usage
 
@@ -54,8 +55,8 @@ Output:
 - `out/instagram_reels_pack_*.json`
 
 ## Recommended Video Tooling
-- Grok: script/scene idea generation, hook variants, caption rewrites
-- Video renderer: CapCut/Kling/Runway (template-based 9:16)
+- Sora: direct video generation from the generated prompt + selected product images
+- Backup workflow: CapCut/Kling/Runway for manual 9:16 assembly if needed
 - Final post: Instagram Reels with the generated tracking URL (`/go/m/:slug`)
 
 ## Operational Rule
