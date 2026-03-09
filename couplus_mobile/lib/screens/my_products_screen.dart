@@ -1,6 +1,7 @@
 import 'package:couplus_mobile/api/api_client.dart';
 import 'package:couplus_mobile/screens/product_detail_screen.dart';
 import 'package:couplus_mobile/ui/widgets.dart';
+import 'package:couplus_mobile/utils/file_download.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -362,6 +363,76 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
     );
   }
 
+  String _downloadBaseName(Map<String, dynamic> product) {
+    final sellerProductId =
+        (product['sellerProductId'] ?? '').toString().trim();
+    if (sellerProductId.isNotEmpty) return 'coupelephant_$sellerProductId';
+    final productId = (product['productId'] ?? '').toString().trim();
+    if (productId.isNotEmpty) return 'coupelephant_$productId';
+    final id = (product['id'] ?? '').toString().trim();
+    if (id.isNotEmpty) return 'coupelephant_$id';
+    return 'coupelephant_product';
+  }
+
+  String _imageFileExtension(String rawUrl) {
+    final parsed = Uri.tryParse(rawUrl);
+    final path = parsed?.path.toLowerCase() ?? rawUrl.toLowerCase();
+    for (final ext in const ['.jpg', '.jpeg', '.png', '.webp', '.gif']) {
+      if (path.endsWith(ext)) return ext;
+    }
+    return '.jpg';
+  }
+
+  String _downloadableImageUrl(String rawUrl, String filename) {
+    final baseUri = Uri.parse(widget.api.baseUrl);
+    return baseUri.replace(
+      path: '/api/image-proxy',
+      queryParameters: {
+        'url': rawUrl,
+        'download': '1',
+        'filename': filename,
+      },
+    ).toString();
+  }
+
+  Future<void> _downloadMarketingImages(
+    Map<String, dynamic> product,
+    List<String> images,
+  ) async {
+    if (images.isEmpty) return;
+
+    if (!supportsFileDownload) {
+      await _copyText(images.join('\n'), '이 환경에서는 사진 URL 목록을 복사했어요.');
+      return;
+    }
+
+    final base = _downloadBaseName(product);
+    final files = <DownloadFileSpec>[];
+    for (var i = 0; i < images.length; i += 1) {
+      final imageUrl = images[i];
+      final index = (i + 1).toString().padLeft(2, '0');
+      final filename = '${base}_$index${_imageFileExtension(imageUrl)}';
+      files.add(
+        DownloadFileSpec(
+          url: _downloadableImageUrl(imageUrl, filename),
+          filename: filename,
+        ),
+      );
+    }
+
+    final count = await downloadFiles(files);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          count > 0
+              ? '사진 $count장을 다운로드 시작했어요. 브라우저가 여러 파일 다운로드를 물으면 허용하세요.'
+              : '다운로드를 시작하지 못해 사진 URL 목록을 대신 복사해 주세요.',
+        ),
+      ),
+    );
+  }
+
   List<String> _videoPromptList(Map<String, dynamic> pack) {
     final soraPrompts = _stringList(pack['soraVideoPrompts']);
     if (soraPrompts.isNotEmpty) return soraPrompts;
@@ -702,6 +773,16 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
                       ),
                     if (images.isNotEmpty)
                       OutlinedButton.icon(
+                        onPressed: () =>
+                            _downloadMarketingImages(product, images),
+                        icon: const Icon(Icons.download_for_offline_outlined,
+                            size: 18),
+                        label: Text(
+                          supportsFileDownload ? '사진 일괄 다운로드' : '사진 URL 안내',
+                        ),
+                      ),
+                    if (images.isNotEmpty)
+                      OutlinedButton.icon(
                         onPressed: () async {
                           await _copyText(
                               images.join('\n'), '사진 URL 목록을 복사했어요.');
@@ -843,10 +924,11 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
                       SelectableText(
                         [
                           '1. 아래 사진 미리보기에서 메인 1장 + 상세 2~4장을 고릅니다.',
-                          '2. Sora에 대표 프롬프트를 그대로 붙여 넣습니다.',
-                          '3. 고른 상품 사진을 reference 이미지로 함께 넣습니다.',
-                          '4. 세로 9:16, 15~20초 영상으로 생성하고 가장 자연스러운 1개만 채택합니다.',
-                          '5. Sora에는 상품 URL, 추적 링크, 원본 URL, 운영 메모 전체 텍스트를 넣지 않습니다.',
+                          '2. 사진 일괄 다운로드 버튼으로 원본 이미지를 먼저 저장합니다.',
+                          '3. Sora에 대표 프롬프트를 그대로 붙여 넣습니다.',
+                          '4. 저장한 상품 사진을 reference 이미지로 함께 넣습니다.',
+                          '5. 세로 9:16, 15~20초 영상으로 생성하고 가장 자연스러운 1개만 채택합니다.',
+                          '6. Sora에는 상품 URL, 추적 링크, 원본 URL, 운영 메모 전체 텍스트를 넣지 않습니다.',
                         ].join('\n'),
                         style: const TextStyle(fontSize: 12, height: 1.45),
                       ),
@@ -973,6 +1055,16 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
                           ),
                         ),
                         const SizedBox(height: 10),
+                        OutlinedButton.icon(
+                          onPressed: () =>
+                              _downloadMarketingImages(product, images),
+                          icon: const Icon(Icons.download_for_offline_outlined,
+                              size: 18),
+                          label: Text(
+                            supportsFileDownload ? '사진 일괄 다운로드' : '사진 URL 안내',
+                          ),
+                        ),
+                        const SizedBox(height: 8),
                         OutlinedButton.icon(
                           onPressed: () async {
                             await _copyText(

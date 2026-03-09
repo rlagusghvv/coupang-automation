@@ -569,6 +569,8 @@ app.delete('/auth/account', async (req, res) => {
 app.get('/api/image-proxy', async (req, res) => {
   try {
     const raw = String(req.query?.url || '').trim();
+    const download = String(req.query?.download || '').trim() === '1';
+    const rawFilename = String(req.query?.filename || '').trim();
     if (!isHttpUrl(raw)) {
       return res.status(400).json({ ok: false, error: 'invalid_url' });
     }
@@ -589,6 +591,13 @@ app.get('/api/image-proxy', async (req, res) => {
     const ct = upstream.headers.get('content-type') || 'application/octet-stream';
     res.setHeader('Content-Type', ct);
     res.setHeader('Cache-Control', 'public, max-age=300');
+    if (download) {
+      const filename = rawFilename
+        .replace(/[^\w.\-]+/g, '_')
+        .replace(/^_+|_+$/g, '')
+        .slice(0, 120) || 'image.bin';
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    }
 
     const ab = await upstream.arrayBuffer();
     return res.status(200).send(Buffer.from(ab));
