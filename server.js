@@ -4549,7 +4549,7 @@ function buildReelsPack({
 
   const hooks = [
     `${keyword || "생활 정리"} 고민, 10초 안에 끝`,
-    `이 가격에 이 구성? ${priceText}`,
+    "이 조합 하나면 정리 끝",
     `실사용 후 가장 만족한 ${keyword || "생활템"}`,
   ];
 
@@ -4557,13 +4557,13 @@ function buildReelsPack({
     [
       "0-2초: 문제 제기 (어지러운 상태/불편한 장면)",
       `2-7초: 제품 등장 + 핵심 포인트 2개 (${shortTitle || keyword || "추천 상품"})`,
-      `7-13초: 사용 장면 전/후 비교 + 가격 노출(${priceText})`,
+      "7-13초: 사용 장면 전/후 비교 + 핵심 효용 강조",
       `13-18초: CTA (${reelCtaText})`,
     ],
     [
       "0-3초: 후킹 문구 + 제품 클로즈업",
       "3-9초: 사용 방법 3스텝",
-      `9-14초: 가격/마진 포인트 (${sourcePriceText ? `원가 ${sourcePriceText} → ` : ""}${priceText}${marginText ? ` / 마진 ${marginText}` : ""})`,
+      "9-14초: 디테일 포인트와 사용성 강조",
       `14-20초: CTA + 신뢰 문구 (${brand}, ${reelCtaText})`,
     ],
     [
@@ -4575,9 +4575,9 @@ function buildReelsPack({
   ];
 
   const captions = [
-    `${shortTitle}\n\n${keyword ? `${keyword} 찾는 분들` : "실사용 중심"}에게 맞춘 추천템입니다.\n가격: ${priceText}\n${profileGuideText}\n${commentCtaText}`,
-    `요즘 반응 좋은 ${keyword || "생활템"}.\n핵심만 짧게 보여드렸어요.\n${sourcePriceText ? `원가 ${sourcePriceText} / ` : ""}판매가 ${priceText}\n${profileGuideText}\n${commentCtaText}`,
-    `광고보다 실사용 중심으로 편집했습니다.\n${shortTitle}\n${marginText ? `수익률 참고: ${marginText}\n` : ""}${profileGuideText}\n${commentCtaText}`,
+    `${shortTitle}\n\n${keyword ? `${keyword} 찾는 분들` : "실사용 중심"}에게 맞춘 추천템입니다.\n${profileGuideText}\n${commentCtaText}`,
+    `요즘 반응 좋은 ${keyword || "생활템"}.\n핵심만 짧게 보여드렸어요.\n${profileGuideText}\n${commentCtaText}`,
+    `광고보다 실사용 중심으로 편집했습니다.\n${shortTitle}\n${profileGuideText}\n${commentCtaText}`,
   ];
 
   const instagramPostText = [
@@ -4585,7 +4585,6 @@ function buildReelsPack({
     "",
     shortTitle || keyword || "추천 상품",
     keyword ? `${keyword} 찾는 분들께 먼저 보여드리고 싶은 생활템입니다.` : "실사용 중심으로 보기 좋은 생활템입니다.",
-    `가격: ${priceText}`,
     profileGuideText,
     commentCtaText,
     "",
