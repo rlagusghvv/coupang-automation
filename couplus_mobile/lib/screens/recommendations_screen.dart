@@ -433,6 +433,16 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
               .map((e) => e.toString().trim())
               .where((e) => e.isNotEmpty)
               .toList();
+      final referenceImageGuide =
+          ((pack['referenceImageGuide'] as List?) ?? const [])
+              .map((e) => e.toString().trim())
+              .where((e) => e.isNotEmpty)
+              .toList();
+      final productFeatureHints =
+          ((pack['productFeatureHints'] as List?) ?? const [])
+              .map((e) => e.toString().trim())
+              .where((e) => e.isNotEmpty)
+              .toList();
       final hashtags = ((pack['hashtags'] as List?) ?? const [])
           .map((e) => e.toString().trim())
           .where((e) => e.isNotEmpty)
@@ -455,12 +465,25 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
       lines.add('');
       lines.add('[$displayIndex] ${title.isEmpty ? '상품' : title}');
       lines.add('업로드 순서');
-      lines.add('1. 세로 9:16 릴스를 열고 첫 2초에 훅 문구를 넣습니다.');
+      lines.add('1. 상품 메인 페이지 캐러셀에서 글씨 없는 상품 사진만 1~4장 고릅니다.');
+      lines.add('2. 세로 9:16 릴스를 열고 첫 2초에 훅 문구를 넣습니다.');
       if (hooks.isNotEmpty) {
-        lines.add('2. 첫 문구: ${hooks.first}');
+        lines.add('3. 첫 문구: ${hooks.first}');
+      }
+      if (referenceImageGuide.isNotEmpty) {
+        lines.add('Sora 입력 이미지 가이드');
+        for (var i = 0; i < referenceImageGuide.length; i += 1) {
+          lines.add('${i + 1}. ${referenceImageGuide[i]}');
+        }
+      }
+      if (productFeatureHints.isNotEmpty) {
+        lines.add('감지된 상품 특징');
+        for (var i = 0; i < productFeatureHints.length; i += 1) {
+          lines.add('${i + 1}. ${productFeatureHints[i]}');
+        }
       }
       if (firstStoryboard.isNotEmpty) {
-        lines.add('3. 장면 구성');
+        lines.add('장면 구성');
         for (final scene in firstStoryboard) {
           lines.add(' - $scene');
         }

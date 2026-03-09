@@ -330,8 +330,6 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
   List<String> _marketingImagesOf(Map<String, dynamic> product) {
     final values = <String>[
       (product['mainImageUrl'] ?? '').toString().trim(),
-      ...((product['detailImages'] as List?) ?? const [])
-          .map((e) => e.toString().trim()),
     ];
     final seen = <String>{};
     final out = <String>[];
@@ -555,6 +553,28 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
     return lines.join('\n').trim();
   }
 
+  String _referenceImageGuideText(Map<String, dynamic> json) {
+    final pack = _firstMarketingPack(json);
+    final guide = _stringList(pack['referenceImageGuide']);
+    if (guide.isEmpty) return '';
+    final lines = <String>[];
+    for (var i = 0; i < guide.length; i += 1) {
+      lines.add('${i + 1}. ${guide[i]}');
+    }
+    return lines.join('\n').trim();
+  }
+
+  String _productFeatureHintsText(Map<String, dynamic> json) {
+    final pack = _firstMarketingPack(json);
+    final hints = _stringList(pack['productFeatureHints']);
+    if (hints.isEmpty) return '';
+    final lines = <String>[];
+    for (var i = 0; i < hints.length; i += 1) {
+      lines.add('${i + 1}. ${hints[i]}');
+    }
+    return lines.join('\n').trim();
+  }
+
   String _instagramChecklistText(
     Map<String, dynamic> product,
     Map<String, dynamic> json,
@@ -568,13 +588,14 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
 
     final lines = <String>[
       '1. 인스타 업로드 문안 복사 버튼으로 메인 문구/본문/해시태그를 한 번에 복사합니다.',
-      '2. 아래 사진 미리보기에서 메인 1장 + 상세 2~4장을 고릅니다.',
-      if (hooks.isNotEmpty) '3. 첫 2초 자막은 "${hooks.first}" 로 시작합니다.',
-      if (trackingUrl.isNotEmpty) '4. 프로필 링크에는 $trackingUrl 를 반영합니다.',
+      '2. 상품 메인 페이지 캐러셀에서 글씨 없는 상품 사진 1~4장만 고릅니다.',
+      '3. 앱에 대표 이미지 1장만 보이면 상품 URL에서 추가 메인 사진을 직접 저장합니다.',
+      if (hooks.isNotEmpty) '4. 첫 2초 자막은 "${hooks.first}" 로 시작합니다.',
+      if (trackingUrl.isNotEmpty) '5. 프로필 링크에는 $trackingUrl 를 반영합니다.',
       if (commentCtaText.isNotEmpty)
-        '5. 게시 후 댓글 유도 문구 "$commentCtaText" 흐름으로 운영합니다.',
-      if (hasBgmKeywords) '6. 업로드 직전 추천 검색어로 인스타 음악 라이브러리에서 BGM을 선택합니다.',
-      '7. 영상 업로드 후 클릭 수를 확인합니다.',
+        '6. 게시 후 댓글 유도 문구 "$commentCtaText" 흐름으로 운영합니다.',
+      if (hasBgmKeywords) '7. 업로드 직전 추천 검색어로 인스타 음악 라이브러리에서 BGM을 선택합니다.',
+      '8. 영상 업로드 후 클릭 수를 확인합니다.',
     ];
     return lines.join('\n');
   }
@@ -670,6 +691,8 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
     final commentReplyTemplate = _stringValue(pack, 'commentReplyTemplate');
     final dmReplyTemplate = _stringValue(pack, 'dmReplyTemplate');
     final bgmGuideText = _bgmGuideText(json);
+    final referenceImageGuideText = _referenceImageGuideText(json);
+    final productFeatureHintsText = _productFeatureHintsText(json);
     final trackingUrl = (tracking['trackingUrl'] ?? '').toString().trim();
     final targetUrl = (item['targetUrl'] ?? _resolveMarketingTargetUrl(product))
         .toString()
@@ -684,17 +707,30 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
         '원본 URL: ${_productSourceUrl(product)}',
       '',
       '업로드 준비',
-      '1. 아래 이미지 중 메인 1장 + 상세 컷 2~4장을 골라 세로 9:16로 편집',
-      '2. 첫 2초에 훅 문구 삽입',
-      '3. 본문/고정댓글에 추적 링크 반영',
+      '1. 상품 메인 페이지 캐러셀에서 깨끗한 상품 사진 1~4장만 골라 reference로 사용',
+      '2. 상세페이지 캡처, 글씨/가격/규격표, 사람 컷은 제외',
+      '3. 첫 2초에 훅 문구 삽입',
+      '4. 본문/고정댓글에 추적 링크 반영',
     ];
 
     if (images.isNotEmpty) {
       lines.add('');
-      lines.add('사진 URL');
+      lines.add('앱 보유 대표 이미지');
       for (var i = 0; i < images.length; i += 1) {
         lines.add('${i + 1}. ${images[i]}');
       }
+    }
+
+    if (referenceImageGuideText.isNotEmpty) {
+      lines.add('');
+      lines.add('Sora 입력 이미지 가이드');
+      lines.add(referenceImageGuideText);
+    }
+
+    if (productFeatureHintsText.isNotEmpty) {
+      lines.add('');
+      lines.add('감지된 상품 특징');
+      lines.add(productFeatureHintsText);
     }
 
     if (hooks.isNotEmpty) {
@@ -801,6 +837,8 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
     final dmReplyTemplate = _dmReplyTemplateText(json);
     final pinnedComment = _pinnedCommentText(json);
     final bgmGuideText = _bgmGuideText(json);
+    final referenceImageGuideText = _referenceImageGuideText(json);
+    final productFeatureHintsText = _productFeatureHintsText(json);
     final instagramChecklist = _instagramChecklistText(product, json);
     final primaryPrompt = promptList.isNotEmpty ? promptList.first : prompts;
     final promptPreview = primaryPrompt.length > 3000
@@ -884,6 +922,12 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
                         },
                         icon: const Icon(Icons.link, size: 18),
                         label: const Text('추적 링크 복사'),
+                      ),
+                    if (targetUrl.isNotEmpty)
+                      OutlinedButton.icon(
+                        onPressed: () => _openExternalUrl(targetUrl),
+                        icon: const Icon(Icons.open_in_new_outlined, size: 18),
+                        label: const Text('상품 페이지 열기'),
                       ),
                     if (images.isNotEmpty)
                       OutlinedButton.icon(
@@ -1152,16 +1196,49 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
                       const SizedBox(height: 6),
                       SelectableText(
                         [
-                          '1. 아래 사진 미리보기에서 메인 1장 + 상세 2~4장을 고릅니다.',
-                          '2. 사진 일괄 다운로드 버튼으로 원본 이미지를 먼저 저장합니다.',
-                          '3. Sora에 대표 프롬프트를 그대로 붙여 넣습니다.',
-                          '4. 저장한 상품 사진을 reference 이미지로 함께 넣습니다.',
-                          '5. 세로 9:16, 15~20초 영상으로 생성하고 가장 자연스러운 1개만 채택합니다.',
-                          '6. 기본 프롬프트는 저음량/무음 기준이므로, 큰 배경음 없이 생성되도록 그대로 사용합니다.',
-                          '7. Sora에는 상품 URL, 추적 링크, 원본 URL, 운영 메모 전체 텍스트를 넣지 않습니다.',
+                          '1. 상품 메인 페이지 캐러셀에서 글씨 없는 상품 사진만 1~4장 고릅니다.',
+                          '2. 앱에 대표 이미지 1장만 있으면 상품 페이지 열기 버튼으로 이동해 추가 메인 사진을 직접 저장합니다.',
+                          '3. 사진 일괄 다운로드 버튼은 앱에 저장된 대표 이미지가 있을 때만 보조용으로 사용합니다.',
+                          '4. Sora에 대표 프롬프트를 그대로 붙여 넣습니다.',
+                          '5. 저장한 메인 상품 사진만 reference 이미지로 함께 넣습니다.',
+                          '6. 세로 9:16, 15~20초 영상으로 생성하고 가장 자연스러운 1개만 채택합니다.',
+                          '7. 기본 프롬프트는 무인물/무자막/무생성음악 기준이므로 그대로 사용합니다.',
+                          '8. Sora에는 상세페이지 캡처, 상품 URL, 추적 링크, 운영 메모 전체 텍스트를 넣지 않습니다.',
                         ].join('\n'),
                         style: const TextStyle(fontSize: 12, height: 1.45),
                       ),
+                      if (referenceImageGuideText.isNotEmpty) ...[
+                        const SizedBox(height: 10),
+                        Text(
+                          '입력 이미지 가이드',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w800,
+                            color: Theme.of(context).colorScheme.onSurface,
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        SelectableText(
+                          referenceImageGuideText,
+                          style: const TextStyle(fontSize: 12, height: 1.45),
+                        ),
+                      ],
+                      if (productFeatureHintsText.isNotEmpty) ...[
+                        const SizedBox(height: 10),
+                        Text(
+                          '감지된 상품 특징',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w800,
+                            color: Theme.of(context).colorScheme.onSurface,
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        SelectableText(
+                          productFeatureHintsText,
+                          style: const TextStyle(fontSize: 12, height: 1.45),
+                        ),
+                      ],
                       const SizedBox(height: 10),
                       Text(
                         '추천 프롬프트',
@@ -1237,7 +1314,7 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
                       if (images.isNotEmpty) ...[
                         const SizedBox(height: 10),
                         Text(
-                          '사진 미리보기',
+                          '앱 보유 대표 이미지',
                           style: TextStyle(
                             fontSize: 12,
                             fontWeight: FontWeight.w800,
@@ -1291,7 +1368,9 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
                           icon: const Icon(Icons.download_for_offline_outlined,
                               size: 18),
                           label: Text(
-                            supportsFileDownload ? '사진 일괄 다운로드' : '사진 URL 안내',
+                            supportsFileDownload
+                                ? '대표 이미지 다운로드'
+                                : '대표 이미지 URL 안내',
                           ),
                         ),
                         const SizedBox(height: 8),
@@ -1303,6 +1382,18 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
                           icon: const Icon(Icons.photo_library_outlined,
                               size: 18),
                           label: const Text('사진 URL 복사'),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          '추가 reference가 필요하면 상품 페이지에서 메인 이미지 캐러셀 사진을 직접 저장해 함께 넣으세요.',
+                          style: TextStyle(
+                            fontSize: 11,
+                            height: 1.4,
+                            color: Theme.of(context)
+                                .colorScheme
+                                .onSurface
+                                .withValues(alpha: 0.7),
+                          ),
                         ),
                       ],
                       const SizedBox(height: 10),
@@ -1412,7 +1503,7 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
             'keyword': '',
             'targetUrl': targetUrl,
             'sourceUrl': sourceUrl,
-            'category': _statusLabel((product['status'] ?? '').toString()),
+            'category': '',
             'content': id.isEmpty ? 'catalog_oneshot' : 'catalog_$id',
           },
         ],

@@ -11,7 +11,11 @@ import { classifyUrl } from "./src/utils/urlFilter.js";
 import { computePrice } from "./src/utils/price.js";
 import { extractImageUrls } from "./src/utils/contentImages.js";
 import { resolveDisplayCategoryCode } from "./src/utils/categoryMap.js";
-import { suggestTitlesHybrid } from "./src/utils/titleSuggest.js";
+import {
+  suggestTitlesHybrid,
+  extractKeywordCandidates,
+  pickProductHead,
+} from "./src/utils/titleSuggest.js";
 import {
   initDb,
   createUser,
@@ -4522,6 +4526,95 @@ function buildHashtags({ title = "", keyword = "", extra = [] } = {}) {
   return tags;
 }
 
+function pushUniqueText(list, raw, { keySet = null, max = 6 } = {}) {
+  const value = String(raw || "").replace(/\s+/g, " ").trim();
+  if (!value) return;
+  const key = value.toLowerCase();
+  if (keySet) {
+    if (keySet.has(key)) return;
+    keySet.add(key);
+  } else if (list.some((x) => String(x || "").toLowerCase() === key)) {
+    return;
+  }
+  if (list.length < Math.max(1, Number(max) || 6)) list.push(value);
+}
+
+function extractProductFeatureHints(item = {}) {
+  const payload = item?.payload && typeof item.payload === "object" ? item.payload : {};
+  const seo = payload?.seo && typeof payload.seo === "object" ? payload.seo : {};
+  const title = String(item?.title || item?.seoTitle || "").trim();
+  const keyword = String(item?.keyword || "").trim();
+  const category = String(item?.category || item?.categoryLabel || "").trim();
+  const searchTags = Array.isArray(seo?.searchTags) ? seo.searchTags : [];
+  const combined = [title, keyword, category, ...searchTags].join(" ").replace(/\s+/g, " ").trim();
+  const lowered = combined.toLowerCase();
+  const out = [];
+  const seen = new Set();
+
+  const head = pickProductHead(title || keyword || category);
+  if (head) pushUniqueText(out, `${head} 타입`, { keySet: seen, max: 5 });
+
+  const specMatches = Array.from(
+    new Set(
+      (combined.match(/\d+\s*(?:단|칸|개입?|개|세트|종|cm|mm|ml|l|리터|kg|g)/gi) || [])
+        .map((x) => x.replace(/\s+/g, "").trim())
+        .filter(Boolean),
+    ),
+  );
+  for (const raw of specMatches.slice(0, 3)) {
+    const suffix = /(단|칸)$/i.test(raw) ? "구조" : "규격";
+    pushUniqueText(out, `${raw} ${suffix}`, { keySet: seen, max: 5 });
+  }
+
+  const featurePatterns = [
+    [/조립식/i, "조립식 구조"],
+    [/접이식/i, "접이식 사용"],
+    [/다용도/i, "다용도 활용"],
+    [/(수납|정리)/i, "수납/정리 용도"],
+    [/슬림/i, "슬림한 공간 활용"],
+    [/이동식/i, "이동 가능한 구조"],
+    [/서랍/i, "서랍형 구성"],
+    [/선반/i, "선반형 구성"],
+    [/바구니/i, "바구니형 수납"],
+    [/행거/i, "행거형 구성"],
+    [/트롤리/i, "트롤리형 이동"],
+    [/(원목|우드)/i, "우드 톤 마감"],
+    [/(스틸|철제|메탈|금속)/i, "금속 프레임"],
+    [/(pp|abs|플라스틱)/i, "가벼운 플라스틱 소재"],
+    [/메쉬/i, "메쉬 디테일"],
+    [/투명/i, "투명한 소재감"],
+    [/무타공/i, "무타공 설치"],
+    [/높이조절/i, "높이 조절 가능"],
+    [/회전/i, "회전형 사용"],
+    [/차량용/i, "차량 공간용"],
+    [/주방/i, "주방 공간용"],
+    [/욕실/i, "욕실 공간용"],
+    [/베란다/i, "베란다 공간용"],
+  ];
+  for (const [pattern, label] of featurePatterns) {
+    if (pattern.test(lowered)) pushUniqueText(out, label, { keySet: seen, max: 5 });
+  }
+
+  for (const token of extractKeywordCandidates(title).slice(0, 6)) {
+    if (token.length < 2 || /\d/.test(token)) continue;
+    if (/(시스맥스|마이룸|쿠팡|추천|특가|정품|국산|브랜드)/i.test(token)) continue;
+    if (/(선반|정리함|수납함|트롤리|행거|바구니|서랍|랙|케이스)/.test(token)) {
+      pushUniqueText(out, `${token} 중심`, { keySet: seen, max: 5 });
+    }
+  }
+
+  return out.slice(0, 5);
+}
+
+function buildReferenceImageGuide() {
+  return [
+    "상품 메인 페이지 캐러셀의 깨끗한 상품 사진만 reference로 넣습니다.",
+    "상세페이지 캡처, 글씨/가격/규격표, 콜라주, 사람 모델컷은 넣지 않습니다.",
+    "정면 1장, 사선 1장, 디테일 1장처럼 깔끔한 상품 이미지 1~4장만 고릅니다.",
+    "reference 이미지가 적으면 새로운 각도를 만들기보다 줌인, 슬로우 팬, 근접 크롭 중심으로 생성합니다.",
+  ];
+}
+
 function buildReelsPack({
   item = {},
   trackedUrl = "",
@@ -4545,6 +4638,8 @@ function buildReelsPack({
   const commentKeyword = "링크";
   const commentCtaText = `구매 링크가 필요하면 댓글에 "${commentKeyword}" 남겨주세요.`;
   const profileGuideText = "자세한 정보는 프로필 링크에서 확인해보세요.";
+  const productFeatureHints = extractProductFeatureHints(item);
+  const referenceImageGuide = buildReferenceImageGuide();
   const bgmSearchKeywords = [
     "cozy home instrumental",
     "clean room vlog",
@@ -4615,13 +4710,18 @@ function buildReelsPack({
     return [
       "Create a photorealistic vertical 9:16 social commerce video for Instagram Reels, 20 seconds total.",
       `Tone: ${tone}. Product: ${shortTitle || keyword || "추천 상품"}.`,
-      "Use the uploaded reference product images as the exact source of truth.",
+      "Use only clean main product-page photos from the product image carousel as references.",
       "Match the real product design, color, material, proportions, and component count exactly.",
+      "Do not use detail-page screenshots, infographics, charts, text-heavy images, or collage images as reference.",
       "Do not invent new colors, accessories, labels, extra shelves, or exaggerated product features.",
       "No people, no hands, no human figures, and no presenter shots.",
+      productFeatureHints.length > 0
+        ? `If these traits are clearly visible in the uploaded photos, preserve and emphasize them: ${productFeatureHints.join(", ")}.`
+        : "Preserve only the product traits that are clearly visible in the uploaded photos.",
       `Storyboard: ${scenes.join(" | ")}`,
       "Keep the scenes realistic, commercially usable, and easy to edit into an actual product reel.",
       "Use clean cuts, realistic home lighting, stable camera movement, and clear product close-ups.",
+      "When the available references are limited, prefer subtle zooms, pans, reframing, and close-up crops instead of inventing unsupported viewpoints.",
       "Do not render any text, subtitles, captions, logos, URLs, QR codes, browser UI, or shopping-app screenshots inside the video.",
       "Generate the video silent or with only extremely subtle neutral room ambience. Do not add music, vocals, beats, or strong sound effects.",
       "The call to action will be added later inside Instagram, so do not bake CTA text into the video.",
@@ -4643,6 +4743,8 @@ function buildReelsPack({
     pinnedComment,
     commentReplyTemplate,
     dmReplyTemplate,
+    productFeatureHints,
+    referenceImageGuide,
     bgmSearchKeywords,
     bgmGuideText,
     soraVideoPrompts,
