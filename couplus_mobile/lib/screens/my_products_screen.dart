@@ -379,24 +379,156 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
     return prompts.join('\n\n---\n\n');
   }
 
+  Map<String, dynamic> _firstMarketingRow(Map<String, dynamic> json) {
+    final rows = (json['items'] as List?) ?? const [];
+    if (rows.isNotEmpty && rows.first is Map) {
+      return (rows.first as Map).cast<String, dynamic>();
+    }
+    return const <String, dynamic>{};
+  }
+
+  Map<String, dynamic> _firstMarketingPack(Map<String, dynamic> json) {
+    final row = _firstMarketingRow(json);
+    return (row['pack'] as Map?)?.cast<String, dynamic>() ??
+        const <String, dynamic>{};
+  }
+
+  Map<String, dynamic> _firstMarketingTracking(Map<String, dynamic> json) {
+    final row = _firstMarketingRow(json);
+    return (row['tracking'] as Map?)?.cast<String, dynamic>() ??
+        const <String, dynamic>{};
+  }
+
+  List<String> _stringList(dynamic raw) {
+    if (raw is! List) return const [];
+    return raw
+        .map((e) => e.toString().trim())
+        .where((e) => e.isNotEmpty)
+        .toList();
+  }
+
+  String _instagramCaptionText(
+    Map<String, dynamic> product,
+    Map<String, dynamic> json,
+  ) {
+    final pack = _firstMarketingPack(json);
+    final tracking = _firstMarketingTracking(json);
+    final captions = _stringList(pack['captions']);
+    final hashtags = _stringList(pack['hashtags']);
+    final lines = <String>[];
+
+    if (captions.isNotEmpty) {
+      lines.add(captions.first);
+    } else if (_productTitle(product).isNotEmpty) {
+      lines.add(_productTitle(product));
+    }
+
+    if (hashtags.isNotEmpty) {
+      lines.add('');
+      lines.add(hashtags.join(' '));
+    }
+
+    final trackingUrl = (tracking['trackingUrl'] ?? '').toString().trim();
+    if (trackingUrl.isNotEmpty) {
+      lines.add('');
+      lines.add('링크: $trackingUrl');
+    }
+
+    return lines.join('\n').trim();
+  }
+
+  String _instagramChecklistText(
+    Map<String, dynamic> product,
+    Map<String, dynamic> json,
+  ) {
+    final pack = _firstMarketingPack(json);
+    final hooks = _stringList(pack['hooks']);
+    final tracking = _firstMarketingTracking(json);
+    final trackingUrl = (tracking['trackingUrl'] ?? '').toString().trim();
+
+    final lines = <String>[
+      '1. 인스타 본문 복사 버튼으로 캡션/해시태그를 복사합니다.',
+      '2. 아래 사진 미리보기에서 메인 1장 + 상세 2~4장을 고릅니다.',
+      if (hooks.isNotEmpty) '3. 첫 2초 자막은 "${hooks.first}" 로 시작합니다.',
+      if (trackingUrl.isNotEmpty) '4. 본문 또는 프로필 링크에 $trackingUrl 를 반영합니다.',
+      '5. 영상 업로드 후 클릭 수를 확인합니다.',
+    ];
+    return lines.join('\n');
+  }
+
+  Widget _buildOneShotSection(
+    BuildContext context, {
+    required IconData icon,
+    required String title,
+    required String subtitle,
+    required Widget child,
+  }) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: Theme.of(context).colorScheme.outline.withValues(alpha: 0.2),
+        ),
+        color: Theme.of(context)
+            .colorScheme
+            .surfaceContainerHighest
+            .withValues(alpha: 0.28),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(
+                icon,
+                size: 18,
+                color: Theme.of(context).colorScheme.primary,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: const TextStyle(fontWeight: FontWeight.w800),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      subtitle,
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Theme.of(context)
+                            .colorScheme
+                            .onSurface
+                            .withValues(alpha: 0.68),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          child,
+        ],
+      ),
+    );
+  }
+
   String _buildMarketingOneShotBundle(
     Map<String, dynamic> product,
     Map<String, dynamic> json,
   ) {
-    final rows = (json['items'] as List?) ?? const [];
-    final row = rows.isNotEmpty && rows.first is Map
-        ? (rows.first as Map).cast<String, dynamic>()
-        : const <String, dynamic>{};
+    final row = _firstMarketingRow(json);
     final item = (row['item'] as Map?)?.cast<String, dynamic>() ??
         const <String, dynamic>{};
-    final tracking = (row['tracking'] as Map?)?.cast<String, dynamic>() ??
-        const <String, dynamic>{};
-    final pack = (row['pack'] as Map?)?.cast<String, dynamic>() ??
-        const <String, dynamic>{};
-    final hooks = ((pack['hooks'] as List?) ?? const [])
-        .map((e) => e.toString().trim())
-        .where((e) => e.isNotEmpty)
-        .toList();
+    final tracking = _firstMarketingTracking(json);
+    final pack = _firstMarketingPack(json);
+    final hooks = _stringList(pack['hooks']);
     final storyboards = (pack['storyboards'] as List?) ?? const [];
     final firstStoryboard = storyboards.isNotEmpty && storyboards.first is List
         ? (storyboards.first as List)
@@ -404,18 +536,9 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
             .where((e) => e.isNotEmpty)
             .toList()
         : const <String>[];
-    final captions = ((pack['captions'] as List?) ?? const [])
-        .map((e) => e.toString().trim())
-        .where((e) => e.isNotEmpty)
-        .toList();
-    final hashtags = ((pack['hashtags'] as List?) ?? const [])
-        .map((e) => e.toString().trim())
-        .where((e) => e.isNotEmpty)
-        .toList();
-    final thumbnailTexts = ((pack['thumbnailTexts'] as List?) ?? const [])
-        .map((e) => e.toString().trim())
-        .where((e) => e.isNotEmpty)
-        .toList();
+    final captions = _stringList(pack['captions']);
+    final hashtags = _stringList(pack['hashtags']);
+    final thumbnailTexts = _stringList(pack['thumbnailTexts']);
     final prompts = _grokPromptsText(json);
     final images = _marketingImagesOf(product);
     final trackingUrl = (tracking['trackingUrl'] ?? '').toString().trim();
@@ -494,35 +617,36 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
     Map<String, dynamic> product,
     Map<String, dynamic> json,
   ) async {
-    final rows = (json['items'] as List?) ?? const [];
-    final row = rows.isNotEmpty && rows.first is Map
-        ? (rows.first as Map).cast<String, dynamic>()
-        : const <String, dynamic>{};
-    final tracking = (row['tracking'] as Map?)?.cast<String, dynamic>() ??
+    final row = _firstMarketingRow(json);
+    final item = (row['item'] as Map?)?.cast<String, dynamic>() ??
         const <String, dynamic>{};
-    final pack = (row['pack'] as Map?)?.cast<String, dynamic>() ??
-        const <String, dynamic>{};
+    final tracking = _firstMarketingTracking(json);
+    final pack = _firstMarketingPack(json);
     final images = _marketingImagesOf(product);
     final bundleText = _buildMarketingOneShotBundle(product, json);
-    final prompts = _grokPromptsText(json);
+    final prompts = _grokPromptsText(json).trim();
+    final promptList = _stringList(pack['grokVideoPrompts']);
     final trackingUrl = (tracking['trackingUrl'] ?? '').toString().trim();
-    final hashtags = ((pack['hashtags'] as List?) ?? const [])
-        .map((e) => e.toString().trim())
-        .where((e) => e.isNotEmpty)
-        .join(' ');
-    final captions = ((pack['captions'] as List?) ?? const [])
-        .map((e) => e.toString().trim())
-        .where((e) => e.isNotEmpty)
-        .toList();
-    final previewText = bundleText.length > 14000
-        ? '${bundleText.substring(0, 14000)}\n\n... (생략)'
-        : bundleText;
+    final targetUrl = (item['targetUrl'] ?? _resolveMarketingTargetUrl(product))
+        .toString()
+        .trim();
+    final sourceUrl = _productSourceUrl(product);
+    final hooks = _stringList(pack['hooks']);
+    final captions = _stringList(pack['captions']);
+    final hashtags = _stringList(pack['hashtags']);
+    final thumbnailTexts = _stringList(pack['thumbnailTexts']);
+    final instagramCaption = _instagramCaptionText(product, json);
+    final instagramChecklist = _instagramChecklistText(product, json);
+    final primaryPrompt = promptList.isNotEmpty ? promptList.first : prompts;
+    final promptPreview = primaryPrompt.length > 3000
+        ? '${primaryPrompt.substring(0, 3000)}\n\n... (생략)'
+        : primaryPrompt;
 
     if (!mounted) return;
     await showDialog<void>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('마케팅 원샷'),
+        title: const Text('인스타/Grok 원샷'),
         content: SizedBox(
           width: 780,
           child: SingleChildScrollView(
@@ -531,7 +655,7 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  '상품 카드에서 바로 추적 링크, 사진 URL, 업로드 문안, Grok 프롬프트를 한 번에 꺼낸 결과입니다.',
+                  '인스타에는 본문만 복사하고, Grok에는 프롬프트만 넣고, 사진 선택 후 업로드만 하면 되도록 나눴습니다.',
                   style: TextStyle(
                     fontSize: 12,
                     color: Theme.of(context)
@@ -540,82 +664,359 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
                         .withValues(alpha: 0.72),
                   ),
                 ),
-                if (images.isNotEmpty) ...[
-                  const SizedBox(height: 10),
-                  SizedBox(
-                    height: 78,
-                    child: ListView.separated(
-                      scrollDirection: Axis.horizontal,
-                      itemCount: images.length > 8 ? 8 : images.length,
-                      separatorBuilder: (_, __) => const SizedBox(width: 8),
-                      itemBuilder: (ctx, i) {
-                        final imageUrl = images[i];
-                        return InkWell(
-                          onTap: () => _openExternalUrl(imageUrl),
-                          borderRadius: BorderRadius.circular(10),
-                          child: ClipRRect(
-                            borderRadius: BorderRadius.circular(10),
-                            child: Image.network(
-                              widget.api.proxyImageUrl(imageUrl),
-                              width: 78,
-                              height: 78,
-                              fit: BoxFit.cover,
-                              errorBuilder: (_, __, ___) => Container(
-                                width: 78,
-                                height: 78,
-                                color: Theme.of(context)
-                                    .colorScheme
-                                    .surfaceContainerHighest,
-                                child: Icon(
-                                  Icons.broken_image_outlined,
-                                  color: Theme.of(context)
-                                      .colorScheme
-                                      .onSurface
-                                      .withValues(alpha: 0.5),
+                const SizedBox(height: 12),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    FilledButton.icon(
+                      onPressed: instagramCaption.isEmpty
+                          ? null
+                          : () async {
+                              await _copyText(
+                                instagramCaption,
+                                '인스타 본문을 복사했어요.',
+                              );
+                            },
+                      icon: const Icon(Icons.copy_all_outlined, size: 18),
+                      label: const Text('인스타 본문 복사'),
+                    ),
+                    FilledButton.tonalIcon(
+                      onPressed: primaryPrompt.trim().isEmpty
+                          ? null
+                          : () async {
+                              await _copyText(
+                                primaryPrompt,
+                                'Grok 프롬프트를 복사했어요.',
+                              );
+                            },
+                      icon: const Icon(Icons.movie_creation_outlined, size: 18),
+                      label: const Text('Grok 프롬프트 복사'),
+                    ),
+                    if (trackingUrl.isNotEmpty)
+                      OutlinedButton.icon(
+                        onPressed: () async {
+                          await _copyText(trackingUrl, '추적 링크를 복사했어요.');
+                        },
+                        icon: const Icon(Icons.link, size: 18),
+                        label: const Text('추적 링크 복사'),
+                      ),
+                    if (images.isNotEmpty)
+                      OutlinedButton.icon(
+                        onPressed: () async {
+                          await _copyText(
+                              images.join('\n'), '사진 URL 목록을 복사했어요.');
+                        },
+                        icon:
+                            const Icon(Icons.photo_library_outlined, size: 18),
+                        label: const Text('사진 URL 복사'),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                _buildOneShotSection(
+                  context,
+                  icon: Icons.campaign_outlined,
+                  title: '1. 인스타 업로드',
+                  subtitle: '본문/링크/썸네일 문구를 복사해서 인스타에 바로 붙여 넣는 단계입니다.',
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      if (_productTitle(product).isNotEmpty)
+                        CopyableSingleLineRow(
+                          k: '상품명',
+                          value: _productTitle(product),
+                        ),
+                      if (trackingUrl.isNotEmpty)
+                        CopyableSingleLineRow(k: '추적 링크', value: trackingUrl),
+                      if (targetUrl.isNotEmpty)
+                        CopyableSingleLineRow(k: '상품 URL', value: targetUrl),
+                      if (sourceUrl.isNotEmpty)
+                        CopyableSingleLineRow(k: '원본 URL', value: sourceUrl),
+                      const SizedBox(height: 8),
+                      if (hooks.isNotEmpty) ...[
+                        Text(
+                          '추천 첫 문구',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w800,
+                            color: Theme.of(context).colorScheme.onSurface,
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        SelectableText(
+                          hooks.first,
+                          style: const TextStyle(fontSize: 12, height: 1.4),
+                        ),
+                        const SizedBox(height: 8),
+                      ],
+                      Text(
+                        '인스타 본문',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w800,
+                          color: Theme.of(context).colorScheme.onSurface,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      SelectableText(
+                        instagramCaption.isEmpty
+                            ? '생성된 본문이 없습니다.'
+                            : instagramCaption,
+                        style: const TextStyle(fontSize: 12, height: 1.45),
+                      ),
+                      if (thumbnailTexts.isNotEmpty) ...[
+                        const SizedBox(height: 10),
+                        Text(
+                          '썸네일 문구',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w800,
+                            color: Theme.of(context).colorScheme.onSurface,
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        SelectableText(
+                          thumbnailTexts.join('\n'),
+                          style: const TextStyle(fontSize: 12, height: 1.4),
+                        ),
+                      ],
+                      const SizedBox(height: 10),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          OutlinedButton.icon(
+                            onPressed: instagramCaption.isEmpty
+                                ? null
+                                : () async {
+                                    await _copyText(
+                                      instagramCaption,
+                                      '인스타 본문을 복사했어요.',
+                                    );
+                                  },
+                            icon: const Icon(Icons.copy_outlined, size: 18),
+                            label: const Text('본문 복사'),
+                          ),
+                          if (thumbnailTexts.isNotEmpty)
+                            OutlinedButton.icon(
+                              onPressed: () async {
+                                await _copyText(
+                                  thumbnailTexts.join('\n'),
+                                  '썸네일 문구를 복사했어요.',
+                                );
+                              },
+                              icon: const Icon(Icons.title_outlined, size: 18),
+                              label: const Text('썸네일 문구 복사'),
+                            ),
+                          if (trackingUrl.isNotEmpty)
+                            OutlinedButton.icon(
+                              onPressed: () async {
+                                await _copyText(trackingUrl, '추적 링크를 복사했어요.');
+                              },
+                              icon: const Icon(Icons.link, size: 18),
+                              label: const Text('링크 복사'),
+                            ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 12),
+                _buildOneShotSection(
+                  context,
+                  icon: Icons.movie_creation_outlined,
+                  title: '2. Grok 영상 생성',
+                  subtitle: '아래 프롬프트를 Grok에 넣고 영상만 받아오면 됩니다.',
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '추천 프롬프트',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w800,
+                          color: Theme.of(context).colorScheme.onSurface,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      SelectableText(
+                        promptPreview.isEmpty
+                            ? '생성된 프롬프트가 없습니다.'
+                            : promptPreview,
+                        style: const TextStyle(fontSize: 12, height: 1.45),
+                      ),
+                      const SizedBox(height: 10),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          OutlinedButton.icon(
+                            onPressed: primaryPrompt.trim().isEmpty
+                                ? null
+                                : () async {
+                                    await _copyText(
+                                      primaryPrompt,
+                                      'Grok 프롬프트를 복사했어요.',
+                                    );
+                                  },
+                            icon: const Icon(Icons.copy_outlined, size: 18),
+                            label: const Text('대표 프롬프트 복사'),
+                          ),
+                          if (prompts.isNotEmpty && prompts != primaryPrompt)
+                            OutlinedButton.icon(
+                              onPressed: () async {
+                                await _copyText(
+                                  prompts,
+                                  '전체 Grok 프롬프트를 복사했어요.',
+                                );
+                              },
+                              icon:
+                                  const Icon(Icons.copy_all_outlined, size: 18),
+                              label: const Text('전체 프롬프트 복사'),
+                            ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 12),
+                _buildOneShotSection(
+                  context,
+                  icon: Icons.inventory_2_outlined,
+                  title: '3. 업로드 재료',
+                  subtitle: '사진 선택과 최종 업로드 전 확인 단계입니다.',
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '업로드 순서',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w800,
+                          color: Theme.of(context).colorScheme.onSurface,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      SelectableText(
+                        instagramChecklist,
+                        style: const TextStyle(fontSize: 12, height: 1.45),
+                      ),
+                      if (images.isNotEmpty) ...[
+                        const SizedBox(height: 10),
+                        Text(
+                          '사진 미리보기',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w800,
+                            color: Theme.of(context).colorScheme.onSurface,
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        SizedBox(
+                          height: 78,
+                          child: ListView.separated(
+                            scrollDirection: Axis.horizontal,
+                            itemCount: images.length > 8 ? 8 : images.length,
+                            separatorBuilder: (_, __) =>
+                                const SizedBox(width: 8),
+                            itemBuilder: (ctx, i) {
+                              final imageUrl = images[i];
+                              return InkWell(
+                                onTap: () => _openExternalUrl(imageUrl),
+                                borderRadius: BorderRadius.circular(10),
+                                child: ClipRRect(
+                                  borderRadius: BorderRadius.circular(10),
+                                  child: Image.network(
+                                    widget.api.proxyImageUrl(imageUrl),
+                                    width: 78,
+                                    height: 78,
+                                    fit: BoxFit.cover,
+                                    errorBuilder: (_, __, ___) => Container(
+                                      width: 78,
+                                      height: 78,
+                                      color: Theme.of(context)
+                                          .colorScheme
+                                          .surfaceContainerHighest,
+                                      child: Icon(
+                                        Icons.broken_image_outlined,
+                                        color: Theme.of(context)
+                                            .colorScheme
+                                            .onSurface
+                                            .withValues(alpha: 0.5),
+                                      ),
+                                    ),
+                                  ),
                                 ),
-                              ),
+                              );
+                            },
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        OutlinedButton.icon(
+                          onPressed: () async {
+                            await _copyText(
+                                images.join('\n'), '사진 URL 목록을 복사했어요.');
+                          },
+                          icon: const Icon(Icons.photo_library_outlined,
+                              size: 18),
+                          label: const Text('사진 URL 복사'),
+                        ),
+                      ],
+                      const SizedBox(height: 10),
+                      TextButton.icon(
+                        onPressed: () async {
+                          await _copyText(bundleText, '전체 원샷 내용을 복사했어요.');
+                        },
+                        icon: const Icon(Icons.copy_all_outlined, size: 18),
+                        label: const Text('전체 원샷 복사'),
+                      ),
+                    ],
+                  ),
+                ),
+                if (captions.isNotEmpty || hashtags.isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  _buildOneShotSection(
+                    context,
+                    icon: Icons.receipt_long_outlined,
+                    title: '참고 자료',
+                    subtitle: '필요할 때만 확인하는 보조 정보입니다.',
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        if (captions.isNotEmpty) ...[
+                          Text(
+                            '대표 캡션 원문',
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w800,
+                              color: Theme.of(context).colorScheme.onSurface,
                             ),
                           ),
-                        );
-                      },
+                          const SizedBox(height: 6),
+                          SelectableText(
+                            captions.first,
+                            style: const TextStyle(fontSize: 12, height: 1.4),
+                          ),
+                        ],
+                        if (hashtags.isNotEmpty) ...[
+                          const SizedBox(height: 10),
+                          Text(
+                            '해시태그',
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w800,
+                              color: Theme.of(context).colorScheme.onSurface,
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          SelectableText(
+                            hashtags.join(' '),
+                            style: const TextStyle(fontSize: 12, height: 1.4),
+                          ),
+                        ],
+                      ],
                     ),
-                  ),
-                ],
-                const SizedBox(height: 12),
-                SelectableText(
-                  previewText,
-                  style: const TextStyle(fontSize: 12, height: 1.45),
-                ),
-                if (captions.isNotEmpty) ...[
-                  const SizedBox(height: 12),
-                  Text(
-                    '대표 캡션',
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w800,
-                      color: Theme.of(context).colorScheme.onSurface,
-                    ),
-                  ),
-                  const SizedBox(height: 6),
-                  SelectableText(
-                    captions.first,
-                    style: const TextStyle(fontSize: 12, height: 1.4),
-                  ),
-                ],
-                if (hashtags.isNotEmpty) ...[
-                  const SizedBox(height: 12),
-                  Text(
-                    '해시태그',
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w800,
-                      color: Theme.of(context).colorScheme.onSurface,
-                    ),
-                  ),
-                  const SizedBox(height: 6),
-                  SelectableText(
-                    hashtags,
-                    style: const TextStyle(fontSize: 12, height: 1.4),
                   ),
                 ],
               ],
@@ -623,33 +1024,9 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
           ),
         ),
         actions: [
-          if (trackingUrl.isNotEmpty)
-            TextButton.icon(
-              onPressed: () async {
-                await _copyText(trackingUrl, '추적 링크를 복사했어요.');
-              },
-              icon: const Icon(Icons.link, size: 18),
-              label: const Text('링크 복사'),
-            ),
-          if (images.isNotEmpty)
-            TextButton.icon(
-              onPressed: () async {
-                await _copyText(images.join('\n'), '사진 URL 목록을 복사했어요.');
-              },
-              icon: const Icon(Icons.photo_library_outlined, size: 18),
-              label: const Text('사진 URL 복사'),
-            ),
-          if (prompts.trim().isNotEmpty)
-            TextButton.icon(
-              onPressed: () async {
-                await _copyText(prompts, 'Grok 프롬프트를 복사했어요.');
-              },
-              icon: const Icon(Icons.movie_creation_outlined, size: 18),
-              label: const Text('프롬프트 복사'),
-            ),
           TextButton.icon(
             onPressed: () async {
-              await _copyText(bundleText, '마케팅 원샷 내용을 복사했어요.');
+              await _copyText(bundleText, '전체 원샷 내용을 복사했어요.');
             },
             icon: const Icon(Icons.copy_all_outlined, size: 18),
             label: const Text('원샷 복사'),
@@ -1059,7 +1436,7 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
                                         )
                                       : const Icon(Icons.bolt_outlined,
                                           size: 18),
-                                  label: const Text('마케팅 원샷'),
+                                  label: const Text('인스타/Grok 원샷'),
                                 ),
                               ],
                             ),
