@@ -98,6 +98,18 @@ const UPLOAD_HISTORY_PATH = path.join(DATA_DIR, "upload_history.json");
 const UPLOAD_HISTORY_LIMIT = 200;
 const ECON_AUTH_PATH = path.join(DATA_DIR, 'econ_auth.json');
 const ECON_PROGRESS_PATH = path.join(DATA_DIR, 'econ_progress.json');
+const INSTAGRAM_UPLOADS_DIR = path.join(DATA_DIR, "instagram_uploads");
+
+fs.mkdirSync(INSTAGRAM_UPLOADS_DIR, { recursive: true });
+
+app.use(
+  "/instagram_uploads",
+  express.static(INSTAGRAM_UPLOADS_DIR, {
+    setHeaders(res) {
+      res.setHeader("Cache-Control", "public, max-age=3600");
+    },
+  }),
+);
 
 function isHttpUrl(u) {
   try {
@@ -120,6 +132,10 @@ function uniqueStrings(values = []) {
         .filter(Boolean),
     ),
   );
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, Math.max(0, Number(ms) || 0)));
 }
 
 async function enrichPreviewForClient(previewRaw, settings = {}) {
@@ -4815,6 +4831,208 @@ async function instagramGraphGet(pathname, { accessToken, params = {} } = {}) {
   }
   return parsed && typeof parsed === "object" ? parsed : {};
 }
+
+async function instagramGraphPost(pathname, { accessToken, params = {} } = {}) {
+  const token = String(accessToken || "").trim();
+  if (!token) throw new Error("instagram_access_token_missing");
+  const pathPart = String(pathname || "").replace(/^\/+/, "").trim();
+  if (!pathPart) throw new Error("instagram_path_missing");
+
+  const u = new URL(`https://graph.facebook.com/${INSTAGRAM_GRAPH_VERSION}/${pathPart}`);
+  const body = new URLSearchParams();
+  body.set("access_token", token);
+  for (const [k, v] of Object.entries(params || {})) {
+    if (v == null) continue;
+    const value = typeof v === "boolean" ? (v ? "true" : "false") : String(v).trim();
+    if (!value) continue;
+    body.set(k, value);
+  }
+
+  const r = await fetch(u.toString(), {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
+    body,
+  });
+  const raw = await r.text();
+  const parsed = safeJsonParse(raw, null);
+  const graphError = parsed && typeof parsed === "object" ? parsed.error : null;
+  if (!r.ok || graphError) {
+    const msg = String(graphError?.message || raw || `instagram_graph_http_${r.status}`).trim();
+    const err = new Error(msg || "instagram_graph_error");
+    err.status = r.status;
+    err.body = parsed || raw;
+    throw err;
+  }
+  return parsed && typeof parsed === "object" ? parsed : {};
+}
+
+function sanitizeUploadedFileName(raw, fallbackExt = ".mp4") {
+  const base = String(raw || "")
+    .replace(/[^\w.\-]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 120);
+  const ext = path.extname(base || "").toLowerCase();
+  const safeExt = ext || fallbackExt;
+  const stem = (base ? base.slice(0, safeExt ? -safeExt.length : undefined) : "")
+    .replace(/[^\w.\-]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 80) || "reel";
+  return `${stem}${safeExt}`;
+}
+
+function inferVideoExt(rawName = "", contentType = "") {
+  const ext = path.extname(String(rawName || "").trim()).toLowerCase();
+  if (ext === ".mp4" || ext === ".mov" || ext === ".m4v") return ext;
+  const type = String(contentType || "").toLowerCase();
+  if (type.includes("quicktime")) return ".mov";
+  if (type.includes("mp4")) return ".mp4";
+  return ".mp4";
+}
+
+async function waitForInstagramMediaReady(creationId, { accessToken, timeoutMs = 180000, pollMs = 3000 } = {}) {
+  const id = String(creationId || "").trim();
+  if (!id) throw new Error("instagram_creation_id_missing");
+  const deadline = Date.now() + Math.max(15000, Number(timeoutMs) || 180000);
+  let last = {};
+  while (Date.now() < deadline) {
+    last = await instagramGraphGet(id, {
+      accessToken,
+      params: {
+        fields: "id,status,status_code,error_message",
+      },
+    });
+    const statusCode = String(last?.status_code || last?.status || "").trim().toUpperCase();
+    if (statusCode === "FINISHED" || statusCode === "PUBLISHED") {
+      return last;
+    }
+    if (statusCode === "ERROR" || statusCode === "FAILED" || statusCode === "EXPIRED") {
+      const msg = String(last?.error_message || last?.status || last?.status_code || "instagram_media_failed").trim();
+      const err = new Error(msg || "instagram_media_failed");
+      err.body = last;
+      throw err;
+    }
+    await sleep(pollMs);
+  }
+  const err = new Error("instagram_media_timeout");
+  err.body = last;
+  throw err;
+}
+
+app.post(
+  "/api/instagram/reels/upload",
+  authRequired,
+  express.raw({ type: ["video/*", "application/octet-stream"], limit: "120mb" }),
+  async (req, res) => {
+    try {
+      const rawBody = Buffer.isBuffer(req.body) ? req.body : Buffer.from(req.body || []);
+      if (!rawBody || rawBody.length === 0) {
+        return res.status(400).json({ ok: false, error: "empty_file" });
+      }
+      const rawFilename = String(req.query?.filename || req.headers["x-filename"] || "").trim();
+      const contentType = String(req.headers["content-type"] || "video/mp4").trim() || "video/mp4";
+      const ext = inferVideoExt(rawFilename, contentType);
+      const safeName = sanitizeUploadedFileName(rawFilename, ext);
+      const stamp = new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14);
+      const random = crypto.randomBytes(4).toString("hex");
+      const fileName = `${stamp}_${random}_${safeName}`;
+      const absPath = path.join(INSTAGRAM_UPLOADS_DIR, fileName);
+      fs.writeFileSync(absPath, rawBody);
+
+      const base = getRequestBaseUrl(req);
+      const publicPath = `/instagram_uploads/${encodeURIComponent(fileName)}`;
+      return res.json({
+        ok: true,
+        file: {
+          fileName,
+          contentType,
+          sizeBytes: rawBody.length,
+          publicPath,
+          publicUrl: base ? `${base}${publicPath}` : publicPath,
+        },
+      });
+    } catch (e) {
+      return res.status(500).json({ ok: false, error: String(e?.message || e) });
+    }
+  },
+);
+
+app.post("/api/instagram/reels/publish", authRequired, async (req, res) => {
+  try {
+    const settings = req.user?.settings || {};
+    const igUserId = String(settings.instagramIgUserId || "").trim();
+    const accessToken = String(settings.instagramAccessToken || "").trim();
+    if (!igUserId || !accessToken) {
+      return res.status(400).json({ ok: false, error: "instagram_not_configured" });
+    }
+
+    const videoUrl = String(req.body?.videoUrl || "").trim();
+    const caption = String(req.body?.caption || "").trim();
+    const shareToFeed = parseBooleanFlag(req.body?.shareToFeed, true);
+    const thumbOffset = req.body?.thumbOffset == null ? null : Number(req.body?.thumbOffset);
+
+    if (!isHttpUrl(videoUrl)) {
+      return res.status(400).json({ ok: false, error: "invalid_video_url" });
+    }
+
+    const creation = await instagramGraphPost(`${igUserId}/media`, {
+      accessToken,
+      params: {
+        media_type: "REELS",
+        video_url: videoUrl,
+        caption,
+        share_to_feed: shareToFeed,
+        ...(Number.isFinite(thumbOffset) ? { thumb_offset: String(Math.max(0, Math.round(thumbOffset))) } : {}),
+      },
+    });
+    const creationId = String(creation?.id || "").trim();
+    if (!creationId) {
+      return res.status(500).json({ ok: false, error: "instagram_creation_id_missing", creation });
+    }
+
+    const ready = await waitForInstagramMediaReady(creationId, {
+      accessToken,
+      timeoutMs: Number(req.body?.timeoutMs || 180000),
+      pollMs: Number(req.body?.pollMs || 3000),
+    });
+
+    const published = await instagramGraphPost(`${igUserId}/media_publish`, {
+      accessToken,
+      params: {
+        creation_id: creationId,
+      },
+    });
+    const mediaId = String(published?.id || "").trim();
+
+    let media = {};
+    if (mediaId) {
+      try {
+        media = await instagramGraphGet(mediaId, {
+          accessToken,
+          params: {
+            fields: "id,media_product_type,media_type,permalink,shortcode,timestamp",
+          },
+        });
+      } catch (_) {}
+    }
+
+    return res.json({
+      ok: true,
+      graphVersion: INSTAGRAM_GRAPH_VERSION,
+      creationId,
+      mediaId,
+      ready,
+      media,
+    });
+  } catch (e) {
+    return res.status(500).json({
+      ok: false,
+      error: String(e?.message || e),
+      details: e?.body || null,
+    });
+  }
+});
 
 app.post("/api/marketing/links", authRequired, async (req, res) => {
   try {

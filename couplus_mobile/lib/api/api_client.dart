@@ -326,6 +326,51 @@ class ApiClient {
     return json;
   }
 
+  Future<Map<String, dynamic>> postBytesJson(
+    String path,
+    List<int> bytes, {
+    Map<String, String>? query,
+    String contentType = 'application/octet-stream',
+    Map<String, String>? extraHeaders,
+  }) async {
+    await init();
+    final headers = _headers(
+      extra: <String, String>{
+        'Content-Type': contentType,
+        if (extraHeaders != null) ...extraHeaders,
+      },
+    );
+    final res = await _requestWithFallback(
+      method: 'POST',
+      path: path,
+      query: query,
+      headers: headers,
+      body: bytes,
+    );
+
+    final raw = res.body;
+    Map<String, dynamic> json;
+    try {
+      json = jsonDecode(raw) as Map<String, dynamic>;
+    } catch (_) {
+      throw ApiException(
+        statusCode: res.statusCode,
+        message: 'Invalid JSON',
+        details: raw,
+      );
+    }
+
+    if (res.statusCode >= 400) {
+      throw ApiException(
+        statusCode: res.statusCode,
+        message: (json['error'] ?? 'request_failed').toString(),
+        details: raw,
+      );
+    }
+
+    return json;
+  }
+
   Future<Map<String, dynamic>> deleteJson(String path) async {
     await init();
     final res = await _requestWithFallback(

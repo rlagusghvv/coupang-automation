@@ -2,6 +2,7 @@ import 'package:couplus_mobile/api/api_client.dart';
 import 'package:couplus_mobile/screens/product_detail_screen.dart';
 import 'package:couplus_mobile/ui/widgets.dart';
 import 'package:couplus_mobile/utils/file_download.dart';
+import 'package:couplus_mobile/utils/video_file_pick.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -359,6 +360,128 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text('열기 실패: $rawUrl')),
     );
+  }
+
+  Future<void> _autoPublishInstagramReel(
+    Map<String, dynamic> product,
+    Map<String, dynamic> json,
+  ) async {
+    if (!supportsVideoFilePick) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('현재 환경에서는 영상 파일 선택 업로드를 지원하지 않습니다.')),
+      );
+      return;
+    }
+
+    final caption = _instagramCaptionText(product, json).trim();
+    if (caption.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('업로드 문안이 없어 자동 업로드를 진행할 수 없습니다.')),
+      );
+      return;
+    }
+
+    PickedVideoFile? picked;
+    try {
+      picked = await pickVideoFile();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('영상 파일 읽기 실패: $e')),
+      );
+      return;
+    }
+    if (picked == null) return;
+
+    final productId = (product['id'] ?? '').toString().trim();
+    if (mounted) {
+      setState(() {
+        _marketingBusy = true;
+        _marketingBusyId = productId;
+      });
+    }
+
+    try {
+      final uploadJson = await widget.api.postBytesJson(
+        '/api/instagram/reels/upload',
+        picked.bytes,
+        query: {'filename': picked.name},
+        contentType: picked.mimeType.trim().isEmpty
+            ? 'video/mp4'
+            : picked.mimeType.trim(),
+        extraHeaders: {'X-Filename': picked.name},
+      );
+      final file = (uploadJson['file'] as Map?)?.cast<String, dynamic>() ??
+          const <String, dynamic>{};
+      final videoUrl = (file['publicUrl'] ?? '').toString().trim();
+      if (videoUrl.isEmpty) {
+        throw StateError('instagram_upload_url_missing');
+      }
+
+      final publishJson = await widget.api.postJson(
+        '/api/instagram/reels/publish',
+        {
+          'videoUrl': videoUrl,
+          'caption': caption,
+          'shareToFeed': true,
+        },
+      );
+      final media = (publishJson['media'] as Map?)?.cast<String, dynamic>() ??
+          const <String, dynamic>{};
+      final permalink = (media['permalink'] ?? '').toString().trim();
+
+      if (!mounted) return;
+      await showDialog<void>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('인스타 자동 업로드 완료'),
+          content: SizedBox(
+            width: 520,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                CopyableSingleLineRow(
+                  k: '업로드 영상',
+                  value: (picked?.name ?? '').trim().isEmpty
+                      ? '선택한 mp4'
+                      : picked!.name,
+                ),
+                CopyableSingleLineRow(k: '공개 URL', value: videoUrl),
+                if (permalink.isNotEmpty)
+                  CopyableSingleLineRow(k: '인스타 링크', value: permalink),
+              ],
+            ),
+          ),
+          actions: [
+            if (permalink.isNotEmpty)
+              TextButton.icon(
+                onPressed: () => _openExternalUrl(permalink),
+                icon: const Icon(Icons.open_in_new_outlined, size: 18),
+                label: const Text('게시물 열기'),
+              ),
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: const Text('닫기'),
+            ),
+          ],
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('인스타 자동 업로드 실패: $e')),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _marketingBusy = false;
+          _marketingBusyId = null;
+        });
+      }
+    }
   }
 
   String _downloadBaseName(Map<String, dynamic> product) {
@@ -904,6 +1027,13 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
                         icon: const Icon(Icons.reply_outlined, size: 18),
                         label: const Text('3. 댓글 답글 복사'),
                       ),
+                    FilledButton.icon(
+                      onPressed: !supportsVideoFilePick || _marketingBusy
+                          ? null
+                          : () => _autoPublishInstagramReel(product, json),
+                      icon: const Icon(Icons.publish_outlined, size: 18),
+                      label: const Text('4. 자동 업로드'),
+                    ),
                     if (bgmGuideText.isNotEmpty)
                       OutlinedButton.icon(
                         onPressed: () async {

@@ -53,6 +53,27 @@ async function requestJson(baseUrl, route, {
   return { response, json };
 }
 
+async function requestBytes(baseUrl, route, {
+  method = "POST",
+  cookie = "",
+  body,
+  headers = {},
+} = {}) {
+  const response = await fetch(`${baseUrl}${route}`, {
+    method,
+    headers: {
+      Accept: "application/json",
+      ...(cookie ? { Cookie: cookie } : {}),
+      ...headers,
+    },
+    body,
+    redirect: "manual",
+  });
+  const text = await response.text();
+  const json = text ? JSON.parse(text) : {};
+  return { response, json };
+}
+
 async function waitForServer(baseUrl, child, logBufferRef) {
   for (let i = 0; i < 100; i += 1) {
     if (child.exitCode !== null) {
@@ -147,6 +168,49 @@ async function main() {
     assert.equal(igStatus.json.ok, true, "instagram status should be ok=true");
     assert.equal(igStatus.json.connected, false, "instagram status should stay disconnected without settings");
     assert.equal(igStatus.json.reason, "missing_settings", "instagram status should explain missing settings");
+
+    const uploadBytes = Buffer.from("couplephant-instagram-smoke-video");
+    const upload = await requestBytes(baseUrl, "/api/instagram/reels/upload?filename=smoke_reel.mp4", {
+      method: "POST",
+      cookie,
+      body: uploadBytes,
+      headers: {
+        "content-type": "video/mp4",
+        "x-filename": "smoke_reel.mp4",
+      },
+    });
+    assert.equal(upload.response.status, 200, `instagram upload failed: ${JSON.stringify(upload.json)}`);
+    assert.equal(upload.json.ok, true, "instagram upload should return ok=true");
+    const uploadedFile = upload.json.file || {};
+    assertNonEmptyString(uploadedFile.fileName, "instagram upload file name");
+    assert.ok(String(uploadedFile.publicPath || "").startsWith("/instagram_uploads/"), "instagram upload should expose publicPath");
+    assert.ok(String(uploadedFile.publicUrl || "").startsWith(baseUrl), "instagram upload should expose absolute publicUrl");
+    assert.equal(Number(uploadedFile.sizeBytes || 0), uploadBytes.length, "instagram upload should preserve file size");
+
+    const uploadedPublic = await fetch(uploadedFile.publicUrl);
+    assert.equal(uploadedPublic.status, 200, "uploaded video should be publicly reachable");
+    const uploadedRoundTrip = Buffer.from(await uploadedPublic.arrayBuffer());
+    assert.equal(uploadedRoundTrip.equals(uploadBytes), true, "uploaded video bytes should round-trip");
+
+    const publishWithoutSettings = await requestJson(baseUrl, "/api/instagram/reels/publish", {
+      method: "POST",
+      cookie,
+      body: {
+        videoUrl: uploadedFile.publicUrl,
+        caption: "smoke caption",
+        shareToFeed: true,
+      },
+    });
+    assert.equal(
+      publishWithoutSettings.response.status,
+      400,
+      `publish without settings should fail cleanly: ${JSON.stringify(publishWithoutSettings.json)}`,
+    );
+    assert.equal(
+      publishWithoutSettings.json.error,
+      "instagram_not_configured",
+      "publish without settings should explain missing instagram configuration",
+    );
 
     const targetUrl = "https://example.com/products/smoke-instagram";
     const linkCreate = await requestJson(baseUrl, "/api/marketing/links", {
@@ -254,6 +318,11 @@ async function main() {
       instagramStatus: {
         connected: igStatus.json.connected,
         reason: igStatus.json.reason,
+      },
+      instagramUpload: {
+        fileName: uploadedFile.fileName,
+        publicPath: uploadedFile.publicPath,
+        publishWithoutSettings: publishWithoutSettings.json.error,
       },
       marketing: {
         slug: link.slug,
