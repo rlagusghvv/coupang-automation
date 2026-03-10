@@ -4720,6 +4720,27 @@ function buildReelsPack({
   const dmReplyTemplate = landingUrl
     ? `${shortTitle || keyword || "추천 상품"}\n요청하신 링크 보내드려요 👇\n${landingUrl}\n필요한 정보 더 있으면 편하게 답장 주세요.`
     : `${shortTitle || keyword || "추천 상품"}\n구매 링크는 프로필 링크에서 확인해 주세요.`;
+  const manychatPublicReplies = [
+    "링크 DM으로 보내드렸어요. 메시지함 확인해 주세요.",
+    "요청하신 링크 DM으로 전달드렸어요. 확인 부탁드려요.",
+    "구매 링크 DM으로 보내드렸습니다. 궁금한 점 있으면 답글 남겨주세요.",
+  ];
+  const manychatOpeningDm = landingUrl
+    ? `${shortTitle || keyword || "추천 상품"}\n요청하신 구매 링크 보내드려요 👇\n${landingUrl}`
+    : `${shortTitle || keyword || "추천 상품"}\n구매 링크는 프로필 링크에서 확인해 주세요.`;
+  const manychatButtonLabel = landingUrl ? "구매 링크 보기" : "프로필 링크 보기";
+  const manychatButtonUrl = landingUrl;
+  const manychatSetupGuide = [
+    "Manychat > Automation > New Automation > Start From Scratch로 새 자동화를 만듭니다.",
+    "Trigger는 Instagram > User comments on your Post or Reel을 선택합니다.",
+    "대상은 Specific post or reel 또는 Next post or reel로 잡습니다.",
+    `Keyword는 "${commentKeyword}" 하나로 먼저 시작하고, 필요하면 제외 키워드만 추가합니다.`,
+    `Public Reply는 아래 문구 2~3개를 넣어 랜덤 회전시킵니다: ${manychatPublicReplies.join(" / ")}`,
+    "첫 메시지 노드는 Instagram Send Message로 추가하고, Send as a Private Reply로 설정합니다.",
+    `Private Reply 본문은 아래 DM 템플릿을 쓰고, 버튼은 "${manychatButtonLabel}" / URL은 추적 링크로 연결합니다.`,
+    "링크 버튼만 누르면 Manychat 연락처 opt-in이 열리지 않을 수 있으니, 나중에 후속 자동화를 원하면 Quick Reply 버전도 같이 테스트합니다.",
+    "Free 플랜은 live automation 4개, active contacts 25개까지라 첫 단계는 상품별 1개 자동화만 운영하는 편이 안전합니다.",
+  ];
 
   const soraVideoPrompts = hooks.map((hook, idx) => {
     const scenes = storyboards[idx] || [];
@@ -4758,6 +4779,12 @@ function buildReelsPack({
     pinnedComment,
     commentReplyTemplate,
     dmReplyTemplate,
+    manychatTriggerKeyword: commentKeyword,
+    manychatPublicReplies,
+    manychatOpeningDm,
+    manychatButtonLabel,
+    manychatButtonUrl,
+    manychatSetupGuide,
     productFeatureHints,
     referenceImageGuide,
     bgmSearchKeywords,

@@ -427,6 +427,26 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
       final commentReplyTemplate =
           (pack['commentReplyTemplate'] ?? '').toString().trim();
       final dmReplyTemplate = (pack['dmReplyTemplate'] ?? '').toString().trim();
+      final manychatKeyword =
+          (pack['manychatTriggerKeyword'] ?? pack['commentKeyword'] ?? '')
+              .toString()
+              .trim();
+      final manychatPublicReplies =
+          ((pack['manychatPublicReplies'] as List?) ?? const [])
+              .map((e) => e.toString().trim())
+              .where((e) => e.isNotEmpty)
+              .toList();
+      final manychatOpeningDm =
+          (pack['manychatOpeningDm'] ?? '').toString().trim();
+      final manychatButtonLabel =
+          (pack['manychatButtonLabel'] ?? '').toString().trim();
+      final manychatButtonUrl =
+          (pack['manychatButtonUrl'] ?? '').toString().trim();
+      final manychatSetupGuide =
+          ((pack['manychatSetupGuide'] as List?) ?? const [])
+              .map((e) => e.toString().trim())
+              .where((e) => e.isNotEmpty)
+              .toList();
       final bgmGuideText = (pack['bgmGuideText'] ?? '').toString().trim();
       final bgmSearchKeywords =
           ((pack['bgmSearchKeywords'] as List?) ?? const [])
@@ -508,6 +528,36 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
       if (dmReplyTemplate.isNotEmpty) {
         lines.add('DM 템플릿');
         lines.add(dmReplyTemplate);
+      }
+      if (manychatKeyword.isNotEmpty ||
+          manychatPublicReplies.isNotEmpty ||
+          manychatOpeningDm.isNotEmpty ||
+          manychatSetupGuide.isNotEmpty) {
+        lines.add('Manychat Free 댓글→DM');
+        if (manychatKeyword.isNotEmpty) {
+          lines.add('트리거 키워드');
+          lines.add(manychatKeyword);
+        }
+        if (manychatPublicReplies.isNotEmpty) {
+          lines.add('공개 답글 후보');
+          for (var i = 0; i < manychatPublicReplies.length; i += 1) {
+            lines.add('${i + 1}. ${manychatPublicReplies[i]}');
+          }
+        }
+        if (manychatOpeningDm.isNotEmpty) {
+          lines.add('오프닝 DM');
+          lines.add(manychatOpeningDm);
+        }
+        if (manychatButtonLabel.isNotEmpty || manychatButtonUrl.isNotEmpty) {
+          lines.add('DM 버튼');
+          lines.add('${manychatButtonLabel.isEmpty ? '구매 링크 보기' : manychatButtonLabel} / ${manychatButtonUrl.isEmpty ? '-' : manychatButtonUrl}');
+        }
+        if (manychatSetupGuide.isNotEmpty) {
+          lines.add('Manychat 설정 순서');
+          for (var i = 0; i < manychatSetupGuide.length; i += 1) {
+            lines.add('${i + 1}. ${manychatSetupGuide[i]}');
+          }
+        }
       }
       if (bgmSearchKeywords.isNotEmpty || bgmGuideText.isNotEmpty) {
         lines.add('추천 BGM');

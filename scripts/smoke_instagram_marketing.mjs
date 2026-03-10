@@ -299,6 +299,18 @@ async function main() {
     assertNonEmptyString(pack.instagramPostText, "reels pack should include instagram post text");
     assertNonEmptyString(pack.commentReplyTemplate, "reels pack should include comment reply template");
     assertNonEmptyString(pack.dmReplyTemplate, "reels pack should include dm reply template");
+    assertNonEmptyString(pack.manychatTriggerKeyword, "reels pack should include Manychat trigger keyword");
+    assert.ok(
+      Array.isArray(pack.manychatPublicReplies) && pack.manychatPublicReplies.length >= 3,
+      "reels pack should include Manychat public replies",
+    );
+    assertNonEmptyString(pack.manychatOpeningDm, "reels pack should include Manychat opening DM");
+    assertNonEmptyString(pack.manychatButtonLabel, "reels pack should include Manychat button label");
+    assertNonEmptyString(pack.manychatButtonUrl, "reels pack should include Manychat button URL");
+    assert.ok(
+      Array.isArray(pack.manychatSetupGuide) && pack.manychatSetupGuide.length >= 5,
+      "reels pack should include Manychat setup guide",
+    );
     assert.ok(Array.isArray(pack.referenceImageGuide) && pack.referenceImageGuide.length >= 3, "reels pack should include reference image guide");
     assert.ok(Array.isArray(pack.productFeatureHints) && pack.productFeatureHints.length >= 1, "reels pack should include product feature hints");
     assert.ok(Array.isArray(pack.bgmSearchKeywords) && pack.bgmSearchKeywords.length >= 3, "reels pack should include bgm search keywords");

@@ -657,6 +657,55 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
     return _stringValue(pack, 'pinnedComment');
   }
 
+  String _manychatKeywordText(Map<String, dynamic> json) {
+    final pack = _firstMarketingPack(json);
+    final keyword = _stringValue(pack, 'manychatTriggerKeyword');
+    if (keyword.isNotEmpty) return keyword;
+    return _stringValue(pack, 'commentKeyword');
+  }
+
+  String _manychatPublicRepliesText(Map<String, dynamic> json) {
+    final pack = _firstMarketingPack(json);
+    final replies = _stringList(pack['manychatPublicReplies']);
+    if (replies.isEmpty) return '';
+    final lines = <String>[];
+    for (var i = 0; i < replies.length; i += 1) {
+      lines.add('${i + 1}. ${replies[i]}');
+    }
+    return lines.join('\n').trim();
+  }
+
+  String _manychatOpeningDmText(Map<String, dynamic> json) {
+    final pack = _firstMarketingPack(json);
+    final dm = _stringValue(pack, 'manychatOpeningDm');
+    if (dm.isNotEmpty) return dm;
+    return _stringValue(pack, 'dmReplyTemplate');
+  }
+
+  String _manychatButtonLabelText(Map<String, dynamic> json) {
+    final pack = _firstMarketingPack(json);
+    return _stringValue(pack, 'manychatButtonLabel');
+  }
+
+  String _manychatButtonUrlText(Map<String, dynamic> json) {
+    final pack = _firstMarketingPack(json);
+    final url = _stringValue(pack, 'manychatButtonUrl');
+    if (url.isNotEmpty) return url;
+    final tracking = _firstMarketingTracking(json);
+    return (tracking['trackingUrl'] ?? '').toString().trim();
+  }
+
+  String _manychatSetupGuideText(Map<String, dynamic> json) {
+    final pack = _firstMarketingPack(json);
+    final steps = _stringList(pack['manychatSetupGuide']);
+    if (steps.isEmpty) return '';
+    final lines = <String>[];
+    for (var i = 0; i < steps.length; i += 1) {
+      lines.add('${i + 1}. ${steps[i]}');
+    }
+    return lines.join('\n').trim();
+  }
+
   String _bgmGuideText(Map<String, dynamic> json) {
     final pack = _firstMarketingPack(json);
     final guide = _stringValue(pack, 'bgmGuideText');
@@ -813,6 +862,12 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
     final pinnedComment = _stringValue(pack, 'pinnedComment');
     final commentReplyTemplate = _stringValue(pack, 'commentReplyTemplate');
     final dmReplyTemplate = _stringValue(pack, 'dmReplyTemplate');
+    final manychatKeyword = _stringValue(pack, 'manychatTriggerKeyword');
+    final manychatPublicReplies = _stringList(pack['manychatPublicReplies']);
+    final manychatOpeningDm = _stringValue(pack, 'manychatOpeningDm');
+    final manychatButtonLabel = _stringValue(pack, 'manychatButtonLabel');
+    final manychatButtonUrl = _stringValue(pack, 'manychatButtonUrl');
+    final manychatSetupGuide = _stringList(pack['manychatSetupGuide']);
     final bgmGuideText = _bgmGuideText(json);
     final referenceImageGuideText = _referenceImageGuideText(json);
     final productFeatureHintsText = _productFeatureHintsText(json);
@@ -909,6 +964,38 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
       lines.add(dmReplyTemplate);
     }
 
+    if (manychatKeyword.isNotEmpty ||
+        manychatPublicReplies.isNotEmpty ||
+        manychatOpeningDm.isNotEmpty ||
+        manychatSetupGuide.isNotEmpty) {
+      lines.add('');
+      lines.add('Manychat Free 댓글→DM');
+      if (manychatKeyword.isNotEmpty) {
+        lines.add('트리거 키워드');
+        lines.add(manychatKeyword);
+      }
+      if (manychatPublicReplies.isNotEmpty) {
+        lines.add('공개 답글 후보');
+        for (var i = 0; i < manychatPublicReplies.length; i += 1) {
+          lines.add('${i + 1}. ${manychatPublicReplies[i]}');
+        }
+      }
+      if (manychatOpeningDm.isNotEmpty) {
+        lines.add('오프닝 DM');
+        lines.add(manychatOpeningDm);
+      }
+      if (manychatButtonLabel.isNotEmpty || manychatButtonUrl.isNotEmpty) {
+        lines.add('DM 버튼');
+        lines.add('${manychatButtonLabel.isEmpty ? '구매 링크 보기' : manychatButtonLabel} / ${manychatButtonUrl.isEmpty ? '-' : manychatButtonUrl}');
+      }
+      if (manychatSetupGuide.isNotEmpty) {
+        lines.add('Manychat 설정 순서');
+        for (var i = 0; i < manychatSetupGuide.length; i += 1) {
+          lines.add('${i + 1}. ${manychatSetupGuide[i]}');
+        }
+      }
+    }
+
     if (bgmGuideText.isNotEmpty) {
       lines.add('');
       lines.add('추천 BGM');
@@ -959,6 +1046,12 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
     final commentReplyTemplate = _commentReplyTemplateText(json);
     final dmReplyTemplate = _dmReplyTemplateText(json);
     final pinnedComment = _pinnedCommentText(json);
+    final manychatKeyword = _manychatKeywordText(json);
+    final manychatPublicReplies = _manychatPublicRepliesText(json);
+    final manychatOpeningDm = _manychatOpeningDmText(json);
+    final manychatButtonLabel = _manychatButtonLabelText(json);
+    final manychatButtonUrl = _manychatButtonUrlText(json);
+    final manychatSetupGuide = _manychatSetupGuideText(json);
     final bgmGuideText = _bgmGuideText(json);
     final referenceImageGuideText = _referenceImageGuideText(json);
     final productFeatureHintsText = _productFeatureHintsText(json);
@@ -1026,6 +1119,18 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
                         },
                         icon: const Icon(Icons.reply_outlined, size: 18),
                         label: const Text('3. 댓글 답글 복사'),
+                      ),
+                    if (manychatSetupGuide.isNotEmpty)
+                      OutlinedButton.icon(
+                        onPressed: () async {
+                          await _copyText(
+                            manychatSetupGuide,
+                            'Manychat 설정 순서를 복사했어요.',
+                          );
+                        },
+                        icon: const Icon(Icons.auto_awesome_motion_outlined,
+                            size: 18),
+                        label: const Text('Manychat 세팅 복사'),
                       ),
                     FilledButton.icon(
                       onPressed: !supportsVideoFilePick || _marketingBusy
@@ -1308,8 +1413,151 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
                 const SizedBox(height: 12),
                 _buildOneShotSection(
                   context,
+                  icon: Icons.chat_bubble_outline,
+                  title: '2. Manychat Free 댓글→DM',
+                  subtitle:
+                      '지금은 Manychat Free로 댓글 트리거와 DM 발송만 운영하고, 나중에 우리 API로 같은 문구를 그대로 바꿔끼울 수 있게 준비한 단계입니다.',
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      if (manychatKeyword.isNotEmpty)
+                        CopyableSingleLineRow(
+                          k: '트리거 키워드',
+                          value: manychatKeyword,
+                        ),
+                      if (manychatButtonUrl.isNotEmpty)
+                        CopyableSingleLineRow(
+                          k: 'DM 버튼 URL',
+                          value: manychatButtonUrl,
+                        ),
+                      if (manychatButtonLabel.isNotEmpty)
+                        CopyableSingleLineRow(
+                          k: 'DM 버튼 라벨',
+                          value: manychatButtonLabel,
+                        ),
+                      const SizedBox(height: 8),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          if (manychatKeyword.isNotEmpty)
+                            OutlinedButton.icon(
+                              onPressed: () async {
+                                await _copyText(
+                                  manychatKeyword,
+                                  'Manychat 트리거 키워드를 복사했어요.',
+                                );
+                              },
+                              icon:
+                                  const Icon(Icons.tag_outlined, size: 18),
+                              label: const Text('키워드 복사'),
+                            ),
+                          if (manychatPublicReplies.isNotEmpty)
+                            OutlinedButton.icon(
+                              onPressed: () async {
+                                await _copyText(
+                                  manychatPublicReplies,
+                                  'Manychat 공개 답글 후보를 복사했어요.',
+                                );
+                              },
+                              icon: const Icon(Icons.forum_outlined, size: 18),
+                              label: const Text('공개 답글 복사'),
+                            ),
+                          if (manychatOpeningDm.isNotEmpty)
+                            OutlinedButton.icon(
+                              onPressed: () async {
+                                await _copyText(
+                                  manychatOpeningDm,
+                                  'Manychat 오프닝 DM을 복사했어요.',
+                                );
+                              },
+                              icon: const Icon(Icons.send_outlined, size: 18),
+                              label: const Text('오프닝 DM 복사'),
+                            ),
+                          if (manychatButtonUrl.isNotEmpty)
+                            OutlinedButton.icon(
+                              onPressed: () async {
+                                await _copyText(
+                                  manychatButtonUrl,
+                                  'Manychat 버튼 링크를 복사했어요.',
+                                );
+                              },
+                              icon:
+                                  const Icon(Icons.link_outlined, size: 18),
+                              label: const Text('버튼 링크 복사'),
+                            ),
+                          if (manychatSetupGuide.isNotEmpty)
+                            OutlinedButton.icon(
+                              onPressed: () async {
+                                await _copyText(
+                                  manychatSetupGuide,
+                                  'Manychat 설정 순서를 복사했어요.',
+                                );
+                              },
+                              icon: const Icon(
+                                Icons.checklist_rtl_outlined,
+                                size: 18,
+                              ),
+                              label: const Text('설정 순서 복사'),
+                            ),
+                        ],
+                      ),
+                      if (manychatPublicReplies.isNotEmpty) ...[
+                        const SizedBox(height: 10),
+                        Text(
+                          '공개 답글 후보',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w800,
+                            color: Theme.of(context).colorScheme.onSurface,
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        SelectableText(
+                          manychatPublicReplies,
+                          style: const TextStyle(fontSize: 12, height: 1.4),
+                        ),
+                      ],
+                      if (manychatOpeningDm.isNotEmpty) ...[
+                        const SizedBox(height: 10),
+                        Text(
+                          '오프닝 DM',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w800,
+                            color: Theme.of(context).colorScheme.onSurface,
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        SelectableText(
+                          manychatOpeningDm,
+                          style: const TextStyle(fontSize: 12, height: 1.45),
+                        ),
+                      ],
+                      if (manychatSetupGuide.isNotEmpty) ...[
+                        const SizedBox(height: 10),
+                        Text(
+                          'Manychat 설정 순서',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w800,
+                            color: Theme.of(context).colorScheme.onSurface,
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        SelectableText(
+                          manychatSetupGuide,
+                          style: const TextStyle(fontSize: 12, height: 1.45),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 12),
+                _buildOneShotSection(
+                  context,
                   icon: Icons.movie_creation_outlined,
-                  title: '2. Sora 영상 생성',
+                  title: '3. Sora 영상 생성',
                   subtitle:
                       '아래 프롬프트를 Sora에 넣고, 선택한 상품 이미지를 같이 올린 뒤 영상만 받아오면 됩니다.',
                   child: Column(
