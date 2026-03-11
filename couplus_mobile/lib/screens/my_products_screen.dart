@@ -306,9 +306,21 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
     return (product['sourceUrl'] ?? '').toString().trim();
   }
 
+  bool _isCoupangProductUrl(String raw) {
+    final url = raw.trim();
+    if (!(url.startsWith('http://') || url.startsWith('https://'))) {
+      return false;
+    }
+    final uri = Uri.tryParse(url);
+    if (uri == null) return false;
+    final host = uri.host.toLowerCase();
+    final path = uri.path.toLowerCase();
+    return host.contains('coupang.com') && path.contains('/vp/products/');
+  }
+
   String _resolveMarketingTargetUrl(Map<String, dynamic> product) {
     final direct = (product['productUrl'] ?? '').toString().trim();
-    if (direct.startsWith('http://') || direct.startsWith('https://')) {
+    if (_isCoupangProductUrl(direct)) {
       return direct;
     }
     final productId = (product['productId'] ?? '').toString().trim();
@@ -316,7 +328,7 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
       return 'https://www.coupang.com/vp/products/$productId?failRedirectApp=true';
     }
     final sourceUrl = _productSourceUrl(product);
-    if (sourceUrl.startsWith('http://') || sourceUrl.startsWith('https://')) {
+    if (_isCoupangProductUrl(sourceUrl)) {
       return sourceUrl;
     }
     return '';
@@ -1859,7 +1871,9 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
     if (title.isEmpty || sourceUrl.isEmpty || targetUrl.isEmpty) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('상품 URL/제목이 부족해 원샷을 만들 수 없습니다.')),
+        const SnackBar(
+          content: Text('쿠팡 상품 URL을 아직 찾지 못해 원샷을 만들 수 없습니다. 상태 동기화 후 다시 시도해 주세요.'),
+        ),
       );
       return;
     }

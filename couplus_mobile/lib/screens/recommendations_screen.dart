@@ -269,6 +269,18 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
     return 'ig_reels_$y$m$d';
   }
 
+  bool _isCoupangProductUrl(String raw) {
+    final text = raw.trim();
+    if (!(text.startsWith('http://') || text.startsWith('https://'))) {
+      return false;
+    }
+    final uri = Uri.tryParse(text);
+    if (uri == null) return false;
+    final host = uri.host.toLowerCase();
+    final path = uri.path.toLowerCase();
+    return host.contains('coupang.com') && path.contains('/vp/products/');
+  }
+
   String _marketingTargetUrlOf(Map<String, dynamic> item) {
     final candidates = <dynamic>[
       item['productUrl'],
@@ -278,7 +290,7 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
     ];
     for (final raw in candidates) {
       final text = raw.toString().trim();
-      if (text.startsWith('http://') || text.startsWith('https://')) {
+      if (_isCoupangProductUrl(text)) {
         return text;
       }
     }
@@ -683,7 +695,9 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
     if (targetUrl.isEmpty || sourceUrl.isEmpty) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('링크 생성 대상 URL이 비어 있습니다.')),
+        const SnackBar(
+          content: Text('쿠팡 상품 URL을 아직 찾지 못해 링크를 만들 수 없습니다. 상태를 다시 불러온 뒤 시도해 주세요.'),
+        ),
       );
       return;
     }
