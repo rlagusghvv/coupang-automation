@@ -945,6 +945,23 @@ const RECOMMENDATION_KEYWORD_POOLS = Object.freeze({
     "캠핑 장비 정리함",
     "차박 트렁크 정리",
   ],
+  shortformWinners: [
+    "차량 틈새 수납",
+    "차량 컵홀더 트레이",
+    "펫 브러쉬",
+    "반려동물 발 세정 컵",
+    "냉장고 정리 트레이",
+    "싱크대 정리 선반",
+    "욕실 코너 선반",
+    "세탁기 틈새 수납",
+    "서랍 칸막이",
+    "압축 수납팩",
+    "청소도구 거치대",
+    "밀대 걸이",
+    "멀티탭 정리함",
+    "데스크 케이블 홀더",
+    "캐리어 정리 파우치",
+  ],
 });
 
 function mergeRecommendationKeywords(...groups) {
@@ -968,6 +985,12 @@ const RECOMMENDATION_CATEGORY_PRESETS = Object.freeze([
     label: "전체 (기본)",
     description: "기본 키워드셋 전체 사용",
     keywords: [],
+  },
+  {
+    key: "shortform_winners",
+    label: "인스타 숏폼 반응형",
+    description: "전후 비교/실사용 시연이 쉬운 생활템",
+    keywords: mergeRecommendationKeywords(RECOMMENDATION_KEYWORD_POOLS.shortformWinners),
   },
   {
     key: "car",
@@ -4322,9 +4345,39 @@ app.post("/api/recommendations/auto-upload", authRequired, async (req, res) => {
       const force = parseForceFlag(req.body?.force ?? req.query?.force);
       const onlyEligibleRaw = String(req.body?.onlyEligible ?? "1").trim().toLowerCase();
       const onlyEligible = !(onlyEligibleRaw === "0" || onlyEligibleRaw === "false" || onlyEligibleRaw === "no");
+      const requestedSourceUrls = normalizeStringList(req.body?.sourceUrls, 200);
 
-      const recoItems = await listRecommendations(req.user.id, { limit: Math.max(limit, 50) });
-      const candidates = recoItems
+      const recoItems = await listRecommendations(req.user.id, {
+        limit: Math.max(limit, 50, requestedSourceUrls.length),
+      });
+      const savedItems =
+        requestedSourceUrls.length > 0
+          ? await listSavedRecommendations(req.user.id, {
+              limit: Math.max(limit, 50, requestedSourceUrls.length),
+            })
+          : [];
+      const candidatePoolBySourceUrl = new Map(
+        [...recoItems, ...savedItems].map((row) => [String(row?.sourceUrl || "").trim(), row]),
+      );
+      const orderedRecoItems = [];
+      const orderedSeen = new Set();
+      if (requestedSourceUrls.length > 0) {
+        for (const rawUrl of requestedSourceUrls) {
+          const sourceUrl = String(rawUrl || "").trim();
+          if (!sourceUrl || orderedSeen.has(sourceUrl)) continue;
+          orderedSeen.add(sourceUrl);
+          const row = candidatePoolBySourceUrl.get(sourceUrl);
+          if (row) orderedRecoItems.push(row);
+        }
+      }
+      for (const row of recoItems) {
+        const sourceUrl = String(row?.sourceUrl || "").trim();
+        if (!sourceUrl || orderedSeen.has(sourceUrl)) continue;
+        orderedSeen.add(sourceUrl);
+        orderedRecoItems.push(row);
+      }
+
+      const candidates = orderedRecoItems
         .filter((it) => {
           const url = String(it?.sourceUrl || "").trim();
           if (!url) return false;
@@ -4366,6 +4419,7 @@ app.post("/api/recommendations/auto-upload", authRequired, async (req, res) => {
         failed: items.filter((x) => !x.ok && !x.skipped).length,
         onlyEligible,
         force,
+        sourceOrderApplied: requestedSourceUrls.length > 0,
       };
 
       return res.json({ ok: true, summary, items });

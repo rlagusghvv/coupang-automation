@@ -24,6 +24,11 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
       'description': '기본 키워드셋 전체 사용',
     },
     {
+      'key': 'shortform_winners',
+      'label': '인스타 숏폼 반응형',
+      'description': '전후 비교/실사용 시연이 쉬운 생활템',
+    },
+    {
       'key': 'car',
       'label': '차량용 전체',
       'description': '차량 수납/거치/선정리 통합',
@@ -136,6 +141,7 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
   ];
   static const List<Map<String, String>> _sortOptions = [
     {'key': 'default', 'label': '기본 추천순'},
+    {'key': 'shortform_desc', 'label': '숏폼 적합도 높은순'},
     {'key': 'seo_desc', 'label': 'SEO 점수 높은순'},
     {'key': 'seo_asc', 'label': 'SEO 점수 낮은순'},
   ];
@@ -187,6 +193,46 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
     return num.tryParse((item['score'] ?? '').toString()) ?? 0;
   }
 
+  Map<String, dynamic> _shortformOf(Map<String, dynamic> item) {
+    final raw = item['shortform'];
+    if (raw is Map) return raw.cast<String, dynamic>();
+    return const <String, dynamic>{};
+  }
+
+  num _shortformScoreOf(Map<String, dynamic> item) {
+    return num.tryParse((_shortformOf(item)['score'] ?? '').toString()) ?? 0;
+  }
+
+  String _shortformTierOf(Map<String, dynamic> item) {
+    return (_shortformOf(item)['tier'] ?? '').toString().trim().toUpperCase();
+  }
+
+  String _shortformAngleOf(Map<String, dynamic> item) {
+    return (_shortformOf(item)['angle'] ?? '').toString().trim();
+  }
+
+  List<String> _shortformReasonsOf(Map<String, dynamic> item) {
+    final raw = _shortformOf(item)['reasons'];
+    if (raw is! List) return const [];
+    return raw
+        .map((e) => e.toString().trim())
+        .where((e) => e.isNotEmpty)
+        .toList();
+  }
+
+  Color _shortformColor(BuildContext context, String tier) {
+    switch (tier.toUpperCase()) {
+      case 'A':
+        return const Color(0xFF2F9E44);
+      case 'B':
+        return const Color(0xFF1971C2);
+      case 'C':
+        return Colors.orange;
+      default:
+        return Theme.of(context).colorScheme.outline;
+    }
+  }
+
   bool _isEligibleUploadItem(Map<String, dynamic> item) {
     final qc = (item['qc'] as Map?)?.cast<String, dynamic>() ??
         const <String, dynamic>{};
@@ -199,13 +245,18 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
     return source.where(_isEligibleUploadItem).toList();
   }
 
-  List<Map<String, dynamic>> get _visibleItems {
-    final source = _showSavedOnly
-        ? _onlyEligibleItems(_savedItems)
-        : _onlyEligibleItems(_items);
-    if (_selectedSortKey == 'default') return source;
-    final sorted = List<Map<String, dynamic>>.from(source);
+  List<Map<String, dynamic>> _sortRecommendationItems(
+    List<Map<String, dynamic>> source, {
+    required bool onlyEligible,
+  }) {
+    final base = onlyEligible ? _onlyEligibleItems(source) : List.of(source);
+    if (_selectedSortKey == 'default') return base;
+    final sorted = List<Map<String, dynamic>>.from(base);
     sorted.sort((a, b) {
+      if (_selectedSortKey == 'shortform_desc') {
+        final shortCmp = _shortformScoreOf(b).compareTo(_shortformScoreOf(a));
+        if (shortCmp != 0) return shortCmp;
+      }
       final sa = _seoScoreOf(a);
       final sb = _seoScoreOf(b);
       if (sa == null && sb == null) {
@@ -223,6 +274,11 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
       return _recommendScoreOf(b).compareTo(_recommendScoreOf(a));
     });
     return sorted;
+  }
+
+  List<Map<String, dynamic>> get _visibleItems {
+    final source = _showSavedOnly ? _savedItems : _items;
+    return _sortRecommendationItems(source, onlyEligible: true);
   }
 
   @override
@@ -259,6 +315,15 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
       }
     }
     return '전체 (기본)';
+  }
+
+  String _selectedRecoCategoryDescription() {
+    for (final row in _recoCategories) {
+      if ((row['key'] ?? '') == _selectedRecoCategoryKey) {
+        return (row['description'] ?? '').trim();
+      }
+    }
+    return '';
   }
 
   String _defaultMarketingCampaign() {
@@ -562,7 +627,8 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
         }
         if (manychatButtonLabel.isNotEmpty || manychatButtonUrl.isNotEmpty) {
           lines.add('DM 버튼');
-          lines.add('${manychatButtonLabel.isEmpty ? '구매 링크 보기' : manychatButtonLabel} / ${manychatButtonUrl.isEmpty ? '-' : manychatButtonUrl}');
+          lines.add(
+              '${manychatButtonLabel.isEmpty ? '구매 링크 보기' : manychatButtonLabel} / ${manychatButtonUrl.isEmpty ? '-' : manychatButtonUrl}');
         }
         if (manychatSetupGuide.isNotEmpty) {
           lines.add('Manychat 설정 순서');
@@ -696,7 +762,8 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('쿠팡 상품 URL을 아직 찾지 못해 링크를 만들 수 없습니다. 상태를 다시 불러온 뒤 시도해 주세요.'),
+          content:
+              Text('쿠팡 상품 URL을 아직 찾지 못해 링크를 만들 수 없습니다. 상태를 다시 불러온 뒤 시도해 주세요.'),
         ),
       );
       return;
@@ -1792,6 +1859,15 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
 
   Future<void> _autoUpload() async {
     final limit = _autoLimit.clamp(1, 30).toInt();
+    final autoSource = _showSavedOnly ? _savedItems : _items;
+    final orderedSourceUrls = _sortRecommendationItems(
+      autoSource,
+      onlyEligible: _autoOnlyEligible,
+    )
+        .map((it) => (it['sourceUrl'] ?? '').toString().trim())
+        .where((u) => u.isNotEmpty)
+        .take(limit)
+        .toList();
     setState(() {
       _loading = true;
       _error = null;
@@ -1802,6 +1878,7 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
         'limit': limit,
         'onlyEligible': _autoOnlyEligible ? '1' : '0',
         'force': _autoForce ? '1' : '0',
+        if (orderedSourceUrls.isNotEmpty) 'sourceUrls': orderedSourceUrls,
       });
 
       final summary =
@@ -2311,6 +2388,17 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
                   ],
                 ),
                 const SizedBox(height: 10),
+                Text(
+                  '인스타 숏폼용으로는 추천 카테고리를 "인스타 숏폼 반응형"으로 두고, 목록 정렬을 "숏폼 적합도 높은순"으로 맞춘 뒤 실행하는 편이 안정적입니다.',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Theme.of(context)
+                        .colorScheme
+                        .onSurface
+                        .withValues(alpha: 0.65),
+                  ),
+                ),
+                const SizedBox(height: 10),
                 Row(
                   crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
@@ -2361,6 +2449,19 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
                     ],
                   ],
                 ),
+                if (_selectedRecoCategoryDescription().isNotEmpty) ...[
+                  const SizedBox(height: 6),
+                  Text(
+                    _selectedRecoCategoryDescription(),
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Theme.of(context)
+                          .colorScheme
+                          .onSurface
+                          .withValues(alpha: 0.65),
+                    ),
+                  ),
+                ],
                 const SizedBox(height: 10),
                 InputDecorator(
                   decoration: const InputDecoration(
@@ -2390,7 +2491,7 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  '채우기(우측 상단 새로고침)는 선택한 카테고리 기준으로 추천을 생성합니다. 자동 업로드는 현재 목록 상위 항목에 적용되며, 목록 정렬은 화면 표시 순서에만 반영됩니다.',
+                  '채우기(우측 상단 새로고침)는 선택한 카테고리 기준으로 추천을 생성합니다. 자동 업로드는 현재 화면 정렬 순서의 상위 항목을 그대로 사용합니다.',
                   style: TextStyle(
                     fontSize: 12,
                     color: Theme.of(context)
@@ -3170,6 +3271,10 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
                 final detailImageCount = previewImagesAll.isNotEmpty
                     ? previewImagesAll.length
                     : detailImageCountRaw;
+                final shortformScore = _shortformScoreOf(it);
+                final shortformTier = _shortformTierOf(it);
+                final shortformAngle = _shortformAngleOf(it);
+                final shortformReasons = _shortformReasonsOf(it);
 
                 final selected = url.isNotEmpty && _selected.contains(url);
                 final saved = url.isNotEmpty && _savedUrls.contains(url);
@@ -3297,6 +3402,14 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
                                       ? const Color(0xFF2F9E44)
                                       : Colors.orange,
                                 ),
+                                if (shortformScore > 0)
+                                  InfoChip(
+                                    label: shortformTier.isNotEmpty
+                                        ? '숏폼 $shortformTier · ${shortformScore.round()}점'
+                                        : '숏폼 ${shortformScore.round()}점',
+                                    color:
+                                        _shortformColor(context, shortformTier),
+                                  ),
                                 InfoChip(
                                   label: '권장가 ${_won(finalPrice)}',
                                   color: Theme.of(context).colorScheme.primary,
@@ -3357,6 +3470,27 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
                                           Theme.of(context).colorScheme.outline,
                                     ),
                                 ],
+                              ),
+                            ],
+                            if (shortformAngle.isNotEmpty ||
+                                shortformReasons.isNotEmpty) ...[
+                              const SizedBox(height: 6),
+                              Text(
+                                [
+                                  if (shortformAngle.isNotEmpty)
+                                    '숏폼 각도: $shortformAngle',
+                                  if (shortformReasons.isNotEmpty)
+                                    shortformReasons.take(2).join(' · '),
+                                ].join(' / '),
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: Theme.of(context)
+                                      .colorScheme
+                                      .onSurface
+                                      .withValues(alpha: 0.72),
+                                ),
                               ),
                             ],
                             if (previewImages.isNotEmpty) ...[

@@ -459,6 +459,151 @@ function computeThemeBoost(themes = []) {
   return Math.min(3800, boost);
 }
 
+function chooseShortformAngle({ haystack = '', themes = [] } = {}) {
+  const text = String(haystack || '').toLowerCase();
+  const themeList = Array.isArray(themes) ? themes : [];
+  if (
+    /(정리|수납|칸막이|트레이|틈새|압축|걸이|후크|홀더|거치대|바구니|파우치|선반)/.test(
+      text,
+    )
+  ) {
+    return '전후 비교형';
+  }
+  if (themeList.includes('car')) return '차량 문제해결형';
+  if (themeList.includes('pet')) return '실사용 시연형';
+  if (themeList.includes('desk')) return '정리 전환형';
+  if (themeList.includes('outdoor')) return '준비물 정리형';
+  return '생활 문제해결형';
+}
+
+function analyzeShortformFit({
+  title = '',
+  keyword = '',
+  finalPrice = null,
+  detailImageCount = 0,
+  eligibleUpload = false,
+  themes = [],
+  searchTags = [],
+} = {}) {
+  const haystack = [title, keyword, ...(Array.isArray(searchTags) ? searchTags : [])]
+    .join(' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+  const reasonSet = new Set();
+  const reasons = [];
+  const risks = [];
+  let score = 32;
+
+  const pushReason = (text) => {
+    const value = String(text || '').trim();
+    if (!value) return;
+    const key = value.toLowerCase();
+    if (reasonSet.has(key)) return;
+    reasonSet.add(key);
+    if (reasons.length < 4) reasons.push(value);
+  };
+
+  const addSignal = (pattern, points, reason) => {
+    if (!pattern.test(haystack)) return false;
+    score += Number(points) || 0;
+    if (reason) pushReason(reason);
+    return true;
+  };
+
+  addSignal(
+    /(정리|수납|칸막이|트레이|틈새|걸이|후크|거치대|홀더|바구니|압축|파우치|선반|랙)/,
+    18,
+    '전후 비교가 쉬운 정리형 상품',
+  );
+  addSignal(
+    /(브러쉬|빗|롤러|장난감|하네스|리드줄|세정|클립|거치대|컵홀더|케이블|밀대|빗자루)/,
+    14,
+    '손 시연이 쉬운 실사용형 상품',
+  );
+  addSignal(
+    /(차량|주방|욕실|세탁|현관|옷장|책상|데스크|반려|강아지|고양이|캠핑|여행)/,
+    8,
+    '사용 장면을 바로 떠올리기 쉬움',
+  );
+
+  const themeList = Array.isArray(themes) ? themes : [];
+  if (themeList.includes('car')) {
+    score += 10;
+    pushReason('차량 공간 문제 해결형으로 훅이 잘 잡힘');
+  }
+  if (themeList.includes('pet')) {
+    score += 9;
+    pushReason('반려 실사용 시연 컷을 만들기 쉬움');
+  }
+  if (themeList.includes('organize')) {
+    score += 10;
+    pushReason('정리 전/후 연출이 쉬움');
+  }
+  if (themeList.includes('desk') || themeList.includes('home')) {
+    score += 6;
+  }
+
+  const finalPriceNumber = Number(finalPrice);
+  if (Number.isFinite(finalPriceNumber) && finalPriceNumber > 0) {
+    if (finalPriceNumber <= 19900) {
+      score += 16;
+      pushReason('충동구매 저항이 낮은 가격대');
+    } else if (finalPriceNumber <= 29900) {
+      score += 13;
+      pushReason('숏폼 전환 테스트에 무난한 가격대');
+    } else if (finalPriceNumber <= 39900) {
+      score += 9;
+      pushReason('가격 부담이 아주 높지 않음');
+    } else if (finalPriceNumber >= 79900) {
+      score -= 15;
+      risks.push('가격대가 높아 짧은 릴스 전환은 약할 수 있음');
+    } else if (finalPriceNumber >= 59900) {
+      score -= 8;
+      risks.push('가격 저항이 있을 수 있음');
+    }
+  }
+
+  const detailCount = Math.max(0, Number(detailImageCount) || 0);
+  if (detailCount >= 5) {
+    score += 15;
+    pushReason('상품 컷이 많아 10~20초 구성에 유리함');
+  } else if (detailCount >= 3) {
+    score += 11;
+    pushReason('영상용 디테일 컷 분량이 확보됨');
+  } else if (detailCount >= 2) {
+    score += 7;
+  } else {
+    score -= 10;
+    risks.push('상세 컷이 적어 영상 구성이 단조로울 수 있음');
+  }
+
+  if (eligibleUpload) {
+    score += 7;
+    pushReason('QC 통과 상태라 업로드 전환이 빠름');
+  } else {
+    score -= 4;
+    risks.push('QC 검토가 남아 있어 바로 업로드하기 어렵습니다');
+  }
+
+  if (/(전문가|산업|공업|업소|대형|특대|리필|교체용|부품)/.test(haystack)) {
+    score -= 8;
+    risks.push('대중 반응보다 목적 구매 성향이 강한 편');
+  }
+
+  const normalizedScore = clampNumber(Math.round(score), 0, 100, 0);
+  const tier =
+    normalizedScore >= 78 ? 'A' : (normalizedScore >= 62 ? 'B' : (normalizedScore >= 46 ? 'C' : 'D'));
+
+  return {
+    score: normalizedScore,
+    tier,
+    angle: chooseShortformAngle({ haystack, themes: themeList }),
+    reasons: reasons.slice(0, 4),
+    risks: risks.slice(0, 3),
+  };
+}
+
 function extractRecommendationImageDedupKey(rawUrl = '') {
   const proxyText = String(rawUrl || '').trim();
   if (!proxyText) return '';
@@ -1013,6 +1158,18 @@ export async function listRecommendations(userId, { limit = 50 } = {}) {
       extraTags: Array.isArray(payload?.seo?.searchTags) ? payload.seo.searchTags : [],
       max: 10,
     });
+    const shortform = analyzeShortformFit({
+      title: seoTitle || r.title || '',
+      keyword: r.keyword || '',
+      finalPrice: r.final_price,
+      detailImageCount,
+      eligibleUpload,
+      themes: detectRecommendationThemes({
+        title: seoTitle || r.title || '',
+        keyword: r.keyword || '',
+      }),
+      searchTags,
+    });
     const categoryCode = toPositiveInt(payload?.category?.code);
     const categorySourceRaw = String(payload?.category?.source || '').trim();
     const categorySource = categorySourceRaw || (categoryCode ? 'payload' : null);
@@ -1040,6 +1197,7 @@ export async function listRecommendations(userId, { limit = 50 } = {}) {
       reason: r.reason,
       contentImageCount: detailImageCount,
       previewImages,
+      shortform,
       qc: { tier, eligibleUpload, detailImageCount },
       createdAt: r.created_at,
       saved: savedSet.has(String(r.source_url || '').trim()),
@@ -1157,6 +1315,18 @@ function mapSavedRowToItem(r) {
     extraTags: Array.isArray(payload?.seo?.searchTags) ? payload.seo.searchTags : [],
     max: 10,
   });
+  const shortform = analyzeShortformFit({
+    title: seoTitle || r.title || '',
+    keyword: r.keyword || '',
+    finalPrice: r.final_price,
+    detailImageCount,
+    eligibleUpload: Boolean(qc?.eligibleUpload),
+    themes: detectRecommendationThemes({
+      title: seoTitle || r.title || '',
+      keyword: r.keyword || '',
+    }),
+    searchTags,
+  });
   const categoryCode = toPositiveInt(payload?.category?.code);
   const categorySourceRaw = String(payload?.category?.source || '').trim();
   const categorySource = categorySourceRaw || (categoryCode ? 'payload' : null);
@@ -1182,6 +1352,7 @@ function mapSavedRowToItem(r) {
     reason: r.reason,
     contentImageCount: detailImageCount,
     previewImages,
+    shortform,
     qc: {
       tier: String(qc?.tier || '-'),
       eligibleUpload: Boolean(qc?.eligibleUpload),
