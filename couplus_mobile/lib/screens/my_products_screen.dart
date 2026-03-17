@@ -998,7 +998,8 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
       }
       if (manychatButtonLabel.isNotEmpty || manychatButtonUrl.isNotEmpty) {
         lines.add('DM 버튼');
-        lines.add('${manychatButtonLabel.isEmpty ? '구매 링크 보기' : manychatButtonLabel} / ${manychatButtonUrl.isEmpty ? '-' : manychatButtonUrl}');
+        lines.add(
+            '${manychatButtonLabel.isEmpty ? '구매 링크 보기' : manychatButtonLabel} / ${manychatButtonUrl.isEmpty ? '-' : manychatButtonUrl}');
       }
       if (manychatSetupGuide.isNotEmpty) {
         lines.add('Manychat 설정 순서');
@@ -1460,8 +1461,7 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
                                   'Manychat 트리거 키워드를 복사했어요.',
                                 );
                               },
-                              icon:
-                                  const Icon(Icons.tag_outlined, size: 18),
+                              icon: const Icon(Icons.tag_outlined, size: 18),
                               label: const Text('키워드 복사'),
                             ),
                           if (manychatPublicReplies.isNotEmpty)
@@ -1494,8 +1494,7 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
                                   'Manychat 버튼 링크를 복사했어요.',
                                 );
                               },
-                              icon:
-                                  const Icon(Icons.link_outlined, size: 18),
+                              icon: const Icon(Icons.link_outlined, size: 18),
                               label: const Text('버튼 링크 복사'),
                             ),
                           if (manychatSetupGuide.isNotEmpty)
@@ -1872,7 +1871,8 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('쿠팡 상품 URL을 아직 찾지 못해 원샷을 만들 수 없습니다. 상태 동기화 후 다시 시도해 주세요.'),
+          content:
+              Text('쿠팡 상품 URL을 아직 찾지 못해 원샷을 만들 수 없습니다. 상태 동기화 후 다시 시도해 주세요.'),
         ),
       );
       return;
@@ -1952,7 +1952,11 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
       case 'confirmed':
         return '미업로드';
       case 'uploaded':
-        return '업로드완료(대기)';
+        return '업로드완료(조회중)';
+      case 'draft_saved':
+        return '임시저장';
+      case 'pending_approval':
+        return '승인대기';
       case 'deployed':
         return '판매중';
       case 'deployed_invalid':
@@ -1971,6 +1975,8 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
   Color _statusColor(BuildContext context, String raw) {
     final status = raw.trim().toLowerCase();
     if (status == 'deployed') return const Color(0xFF2F9E44); // 판매중
+    if (status == 'pending_approval') return const Color(0xFF1971C2);
+    if (status == 'draft_saved') return Colors.orange;
     if (status == 'uploaded') return Theme.of(context).colorScheme.primary;
     if (status == 'confirmed') return Theme.of(context).colorScheme.outline;
     if (status == 'deployed_invalid') return Colors.orange;
@@ -2030,6 +2036,12 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
                 _statusChip(context, 'confirmed', _statusLabel('confirmed')),
                 const SizedBox(width: 8),
                 _statusChip(context, 'uploaded', _statusLabel('uploaded')),
+                const SizedBox(width: 8),
+                _statusChip(
+                    context, 'draft_saved', _statusLabel('draft_saved')),
+                const SizedBox(width: 8),
+                _statusChip(context, 'pending_approval',
+                    _statusLabel('pending_approval')),
                 const SizedBox(width: 8),
                 _statusChip(context, 'deployed', _statusLabel('deployed')),
                 const SizedBox(width: 8),
@@ -2128,6 +2140,8 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
                 final id = (p['id'] ?? '').toString();
                 final title = (p['confirmedTitle'] ?? '').toString();
                 final status = (p['status'] ?? '').toString();
+                final remoteStatusName =
+                    (p['remoteStatusName'] ?? '').toString().trim();
                 final img = (p['mainImageUrl'] ?? '').toString();
                 final sellerProductId = (p['sellerProductId'] ?? '').toString();
                 final selected = _selected.contains(id);
@@ -2222,6 +2236,20 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
                                   ),
                               ],
                             ),
+                            if (remoteStatusName.isNotEmpty &&
+                                remoteStatusName != _statusLabel(status)) ...[
+                              const SizedBox(height: 6),
+                              Text(
+                                'Wing 상태: $remoteStatusName',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: Theme.of(context)
+                                      .colorScheme
+                                      .onSurface
+                                      .withValues(alpha: 0.68),
+                                ),
+                              ),
+                            ],
                             const SizedBox(height: 8),
                             Row(
                               children: [

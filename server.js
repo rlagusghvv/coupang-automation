@@ -1869,6 +1869,30 @@ function isApprovedStatus(statusName) {
   );
 }
 
+function isDraftStatusName(statusName) {
+  const s = String(statusName || "").trim().toLowerCase();
+  if (!s) return false;
+  return (
+    s.includes("임시저장") ||
+    s.includes("draft") ||
+    s.includes("temporary save") ||
+    s.includes("temp_save")
+  );
+}
+
+function isPendingApprovalStatusName(statusName) {
+  const s = String(statusName || "").trim().toLowerCase();
+  if (!s) return false;
+  return (
+    s.includes("승인대기") ||
+    s.includes("심사중") ||
+    s.includes("검수중") ||
+    s.includes("approval pending") ||
+    s.includes("pending approval") ||
+    s.includes("under review")
+  );
+}
+
 function isDeletedStatusName(statusName) {
   const s = String(statusName || "").trim().toLowerCase();
   if (!s) return false;
@@ -1987,6 +2011,8 @@ function extractSellerStatusSnapshot({
   const productIdFromBody = productIdRaw == null ? "" : String(productIdRaw).trim();
   const vendorItemId = vendorItemIdRaw == null ? null : String(vendorItemIdRaw).trim() || null;
   const approved = isApprovedStatus(statusName);
+  const draftSaved = isDraftStatusName(statusName);
+  const pendingApproval = !approved && isPendingApprovalStatusName(statusName);
   const deleted = isDeletedStatusName(statusName);
   const title = pickFirstNonEmpty(
     data?.displayProductName,
@@ -2030,6 +2056,8 @@ function extractSellerStatusSnapshot({
     httpStatus: Number.isFinite(Number(httpStatus)) ? Number(httpStatus) : null,
     statusName: statusName || null,
     approved,
+    draftSaved,
+    pendingApproval,
     deleted,
     productId,
     vendorItemId,
@@ -2051,12 +2079,15 @@ function inferCatalogStatus(currentStatus, snapshot = null, fallback = "confirme
     if (current) return current;
     return fallback;
   }
+  if (current === "deleted_local") return current;
   if (snapshot.deleted) return "deleted_remote";
+  if (snapshot.draftSaved) return "draft_saved";
+  if (snapshot.pendingApproval) return "pending_approval";
   if (snapshot.detailEmpty) return "deployed_invalid";
   if (snapshot.approved && !String(snapshot.productId || "").trim()) return "deployed_invalid";
   if (snapshot.approved) return "deployed";
-  if (current === "deploy_failed" || current === "deployed_invalid") return current;
-  return "confirmed";
+  if (current === "uploaded") return current;
+  return fallback || "confirmed";
 }
 
 function inferCatalogStatusForSync(currentStatus, snapshot = null, fallback = "confirmed") {
@@ -2116,6 +2147,7 @@ function normalizeCatalogProduct(row) {
     productId: productId || null,
     productUrl: productUrl || null,
     status: String(row?.status || "confirmed"),
+    remoteStatusName: pickFirstNonEmpty(followUp.statusName) || null,
     followUp,
     validation,
     lastSyncedAt: String(meta.lastSyncedAt || "").trim() || null,
