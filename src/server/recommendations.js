@@ -1930,9 +1930,18 @@ function detectRecommendationHint(keywordDiagnostics = []) {
     .map((e) => String(e || '').toLowerCase());
   const hasOpenApiError = flatErrors.some((e) => e.includes('openapi:'));
   const hasPlaywrightError = flatErrors.some((e) => e.includes('playwright:'));
+  const hasOpenApiKeyMissing = flatErrors.some((e) =>
+    e.includes('domeggook_openapi_key_missing') || e.includes('openapi key missing'),
+  );
 
   if (flatErrors.some((e) => e.includes('rate_limited') || e.includes('429'))) {
     return '도매꾹 요청 제한(429) 가능성이 있습니다. 잠시 후 다시 시도하세요.';
+  }
+  if (hasOpenApiKeyMissing) {
+    if (hasPlaywrightError) {
+      return '도매꾹 OpenAPI 키가 없고 Playwright 수집도 실패했습니다. OpenAPI 키를 넣거나 도매꾹 세션/브라우저 실행 환경을 확인하세요.';
+    }
+    return '도매꾹 OpenAPI 키가 없어 OpenAPI 후보 수집을 시작하지 못했습니다. 키를 넣거나 Playwright 폴백 환경을 확인하세요.';
   }
   if (flatErrors.some((e) => e.includes('enotfound') || e.includes('eai_again') || e.includes('getaddrinfo'))) {
     return '도매꾹 DNS/네트워크 연결 문제로 후보 수집에 실패했습니다.';
@@ -4180,6 +4189,8 @@ async function generateRecommendationsBatch({
           diagnostics.hint = `품질 검증 단계에서 제외되었습니다 (${reasonLabel} ${topStrictReject[1]}건).`;
         }
       }
+    } else if (diagnostics.openApiKeyMissing && !diagnostics.hasDomeggookSessionPath) {
+      diagnostics.hint = '도매꾹 OpenAPI 키가 없고 세션 파일 경로도 비어 있어 후보 수집을 시작하지 못했습니다.';
     } else if (Number(diagnostics.scoredCandidates || 0) === 0) {
       const topReject = Object.entries(scoreRejectCounts)
         .sort((a, b) => Number(b?.[1] || 0) - Number(a?.[1] || 0))[0];
@@ -4188,8 +4199,6 @@ async function generateRecommendationsBatch({
       } else {
         diagnostics.hint = detectRecommendationHint(keywordDiagnostics);
       }
-    } else if (diagnostics.openApiKeyMissing && !diagnostics.hasDomeggookSessionPath) {
-      diagnostics.hint = '도매꾹 OpenAPI 키가 없고 세션 파일 경로도 비어 있어 후보 수집을 시작하지 못했습니다.';
     } else {
       diagnostics.hint = detectRecommendationHint(keywordDiagnostics);
     }
