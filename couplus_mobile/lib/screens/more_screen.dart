@@ -29,6 +29,8 @@ class _MoreScreenState extends State<MoreScreen> {
   final _coupangVendorUserId = TextEditingController();
   final _coupangDeliveryCompanyCode = TextEditingController();
   final _pagesApiToken = TextEditingController();
+  final _domemeId = TextEditingController();
+  final _domemePw = TextEditingController();
 
   // Pricing / shipping / category settings
   final _marginRate = TextEditingController();
@@ -49,10 +51,15 @@ class _MoreScreenState extends State<MoreScreen> {
   bool _revealCoupangVendorUserId = false;
   bool _revealCoupangDeliveryCompanyCode = false;
   bool _revealPagesApiToken = false;
+  bool _revealDomemeId = false;
+  bool _revealDomemePw = false;
+  bool _startingDomemeSession = false;
+  bool _checkingDomemeSession = false;
 
   String? _error;
   String? _sensitiveError;
   Map<String, dynamic>? _me;
+  Map<String, dynamic>? _domemeSessionStatus;
 
   // Presets
   List<Map<String, dynamic>> _presets = const [];
@@ -75,6 +82,8 @@ class _MoreScreenState extends State<MoreScreen> {
     _coupangVendorUserId.dispose();
     _coupangDeliveryCompanyCode.dispose();
     _pagesApiToken.dispose();
+    _domemeId.dispose();
+    _domemePw.dispose();
     _marginRate.dispose();
     _marginAdd.dispose();
     _priceMin.dispose();
@@ -93,6 +102,7 @@ class _MoreScreenState extends State<MoreScreen> {
       final json = await widget.api.getJson('/api/me');
       setState(() => _me = json);
       await _refreshSettings();
+      await _refreshDomemeSessionStatus();
     } catch (e) {
       // 401은 에러 배너 대신 "로그인 필요" 상태로 처리
       if (e is ApiException && e.isUnauthorized) {
@@ -130,6 +140,10 @@ class _MoreScreenState extends State<MoreScreen> {
               _coupangDeliveryCompanyCode.text;
       _pagesApiToken.text =
           local[SensitiveSettingsStore.pagesApiToken] ?? _pagesApiToken.text;
+      _domemeId.text =
+          local[SensitiveSettingsStore.domemeId] ?? _domemeId.text;
+      _domemePw.text =
+          local[SensitiveSettingsStore.domemePw] ?? _domemePw.text;
       if (mounted) setState(() {});
     } catch (e) {
       // Non-fatal.
@@ -165,6 +179,12 @@ class _MoreScreenState extends State<MoreScreen> {
       _pagesApiToken.text = _pagesApiToken.text.isNotEmpty
           ? _pagesApiToken.text
           : (s[SensitiveSettingsStore.pagesApiToken]?.toString() ?? '');
+      _domemeId.text = _domemeId.text.isNotEmpty
+          ? _domemeId.text
+          : (s[SensitiveSettingsStore.domemeId]?.toString() ?? '');
+      _domemePw.text = _domemePw.text.isNotEmpty
+          ? _domemePw.text
+          : (s[SensitiveSettingsStore.domemePw]?.toString() ?? '');
 
       // General settings
       _marginRate.text = (s['marginRate'] ?? '').toString();
@@ -198,6 +218,8 @@ class _MoreScreenState extends State<MoreScreen> {
       SensitiveSettingsStore.coupangDeliveryCompanyCode:
           _coupangDeliveryCompanyCode.text.trim(),
       SensitiveSettingsStore.pagesApiToken: _pagesApiToken.text.trim(),
+      SensitiveSettingsStore.domemeId: _domemeId.text.trim(),
+      SensitiveSettingsStore.domemePw: _domemePw.text.trim(),
 
       // General
       'marginRate': double.tryParse(_marginRate.text.trim()) ?? 0,
@@ -341,6 +363,8 @@ class _MoreScreenState extends State<MoreScreen> {
       final vendorUserId = _coupangVendorUserId.text.trim();
       final deliveryCompanyCode = _coupangDeliveryCompanyCode.text.trim();
       final pagesToken = _pagesApiToken.text.trim();
+      final domemeId = _domemeId.text.trim();
+      final domemePw = _domemePw.text.trim();
 
       // Save on-device first.
       await _sensitiveStore.write(
@@ -356,6 +380,10 @@ class _MoreScreenState extends State<MoreScreen> {
           deliveryCompanyCode);
       await _sensitiveStore.write(
           SensitiveSettingsStore.pagesApiToken, pagesToken);
+      await _sensitiveStore.write(
+          SensitiveSettingsStore.domemeId, domemeId);
+      await _sensitiveStore.write(
+          SensitiveSettingsStore.domemePw, domemePw);
 
       // Sync to server (requires auth cookie).
       await widget.api.postJson('/api/settings', {
@@ -365,6 +393,8 @@ class _MoreScreenState extends State<MoreScreen> {
         SensitiveSettingsStore.coupangVendorUserId: vendorUserId,
         SensitiveSettingsStore.coupangDeliveryCompanyCode: deliveryCompanyCode,
         SensitiveSettingsStore.pagesApiToken: pagesToken,
+        SensitiveSettingsStore.domemeId: domemeId,
+        SensitiveSettingsStore.domemePw: domemePw,
 
         // General settings
         'marginRate': double.tryParse(_marginRate.text.trim()) ?? 0,
@@ -384,10 +414,52 @@ class _MoreScreenState extends State<MoreScreen> {
             .showSnackBar(const SnackBar(content: Text('Saved')));
       }
       await _refreshSettings();
+      await _refreshDomemeSessionStatus();
     } catch (e) {
       if (mounted) setState(() => _sensitiveError = e.toString());
     } finally {
       if (mounted) setState(() => _savingSensitive = false);
+    }
+  }
+
+  Future<void> _refreshDomemeSessionStatus() async {
+    if (((_me?['user'] as Map?)?['email']?.toString() ?? '').isEmpty) {
+      if (mounted) setState(() => _domemeSessionStatus = null);
+      return;
+    }
+    setState(() => _checkingDomemeSession = true);
+    try {
+      final json = await widget.api.getJson('/api/domeme/session/status');
+      if (mounted) {
+        setState(() => _domemeSessionStatus = json);
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _sensitiveError = e.toString());
+      }
+    } finally {
+      if (mounted) setState(() => _checkingDomemeSession = false);
+    }
+  }
+
+  Future<void> _startDomemeSession() async {
+    setState(() {
+      _startingDomemeSession = true;
+      _sensitiveError = null;
+    });
+    try {
+      await widget.api.postJson('/api/domeme/session/start', {});
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('브라우저가 열리면 도매매 로그인 후 잠시 기다렸다가 상태를 다시 확인해 주세요.'),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) setState(() => _sensitiveError = e.toString());
+    } finally {
+      if (mounted) setState(() => _startingDomemeSession = false);
     }
   }
 
@@ -450,6 +522,9 @@ class _MoreScreenState extends State<MoreScreen> {
   @override
   Widget build(BuildContext context) {
     final authedEmail = (_me?['user'] as Map?)?['email']?.toString() ?? '';
+    final domemeSessionExists = _domemeSessionStatus?['exists'] == true;
+    final domemeSessionUpdatedAt =
+        (_domemeSessionStatus?['updatedAt'] ?? '').toString();
 
     return AppScaffold(
       title: 'More',
@@ -586,6 +661,8 @@ class _MoreScreenState extends State<MoreScreen> {
                                     _revealCoupangVendorUserId = false;
                                     _revealCoupangDeliveryCompanyCode = false;
                                     _revealPagesApiToken = false;
+                                    _revealDomemeId = false;
+                                    _revealDomemePw = false;
                                   });
                                 },
                           child: const Text('Lock'),
@@ -758,6 +835,44 @@ class _MoreScreenState extends State<MoreScreen> {
                     ),
                   ),
                 ),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: _domemeId,
+                  enabled: _sensitiveUnlocked && !_savingSensitive,
+                  obscureText: !_revealDomemeId,
+                  decoration: InputDecoration(
+                    labelText: 'Domeme ID',
+                    helperText: '도매매 로그인 ID',
+                    suffixIcon: IconButton(
+                      onPressed: _sensitiveUnlocked
+                          ? () => setState(() => _revealDomemeId = !_revealDomemeId)
+                          : null,
+                      icon: Icon(_revealDomemeId
+                          ? Icons.visibility_off
+                          : Icons.visibility),
+                      tooltip: _revealDomemeId ? 'Hide' : 'Reveal',
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: _domemePw,
+                  enabled: _sensitiveUnlocked && !_savingSensitive,
+                  obscureText: !_revealDomemePw,
+                  decoration: InputDecoration(
+                    labelText: 'Domeme password',
+                    helperText: '도매매 로그인 비밀번호',
+                    suffixIcon: IconButton(
+                      onPressed: _sensitiveUnlocked
+                          ? () => setState(() => _revealDomemePw = !_revealDomemePw)
+                          : null,
+                      icon: Icon(_revealDomemePw
+                          ? Icons.visibility_off
+                          : Icons.visibility),
+                      tooltip: _revealDomemePw ? 'Hide' : 'Reveal',
+                    ),
+                  ),
+                ),
                 const SizedBox(height: 14),
                 SizedBox(
                   width: double.infinity,
@@ -774,6 +889,60 @@ class _MoreScreenState extends State<MoreScreen> {
                             child: CircularProgressIndicator(strokeWidth: 2))
                         : Text(
                             authedEmail.isEmpty ? 'Sign in to save' : 'Save'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+          AppCard(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                SectionHeader(
+                  '도매매 연결',
+                  trailing: _checkingDomemeSession
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : TextButton(
+                          onPressed: authedEmail.isEmpty ? null : _refreshDomemeSessionStatus,
+                          child: const Text('상태 확인'),
+                        ),
+                ),
+                const SizedBox(height: 10),
+                KvRow(k: '세션', v: domemeSessionExists ? '연결됨' : '미연결'),
+                KvRow(
+                  k: '마지막 갱신',
+                  v: domemeSessionUpdatedAt.isEmpty ? '-' : domemeSessionUpdatedAt,
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  '주문 탭에서 도매매 업로드 후 결제 링크를 받으려면, 아래 세션 생성으로 네이버 로그인 세션을 먼저 만들어두는 게 가장 안정적입니다. 세션이 없어도 ID/PW 저장 시 fallback 로그인을 시도합니다.',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Theme.of(context)
+                        .colorScheme
+                        .onSurface
+                        .withValues(alpha: 0.65),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton.tonal(
+                    onPressed: authedEmail.isEmpty || _startingDomemeSession
+                        ? null
+                        : _startDomemeSession,
+                    child: _startingDomemeSession
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Text('도매매 세션 생성 시작'),
                   ),
                 ),
               ],
