@@ -40,6 +40,10 @@ import {
 } from "./src/server/storage_sqlite.js";
 import { exportOrdersToDomeme } from "./src/pipeline/exportOrdersToDomeme.js";
 import { uploadDomemeExcel } from "./src/pipeline/uploadDomemeExcel.js";
+import {
+  listOrders,
+  refreshShippingStatusesFromCoupang,
+} from "./src/server/orders_sqlite.js";
 import { spawn } from "node:child_process";
 import { getSellerProduct } from "./src/coupang/api/getSellerProduct.js";
 import { getSellerProductHistories } from "./src/coupang/api/getSellerProductHistories.js";
@@ -4492,6 +4496,52 @@ app.get("/api/recommendations/auto-run/status", authRequired, async (req, res) =
 });
 
 // ✅ 주문 엑셀 생성
+app.get("/api/orders", authRequired, async (req, res) => {
+  try {
+    const limitRaw = Number(req.query?.limit);
+    const limit = Number.isFinite(limitRaw) ? limitRaw : 50;
+    const orders = await listOrders(req.user.id, limit);
+    return res.json({ ok: true, orders });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+app.post("/api/orders/shipping/refresh", authRequired, async (req, res) => {
+  try {
+    const dateFrom = String(req.body?.dateFrom || "").trim();
+    const dateTo = String(req.body?.dateTo || "").trim();
+    const status = String(req.body?.status || "ACCEPT").trim() || "ACCEPT";
+    if (!dateFrom || !dateTo) {
+      return res.status(400).json({ ok: false, error: "missing dates" });
+    }
+
+    const result = await refreshShippingStatusesFromCoupang({
+      userId: req.user.id,
+      settings: req.user.settings || {},
+      dateFrom,
+      dateTo,
+      status,
+    });
+
+    if (!result?.ok) {
+      const code = result?.reason === "missing_keys" || result?.reason === "missing_dates" ? 400 : 502;
+      return res.status(code).json({ ok: false, error: String(result?.reason || "shipping_refresh_failed"), result });
+    }
+
+    return res.json({
+      ok: true,
+      result: {
+        ...result,
+        scanned: result.scannedSheets ?? 0,
+        updated: result.processed ?? 0,
+      },
+    });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
 app.post("/api/orders/export", authRequired, async (req, res) => {
   try {
     const dateFrom = String(req.body?.dateFrom || "").trim();
@@ -4504,6 +4554,7 @@ app.post("/api/orders/export", authRequired, async (req, res) => {
       dateTo,
       status: "ACCEPT",
       settings: req.user.settings || {},
+      allowEnvFallback: false,
     });
     return res.json({ ok: true, result });
   } catch (e) {

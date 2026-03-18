@@ -110,7 +110,9 @@ async function fetchOrderSheetsAll({ vendorId, accessKey, secretKey, createdAtFr
     } catch {
       return { ok: false, error: "invalid_json", body: res.body };
     }
-    if (!body || body.code !== "SUCCESS") {
+    const code = body?.code;
+    const isOk = code === "SUCCESS" || code === 200 || code === "200";
+    if (!body || !isOk) {
       return { ok: false, error: "api_failed", body };
     }
     const data = body.data || [];
@@ -126,10 +128,17 @@ export async function exportOrdersToDomeme({
   dateTo,
   status = "ACCEPT",
   settings = {},
+  allowEnvFallback = true,
 }) {
-  const accessKey = String(settings.coupangAccessKey || COUPANG_ACCESS_KEY || "").trim();
-  const secretKey = String(settings.coupangSecretKey || COUPANG_SECRET_KEY || "").trim();
-  const vendorId = String(settings.coupangVendorId || COUPANG_VENDOR_ID || "").trim();
+  const accessKey = String(
+    settings.coupangAccessKey || (allowEnvFallback ? COUPANG_ACCESS_KEY : "") || "",
+  ).trim();
+  const secretKey = String(
+    settings.coupangSecretKey || (allowEnvFallback ? COUPANG_SECRET_KEY : "") || "",
+  ).trim();
+  const vendorId = String(
+    settings.coupangVendorId || (allowEnvFallback ? COUPANG_VENDOR_ID : "") || "",
+  ).trim();
 
   const missingEnv = [];
   if (!accessKey) missingEnv.push("COUPANG_ACCESS_KEY");

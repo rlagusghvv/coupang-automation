@@ -3,7 +3,12 @@ import fs from "node:fs";
 import path from "node:path";
 import { getOrderSheets } from "../coupang/api/getOrderSheets.js";
 
-const DATA_DIR = path.join(process.cwd(), "data");
+function resolveDataDir() {
+  const override = String(process.env.COUPLEPHANT_DATA_DIR || "").trim();
+  return override ? path.resolve(override) : path.join(process.cwd(), "data");
+}
+
+const DATA_DIR = resolveDataDir();
 const DB_PATH = path.join(DATA_DIR, "app.db");
 
 function ensureDir() {
@@ -14,6 +19,21 @@ let _schemaReady = false;
 
 async function ensureOrdersSchema(db) {
   if (_schemaReady) return;
+
+  await dbRun(
+    db,
+    `CREATE TABLE IF NOT EXISTS orders (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id TEXT NOT NULL,
+      source TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'paid',
+      external_id TEXT,
+      external_sub_id TEXT,
+      order_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )`,
+  );
 
   // ensure columns
   const cols = await dbAll(db, "PRAGMA table_info(orders)");
