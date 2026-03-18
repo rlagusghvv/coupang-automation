@@ -19,10 +19,12 @@ class MyProductsScreen extends StatefulWidget {
 class _MyProductsScreenState extends State<MyProductsScreen> {
   bool _loading = false;
   bool _syncingStatus = false;
+  bool _priceAuditBusy = false;
   bool _marketingBusy = false;
   String? _marketingBusyId;
   String? _error;
   String? _lastSyncSummary;
+  String? _lastPriceAuditSummary;
   List<Map<String, dynamic>> _products = const [];
 
   final _q = TextEditingController();
@@ -288,6 +290,169 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
 
   void _clearSelection() {
     setState(() => _selected.clear());
+  }
+
+  Map<String, dynamic> _priceAuditOf(Map<String, dynamic> product) {
+    final raw = product['priceAudit'];
+    if (raw is Map) {
+      return raw.cast<String, dynamic>();
+    }
+    return const <String, dynamic>{};
+  }
+
+  bool _isLowPriceFlagged(Map<String, dynamic> product) {
+    final audit = _priceAuditOf(product);
+    return audit['flagged'] == true;
+  }
+
+  String _formatPriceValue(dynamic raw) {
+    final n = num.tryParse((raw ?? '').toString());
+    if (n == null || !n.isFinite || n <= 0) return '-';
+    return '${n.round().toString()}원';
+  }
+
+  String _priceAuditSummaryLine(Map<String, dynamic> product) {
+    final audit = _priceAuditOf(product);
+    if (audit.isEmpty) return '';
+    final source = _formatPriceValue(audit['sourcePrice']);
+    final current = _formatPriceValue(audit['liveSalePrice']);
+    final expected = _formatPriceValue(audit['expectedFinalPrice']);
+    return '공급 $source · 현재 $current · 예상 $expected';
+  }
+
+  void _selectFlaggedVisible() {
+    final ids = _products
+        .where(_isLowPriceFlagged)
+        .map((p) => (p['id'] ?? '').toString().trim())
+        .where((id) => id.isNotEmpty)
+        .toSet();
+    setState(() {
+      _selectMode = true;
+      _selected
+        ..clear()
+        ..addAll(ids);
+    });
+  }
+
+  Future<void> _scanLowPriceMisparses() async {
+    final ids = _products
+        .map((p) => (p['id'] ?? '').toString().trim())
+        .where((id) => id.isNotEmpty)
+        .toList();
+    if (ids.isEmpty) return;
+
+    setState(() {
+      _priceAuditBusy = true;
+      _error = null;
+    });
+
+    try {
+      final json = await widget.api.postJson('/api/catalog/price-audit/scan', {
+        'ids': ids,
+      });
+      final items = (json['items'] as List?) ?? const [];
+      final flaggedIds = <String>{};
+      for (final raw in items) {
+        if (raw is! Map) continue;
+        final item = raw.cast<String, dynamic>();
+        if (item['flagged'] != true) continue;
+        final product = (item['product'] as Map?)?.cast<String, dynamic>() ??
+            const <String, dynamic>{};
+        final id = (product['id'] ?? item['id'] ?? '').toString().trim();
+        if (id.isNotEmpty) flaggedIds.add(id);
+      }
+      final scanned = int.tryParse((json['scanned'] ?? 0).toString()) ?? 0;
+      final flagged = int.tryParse((json['flagged'] ?? 0).toString()) ?? 0;
+      final skipped = int.tryParse((json['skipped'] ?? 0).toString()) ?? 0;
+
+      await _refresh(syncRemote: false);
+      if (!mounted) return;
+      setState(() {
+        _lastPriceAuditSummary =
+            '저가 검사: 문제 $flagged건 · 스킵 $skipped건 (검사 $scanned건)';
+        _selectMode = flaggedIds.isNotEmpty;
+        _selected
+          ..clear()
+          ..addAll(flaggedIds);
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            flaggedIds.isNotEmpty
+                ? '저가 의심 ${flaggedIds.length}건을 선택해 두었습니다.'
+                : '저가 오파싱 의심 상품을 찾지 못했습니다.',
+          ),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _error = '저가 검사 실패: $e');
+    } finally {
+      if (mounted) {
+        setState(() => _priceAuditBusy = false);
+      }
+    }
+  }
+
+  Future<void> _bulkDeleteRemote() async {
+    if (_selected.isEmpty) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('쿠팡 상품 삭제'),
+        content: Text(
+          '선택한 ${_selected.length}건을 쿠팡 Wing에서도 삭제합니다. 이미 잘못 올라간 상품일 때만 진행하세요.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('취소'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('삭제'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+
+    var okCount = 0;
+    var skippedCount = 0;
+    var failedCount = 0;
+
+    try {
+      for (final id in _selected) {
+        if (id.trim().isEmpty) {
+          skippedCount += 1;
+          continue;
+        }
+        try {
+          await widget.api.postJson('/api/catalog/$id/delete-remote', {});
+          okCount += 1;
+        } catch (_) {
+          failedCount += 1;
+        }
+      }
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            '쿠팡 삭제 완료: 성공 $okCount · 스킵 $skippedCount · 실패 $failedCount',
+          ),
+        ),
+      );
+      setState(() => _selected.clear());
+      await _refresh(syncRemote: false);
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
   }
 
   String _defaultMarketingCampaign() {
@@ -1996,6 +2161,17 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
           icon: const Icon(Icons.playlist_add),
         ),
         IconButton(
+          onPressed: _loading || _priceAuditBusy ? null : _scanLowPriceMisparses,
+          tooltip: '저가 오파싱 검사',
+          icon: _priceAuditBusy
+              ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Icon(Icons.price_check_outlined),
+        ),
+        IconButton(
           onPressed: _loading
               ? null
               : () {
@@ -2079,6 +2255,10 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
                   child: const Text('전체선택'),
                 ),
                 TextButton(
+                  onPressed: _loading ? null : _selectFlaggedVisible,
+                  child: const Text('문제만 선택'),
+                ),
+                TextButton(
                   onPressed:
                       _loading || _selected.isEmpty ? null : _clearSelection,
                   child: const Text('선택해제'),
@@ -2087,6 +2267,11 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
                   onPressed:
                       _loading || _selected.isEmpty ? null : _bulkArchive,
                   child: const Text('삭제'),
+                ),
+                TextButton(
+                  onPressed:
+                      _loading || _selected.isEmpty ? null : _bulkDeleteRemote,
+                  child: const Text('쿠팡 삭제'),
                 ),
                 TextButton(
                   onPressed: _loading || _selected.isEmpty ? null : _bulkSync,
@@ -2108,6 +2293,19 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
             const SizedBox(height: 8),
             Text(
               _lastSyncSummary!,
+              style: TextStyle(
+                fontSize: 12,
+                color: Theme.of(context)
+                    .colorScheme
+                    .onSurface
+                    .withValues(alpha: 0.65),
+              ),
+            ),
+          ],
+          if ((_lastPriceAuditSummary ?? '').trim().isNotEmpty) ...[
+            const SizedBox(height: 4),
+            Text(
+              _lastPriceAuditSummary!,
               style: TextStyle(
                 fontSize: 12,
                 color: Theme.of(context)
@@ -2147,6 +2345,8 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
                 final selected = _selected.contains(id);
                 final canGenerateOneShot = _canGenerateMarketingOneShot(p);
                 final marketingBusy = _marketingBusy && _marketingBusyId == id;
+                final lowPriceFlagged = _isLowPriceFlagged(p);
+                final priceAuditSummary = _priceAuditSummaryLine(p);
 
                 return AppCard(
                   onTap: id.isEmpty
@@ -2234,6 +2434,11 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
                                     label: 'SPID $sellerProductId',
                                     color: const Color(0xFF2F9E44),
                                   ),
+                                if (lowPriceFlagged)
+                                  const InfoChip(
+                                    label: '저가 의심',
+                                    color: Color(0xFFC92A2A),
+                                  ),
                               ],
                             ),
                             if (remoteStatusName.isNotEmpty &&
@@ -2247,6 +2452,21 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
                                       .colorScheme
                                       .onSurface
                                       .withValues(alpha: 0.68),
+                                ),
+                              ),
+                            ],
+                            if (priceAuditSummary.isNotEmpty) ...[
+                              const SizedBox(height: 6),
+                              Text(
+                                priceAuditSummary,
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: lowPriceFlagged
+                                      ? const Color(0xFFC92A2A)
+                                      : Theme.of(context)
+                                          .colorScheme
+                                          .onSurface
+                                          .withValues(alpha: 0.68),
                                 ),
                               ),
                             ],

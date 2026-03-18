@@ -7,6 +7,7 @@ import crypto from "node:crypto";
 import { runUploadFromUrl } from "./src/pipeline/runUploadFromUrl.js";
 import { previewUploadFromUrl } from "./src/pipeline/previewUploadFromUrl.js";
 import { evaluateQcGate } from "./src/pipeline/qcGate.js";
+import { parseProductFromDomaeqq } from "./src/sources/domaeqq/parseProductFromDomaeqq.js";
 import { classifyUrl } from "./src/utils/urlFilter.js";
 import { computePrice } from "./src/utils/price.js";
 import { extractImageUrls } from "./src/utils/contentImages.js";
@@ -56,6 +57,7 @@ import { getSellerProductHistories } from "./src/coupang/api/getSellerProductHis
 import { acknowledgeOrderSheets } from "./src/coupang/api/acknowledgeOrderSheets.js";
 import { getOrderSheetByShipmentBoxId } from "./src/coupang/api/getOrderSheetByShipmentBoxId.js";
 import { uploadOrderInvoices } from "./src/coupang/api/uploadOrderInvoices.js";
+import { deleteSellerProduct } from "./src/coupang/api/deleteSellerProduct.js";
 import { parseCoupangJson } from "./src/coupang/parseJson.js";
 import {
   listRecommendations,
@@ -2150,6 +2152,7 @@ function extractSellerStatusSnapshot({
   const mainImageUrl = extractMainImageFromSellerData(data) || null;
   const detailHtml = extractDetailHtmlFromSellerData(data);
   const detailImages = normalizeImageListForClient(extractImageUrls(detailHtml), 200);
+  const salePrice = extractSellerSalePriceFromSellerData(data);
   const categoryCode = toPositiveIntOrNull(
     data?.displayCategoryCode ??
       data?.displayCategoryId ??
@@ -2189,6 +2192,7 @@ function extractSellerStatusSnapshot({
     productId,
     vendorItemId,
     title: title || null,
+    salePrice,
     mainImageUrl,
     detailImages,
     categoryCode,
@@ -2220,6 +2224,69 @@ function inferCatalogStatus(currentStatus, snapshot = null, fallback = "confirme
 function inferCatalogStatusForSync(currentStatus, snapshot = null, fallback = "confirmed") {
   // Sync should reflect real remote lifecycle status.
   return inferCatalogStatus(currentStatus, snapshot, fallback);
+}
+
+function extractPositivePrice(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return Math.round(n);
+}
+
+function extractSellerSalePriceFromSellerData(data = {}) {
+  const directCandidates = [
+    data?.salePrice,
+    data?.sale_price,
+    data?.discountPrice,
+    data?.discount_price,
+    data?.sellingPrice,
+    data?.selling_price,
+    data?.price,
+    data?.displayPrice,
+    data?.display_price,
+    data?.saleAmount,
+    data?.sale_amount,
+    data?.items?.[0]?.salePrice,
+    data?.items?.[0]?.sale_price,
+    data?.items?.[0]?.sellingPrice,
+    data?.items?.[0]?.selling_price,
+    data?.items?.[0]?.price,
+    data?.items?.[0]?.displayPrice,
+    data?.items?.[0]?.display_price,
+    data?.items?.[0]?.originalPrice,
+  ]
+    .map(extractPositivePrice)
+    .filter((n) => Number.isFinite(n) && n > 0);
+  if (directCandidates.length > 0) {
+    return Math.min(...directCandidates);
+  }
+
+  const itemCandidates = (Array.isArray(data?.items) ? data.items : [])
+    .flatMap((item) => [
+      item?.salePrice,
+      item?.sale_price,
+      item?.sellingPrice,
+      item?.selling_price,
+      item?.price,
+      item?.displayPrice,
+      item?.display_price,
+      item?.originalPrice,
+    ])
+    .map(extractPositivePrice)
+    .filter((n) => Number.isFinite(n) && n > 0);
+  if (itemCandidates.length > 0) {
+    return Math.min(...itemCandidates);
+  }
+
+  return null;
+}
+
+function isDomeggookSourceUrl(rawUrl) {
+  try {
+    const u = new URL(String(rawUrl || "").trim());
+    return u.hostname.toLowerCase().includes("domeggook.com");
+  } catch {
+    return false;
+  }
 }
 
 function normalizeCatalogProduct(row) {
@@ -2261,6 +2328,7 @@ function normalizeCatalogProduct(row) {
     buildCoupangProductUrl(productId),
   );
   const validation = meta.validation && typeof meta.validation === "object" ? meta.validation : {};
+  const priceAudit = meta.priceAudit && typeof meta.priceAudit === "object" ? meta.priceAudit : {};
   const sourceUrl = pickFirstNonEmpty(row?.sourceUrl, meta.sourceUrl);
   return {
     id: String(row?.id ?? ""),
@@ -2277,6 +2345,7 @@ function normalizeCatalogProduct(row) {
     remoteStatusName: pickFirstNonEmpty(followUp.statusName) || null,
     followUp,
     validation,
+    priceAudit: Object.keys(priceAudit).length > 0 ? priceAudit : null,
     lastSyncedAt: String(meta.lastSyncedAt || "").trim() || null,
     deployedAt: String(meta.deployedAt || "").trim() || null,
     createdAt: row?.createdAt || null,
@@ -2465,6 +2534,204 @@ async function fetchSellerStatusLive({ sellerProductId, settings, includeHistory
   return snapshot;
 }
 
+function buildPriceAuditRecord({
+  sourceUrl,
+  sellerProductId,
+  sourcePrice = null,
+  expectedFinalPrice = null,
+  liveSalePrice = null,
+  supplierItemNo = null,
+  flagged = false,
+  reason = "",
+  liveStatusName = null,
+  supplierTitle = "",
+  note = "",
+} = {}) {
+  const source = extractPositivePrice(sourcePrice);
+  const expected = extractPositivePrice(expectedFinalPrice);
+  const current = extractPositivePrice(liveSalePrice);
+  const ratioToSource =
+    Number.isFinite(source) && source > 0 && Number.isFinite(current) && current > 0
+      ? Number((current / source).toFixed(4))
+      : null;
+  const ratioToExpected =
+    Number.isFinite(expected) && expected > 0 && Number.isFinite(current) && current > 0
+      ? Number((current / expected).toFixed(4))
+      : null;
+  return {
+    checkedAt: new Date().toISOString(),
+    flagged: Boolean(flagged),
+    reason: String(reason || "").trim() || null,
+    sourceUrl: String(sourceUrl || "").trim() || null,
+    sellerProductId: String(sellerProductId || "").trim() || null,
+    sourcePrice: source ?? null,
+    expectedFinalPrice: expected ?? null,
+    liveSalePrice: current ?? null,
+    ratioToSource,
+    ratioToExpected,
+    supplierItemNo: String(supplierItemNo || "").trim() || null,
+    liveStatusName: String(liveStatusName || "").trim() || null,
+    supplierTitle: String(supplierTitle || "").trim() || null,
+    note: String(note || "").trim() || null,
+  };
+}
+
+async function auditCatalogPriceOne({ user, row }) {
+  const sourceUrl = pickFirstNonEmpty(row?.sourceUrl, row?.meta?.sourceUrl);
+  const sellerProductId = resolveCatalogSellerProductId(row);
+  if (!sourceUrl) {
+    return buildPriceAuditRecord({
+      sourceUrl,
+      sellerProductId,
+      flagged: false,
+      reason: "missing_source_url",
+      note: "원본 공급처 URL이 없어 검사를 건너뛰었습니다.",
+    });
+  }
+  if (!isDomeggookSourceUrl(sourceUrl)) {
+    return buildPriceAuditRecord({
+      sourceUrl,
+      sellerProductId,
+      flagged: false,
+      reason: "unsupported_source",
+      note: "도매꾹 원본만 자동 가격 재검증합니다.",
+    });
+  }
+
+  const supplierDraft = await parseProductFromDomaeqq(sourceUrl, {
+    mode: "full",
+    previewPlaywrightFast: false,
+  });
+  const sourcePrice = extractPositivePrice(supplierDraft?.price);
+  const expectedFinalPrice =
+    sourcePrice == null
+      ? null
+      : extractPositivePrice(
+          computePrice(sourcePrice, {
+            rate: user?.settings?.marginRate,
+            add: user?.settings?.marginAdd,
+            min: user?.settings?.priceMin,
+            roundUnit: user?.settings?.roundUnit,
+          }),
+        );
+
+  let live = null;
+  if (sellerProductId) {
+    try {
+      live = await fetchSellerStatusLive({
+        sellerProductId,
+        settings: user?.settings || {},
+        includeHistory: false,
+      });
+    } catch {}
+  }
+
+  const currentMeta = row?.meta && typeof row.meta === "object" ? row.meta : {};
+  const currentFollowUp =
+    currentMeta.followUp && typeof currentMeta.followUp === "object"
+      ? currentMeta.followUp
+      : {};
+  const liveSalePrice = extractPositivePrice(
+    live?.salePrice ?? currentFollowUp?.salePrice,
+  );
+
+  if (!sourcePrice) {
+    return buildPriceAuditRecord({
+      sourceUrl,
+      sellerProductId,
+      liveSalePrice,
+      expectedFinalPrice,
+      supplierItemNo: supplierDraft?.sourcePurchase?.itemNo,
+      supplierTitle: supplierDraft?.title,
+      liveStatusName: live?.statusName,
+      flagged: false,
+      reason: "source_price_missing",
+      note: "공급가를 재확인하지 못했습니다.",
+    });
+  }
+
+  if (!liveSalePrice) {
+    return buildPriceAuditRecord({
+      sourceUrl,
+      sellerProductId,
+      sourcePrice,
+      expectedFinalPrice,
+      supplierItemNo: supplierDraft?.sourcePurchase?.itemNo,
+      supplierTitle: supplierDraft?.title,
+      liveStatusName: live?.statusName,
+      flagged: false,
+      reason: "live_price_missing",
+      note: "현재 쿠팡 판매가를 읽지 못했습니다.",
+    });
+  }
+
+  const gapToSource = sourcePrice - liveSalePrice;
+  const gapToExpected =
+    Number.isFinite(Number(expectedFinalPrice)) && expectedFinalPrice != null
+      ? Number(expectedFinalPrice) - liveSalePrice
+      : null;
+  const ratioToSource = liveSalePrice / sourcePrice;
+  const ratioToExpected =
+    Number.isFinite(Number(expectedFinalPrice)) && Number(expectedFinalPrice) > 0
+      ? liveSalePrice / Number(expectedFinalPrice)
+      : null;
+  const severeLow = ratioToSource <= 0.5;
+  const suspiciousGap = gapToSource >= 5000 && ratioToSource <= 0.8;
+  const suspiciousExpectedGap =
+    Number.isFinite(Number(gapToExpected)) &&
+    Number(gapToExpected) >= 5000 &&
+    Number.isFinite(Number(ratioToExpected)) &&
+    Number(ratioToExpected) <= 0.6;
+  const flagged = Boolean(severeLow || suspiciousGap || suspiciousExpectedGap);
+
+  let reason = "ok";
+  if (severeLow) reason = "far_below_source_price";
+  else if (suspiciousGap) reason = "below_source_price";
+  else if (suspiciousExpectedGap) reason = "far_below_expected_price";
+
+  return buildPriceAuditRecord({
+    sourceUrl,
+    sellerProductId,
+    sourcePrice,
+    expectedFinalPrice,
+    liveSalePrice,
+    supplierItemNo: supplierDraft?.sourcePurchase?.itemNo,
+    supplierTitle: supplierDraft?.title,
+    liveStatusName: live?.statusName,
+    flagged,
+    reason,
+    note: flagged
+      ? "공급가 재검증 결과 현재 쿠팡 판매가가 비정상적으로 낮습니다."
+      : "공급가 대비 현재 판매가가 정상 범위입니다.",
+  });
+}
+
+async function persistCatalogPriceAudit({ userId, row, audit }) {
+  const nextMeta = row?.meta && typeof row.meta === "object" ? { ...row.meta } : {};
+  nextMeta.priceAudit = audit;
+  const prevValidation =
+    nextMeta.validation && typeof nextMeta.validation === "object"
+      ? { ...nextMeta.validation }
+      : {};
+  const nextErrors = Array.isArray(prevValidation.errors)
+    ? prevValidation.errors
+        .map((x) => String(x || "").trim())
+        .filter((x) => x && x !== "price_too_low_suspected")
+    : [];
+  if (audit?.flagged) nextErrors.push("price_too_low_suspected");
+  nextMeta.validation = {
+    ...prevValidation,
+    checkedAt: String(audit?.checkedAt || new Date().toISOString()),
+    ok: nextErrors.length === 0,
+    errors: uniqueStrings(nextErrors),
+  };
+  return updateUploadedProductById({
+    userId,
+    id: row.id,
+    patch: { metaReplace: nextMeta },
+  });
+}
+
 function isRemoteDeleted(live = null) {
   if (!live) return false;
   if (live.ok && isDeletedStatusName(live?.statusName)) return true;
@@ -2580,6 +2847,90 @@ app.get("/api/catalog", authRequired, async (req, res) => {
       total: products.length,
       limit: listed.limit ?? limit,
       offset: listed.offset ?? offset,
+    });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+app.post("/api/catalog/price-audit/scan", authRequired, async (req, res) => {
+  try {
+    const b = req.body || {};
+    const ids = Array.isArray(b.ids)
+      ? b.ids.map((x) => String(x || "").trim()).filter(Boolean)
+      : [];
+    const limit = Math.max(1, Math.min(200, Number(b.limit || ids.length || 50) || 50));
+
+    const rows = [];
+    if (ids.length > 0) {
+      for (const id of ids.slice(0, limit)) {
+        const row = await getUploadedProductById(req.user.id, id);
+        if (row) rows.push(row);
+      }
+    } else {
+      const listed = await listUploadedProducts({
+        userId: req.user.id,
+        q: "",
+        status: "",
+        limit,
+        offset: 0,
+      });
+      rows.push(
+        ...((listed.items || []).filter((row) => {
+          const status = String(row?.status || "").trim();
+          return status !== "deleted_local" && status !== "deleted_remote";
+        })),
+      );
+    }
+
+    const findings = [];
+    let flaggedCount = 0;
+    let skippedCount = 0;
+    for (const row of rows) {
+      try {
+        const audit = await auditCatalogPriceOne({ user: req.user, row });
+        const updated = await persistCatalogPriceAudit({
+          userId: req.user.id,
+          row,
+          audit,
+        });
+        if (audit?.flagged) flaggedCount += 1;
+        if (String(audit?.reason || "").trim() === "unsupported_source") skippedCount += 1;
+        findings.push({
+          id: String(row?.id || ""),
+          flagged: Boolean(audit?.flagged),
+          audit,
+          product: normalizeCatalogProduct(updated || row),
+        });
+      } catch (e) {
+        skippedCount += 1;
+        const audit = buildPriceAuditRecord({
+          sourceUrl: pickFirstNonEmpty(row?.sourceUrl, row?.meta?.sourceUrl),
+          sellerProductId: resolveCatalogSellerProductId(row),
+          flagged: false,
+          reason: "audit_failed",
+          note: String(e?.message || e),
+        });
+        const updated = await persistCatalogPriceAudit({
+          userId: req.user.id,
+          row,
+          audit,
+        });
+        findings.push({
+          id: String(row?.id || ""),
+          flagged: false,
+          audit,
+          product: normalizeCatalogProduct(updated || row),
+        });
+      }
+    }
+
+    return res.json({
+      ok: true,
+      scanned: findings.length,
+      flagged: flaggedCount,
+      skipped: skippedCount,
+      items: findings,
     });
   } catch (e) {
     return res.status(500).json({ ok: false, error: String(e?.message || e) });
@@ -2746,6 +3097,105 @@ app.post("/api/catalog/:id/archive", authRequired, async (req, res) => {
     });
 
     return res.json({ ok: true, product: normalizeCatalogProduct(updated) });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+app.post("/api/catalog/:id/delete-remote", authRequired, async (req, res) => {
+  try {
+    const id = String(req.params?.id || "").trim();
+    const row = await getUploadedProductById(req.user.id, id);
+    if (!row) return res.status(404).json({ ok: false, error: "not_found" });
+
+    const sellerProductId = resolveCatalogSellerProductId(row);
+    if (!sellerProductId) {
+      return res.status(400).json({ ok: false, error: "sellerProductId_missing" });
+    }
+    const auth = getCoupangAuth(req.user.settings || {});
+    if (!auth) {
+      return res.status(400).json({ ok: false, error: "coupang_keys_missing" });
+    }
+
+    const remote = await deleteSellerProduct({
+      sellerProductId,
+      accessKey: auth.accessKey,
+      secretKey: auth.secretKey,
+    });
+    const detail = safeJsonParse(remote?.body, {});
+    const alreadyGone =
+      Number(remote?.status || 0) === 404 || bodyLooksNotFoundError(detail);
+    if ((!remote || Number(remote.status) >= 400) && !alreadyGone) {
+      return res.status(400).json({
+        ok: false,
+        error: "remote_delete_failed",
+        httpStatus: Number(remote?.status || 0) || null,
+        detail,
+      });
+    }
+
+    const nowIso = new Date().toISOString();
+    const nextMeta = row.meta && typeof row.meta === "object" ? { ...row.meta } : {};
+    nextMeta.remoteDeleted = true;
+    nextMeta.remoteDeletedAt = nowIso;
+    nextMeta.lastRemoteDelete = {
+      checkedAt: nowIso,
+      sellerProductId,
+      httpStatus: Number(remote?.status || 0) || null,
+      alreadyGone,
+    };
+    const prevValidation =
+      nextMeta.validation && typeof nextMeta.validation === "object"
+        ? { ...nextMeta.validation }
+        : {};
+    const nextErrors = Array.isArray(prevValidation.errors)
+      ? prevValidation.errors
+          .map((x) => String(x || "").trim())
+          .filter((x) => x && x !== "remote_deleted")
+      : [];
+    nextErrors.push("remote_deleted");
+    nextMeta.validation = {
+      ...prevValidation,
+      ok: false,
+      checkedAt: nowIso,
+      errors: uniqueStrings(nextErrors),
+    };
+
+    const updated = await updateUploadedProductById({
+      userId: req.user.id,
+      id: row.id,
+      patch: {
+        sellerProductId,
+        status: "deleted_remote",
+        metaReplace: nextMeta,
+      },
+    });
+
+    await appendCatalogEvent({
+      userId: req.user.id,
+      catalogId: row.id,
+      type: "CATALOG_REMOTE_DELETE",
+      severity: "warn",
+      message: alreadyGone
+        ? "쿠팡에서 이미 삭제된 상품으로 처리했습니다."
+        : "쿠팡 상품 삭제를 요청했습니다.",
+      data: {
+        sellerProductId,
+        httpStatus: Number(remote?.status || 0) || null,
+        alreadyGone,
+      },
+    });
+
+    return res.json({
+      ok: true,
+      deleted: true,
+      result: {
+        sellerProductId,
+        httpStatus: Number(remote?.status || 0) || null,
+        alreadyGone,
+      },
+      product: normalizeCatalogProduct(updated || row),
+    });
   } catch (e) {
     return res.status(500).json({ ok: false, error: String(e?.message || e) });
   }
