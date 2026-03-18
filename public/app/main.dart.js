@@ -51366,18 +51366,22 @@ break
 case 5:return A.u(null,r)
 case 1:return A.t(p.at(-1),r)}})
 return A.v($async$Aj,r)},
-B5(){var s=0,r=A.w(t.H),q,p=this,o,n,m,l
+B5(){var s=0,r=A.w(t.H),q,p=this,o,n,m,l,k
 var $async$B5=A.x(function(a,b){if(a===1)return A.t(b,r)
-for(;;)switch(s){case 0:l=p.Q
-l=l==null?null:l.h(0,"filePath")
-o=J.m(l==null?"":l)
-if(o.length===0){s=1
-break}n=B.c.gah(o.split("/"))
-m=A.ht(p.a.c.b+"/couplus-out/order_exports/"+n)
-s=m!=null?3:4
+for(;;)switch(s){case 0:k=p.Q
+k=k==null?null:k.h(0,"downloadUrl")
+o=J.m(k==null?"":k)
+k=p.Q
+k=k==null?null:k.h(0,"filePath")
+n=J.m(k==null?"":k)
+k=o.length===0
+if(k&&n.length===0){s=1
+break}m=n.length===0?"":B.c.gah(n.split("/"))
+l=A.ht(!k?o:p.a.c.b+"/couplus-out/order_exports/"+m)
+s=l!=null?3:4
 break
 case 3:s=5
-return A.j(A.jI(m,B.c9),$async$B5)
+return A.j(A.jI(l,B.c9),$async$B5)
 case 5:case 4:case 1:return A.u(q,r)}})
 return A.v($async$B5,r)},
 wn(){var s=0,r=A.w(t.H),q=1,p=[],o=[],n=this,m,l,k,j,i,h,g,f,e

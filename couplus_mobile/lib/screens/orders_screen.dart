@@ -104,10 +104,13 @@ class _OrdersScreenState extends State<OrdersScreen> {
   }
 
   Future<void> _openExport() async {
+    final direct = (_lastExport?['downloadUrl'] ?? '').toString();
     final fp = (_lastExport?['filePath'] ?? '').toString();
-    if (fp.isEmpty) return;
-    final fileName = fp.split('/').last;
-    final url = '${widget.api.baseUrl}/couplus-out/order_exports/$fileName';
+    if (direct.isEmpty && fp.isEmpty) return;
+    final fileName = fp.isEmpty ? '' : fp.split('/').last;
+    final url = direct.isNotEmpty
+        ? direct
+        : '${widget.api.baseUrl}/couplus-out/order_exports/$fileName';
     final uri = Uri.tryParse(url);
     if (uri != null) {
       await launchUrl(uri, mode: LaunchMode.externalApplication);

@@ -65,6 +65,7 @@ app.set("trust proxy", true);
 app.use(express.json({ limit: "2mb" }));
 const PUBLIC_DIR = path.join(process.cwd(), "public");
 const PUBLIC_APP_DIR = path.join(PUBLIC_DIR, "app");
+const OUT_DIR = path.join(process.cwd(), "out");
 
 // ✅ DB 초기화
 await initDb();
@@ -72,11 +73,9 @@ await initDb();
 // ✅ out 폴더(이미지 파일) 정적 서빙
 app.use(
   "/couplus-out",
-  express.static(
-    "/Users/kimhyeonho/Desktop/2025.01.26_new project/couplus-clone/out",
-  ),
+  express.static(OUT_DIR),
 );
-app.use("/tmp", express.static(path.join(process.cwd(), "out"))); // /tmp/tmp_main.jpg 같은 형태로도 접근 가능
+app.use("/tmp", express.static(OUT_DIR)); // /tmp/tmp_main.jpg 같은 형태로도 접근 가능
 app.use(
   "/app",
   (req, res, next) => {
@@ -4617,7 +4616,19 @@ app.post("/api/orders/export", authRequired, async (req, res) => {
       settings: req.user.settings || {},
       allowEnvFallback: false,
     });
-    return res.json({ ok: true, result });
+    const filePath = String(result?.filePath || "").trim();
+    const fileName = filePath ? path.basename(filePath) : "";
+    const downloadPath = fileName ? `/couplus-out/order_exports/${encodeURIComponent(fileName)}` : "";
+    const base = getRequestBaseUrl(req);
+    return res.json({
+      ok: true,
+      result: {
+        ...result,
+        fileName,
+        downloadPath,
+        downloadUrl: downloadPath ? (base ? `${base}${downloadPath}` : downloadPath) : "",
+      },
+    });
   } catch (e) {
     return res.status(500).json({ ok: false, error: String(e?.message || e) });
   }
