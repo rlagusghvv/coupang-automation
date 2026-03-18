@@ -348,6 +348,8 @@ class _OrdersScreenState extends State<OrdersScreen> {
                   KvRow(k: 'ok', v: lastOk == true ? 'true' : 'false'),
                   KvRow(k: 'rowCount', v: (last['rowCount'] ?? '-').toString()),
                   KvRow(k: 'missingMapCount', v: (last['missingMapCount'] ?? '-').toString()),
+                  if ((last['error'] ?? '').toString().isNotEmpty)
+                    KvRow(k: 'error', v: (last['error'] ?? '').toString()),
                 ],
 
                 const SizedBox(height: 10),

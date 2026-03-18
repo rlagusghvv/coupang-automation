@@ -135,6 +135,10 @@ function makeUniqueOptions(list) {
       typeof raw === "object" && raw && Number.isFinite(Number(raw.stock))
         ? Number(raw.stock)
         : null;
+    const sourceOptionCode =
+      typeof raw === "object" && raw
+        ? String(raw.sourceOptionCode || raw.optionCode || "").trim()
+        : "";
     const values =
       typeof raw === "object" && raw && Array.isArray(raw.values) ? raw.values : [];
 
@@ -151,8 +155,10 @@ function makeUniqueOptions(list) {
     idx += 1;
     out.push({
       label: hasValues ? `${uniqName}` : `${idx}. ${uniqName}`,
+      rawName: base,
       priceDelta,
       stock,
+      sourceOptionCode,
       values,
     });
   }
@@ -173,6 +179,43 @@ function buildItemAttributesFromOptionValues(values) {
     })
     .filter(Boolean);
   return attrs.length > 0 ? attrs : null;
+}
+
+function buildSourcePurchaseSnapshot({ draft, optionsUsed = [] } = {}) {
+  const source = draft?.purchaseSource && typeof draft.purchaseSource === "object"
+    ? draft.purchaseSource
+    : {};
+  const itemNo = String(source.itemNo || "").trim();
+  const minimumOrderQty =
+    Number.isFinite(Number(source.minimumOrderQty)) && Number(source.minimumOrderQty) > 0
+      ? Number(source.minimumOrderQty)
+      : 1;
+
+  const optionMappings =
+    Array.isArray(optionsUsed) && optionsUsed.length > 0
+      ? optionsUsed.map((opt) => ({
+          sellerItemName: String(opt?.label || "").trim(),
+          supplierOptionCode: String(opt?.sourceOptionCode || "").trim(),
+          supplierOptionName: String(opt?.rawName || opt?.label || "").trim(),
+          values: Array.isArray(opt?.values)
+            ? opt.values
+                .map((pair) => ({
+                  optionName: String(pair?.optionName || "").trim(),
+                  optionValue: String(pair?.optionValue || "").trim(),
+                }))
+                .filter((pair) => pair.optionName && pair.optionValue)
+            : [],
+        }))
+      : Array.isArray(source.optionMappings)
+        ? source.optionMappings
+        : [];
+
+  return {
+    vendor: String(source.vendor || "domeggook").trim() || "domeggook",
+    itemNo,
+    minimumOrderQty,
+    optionMappings,
+  };
 }
 
 function toPositiveInt(value) {
@@ -534,6 +577,7 @@ export async function runUploadFromUrl(inputUrl, settings = {}, runtime = {}) {
       finalPrice,
       category: { requested: displayCategoryCode, used: finalCategoryCode, auto: allowAutoCategory },
       optionsUsed: optionsUsed.map((opt) => opt.label),
+      sourcePurchase: buildSourcePurchaseSnapshot({ draft, optionsUsed }),
       create: emptyCreate(),
       followUp: emptyFollowUp(),
     });
@@ -578,6 +622,7 @@ export async function runUploadFromUrl(inputUrl, settings = {}, runtime = {}) {
       preview: previewResult.preview,
       createRetry: createAttempt.retry,
       create: { status: res.status, body: createBody, sellerProductId: null },
+      sourcePurchase: buildSourcePurchaseSnapshot({ draft, optionsUsed }),
       followUp: emptyFollowUp(),
     });
   }
@@ -611,6 +656,7 @@ export async function runUploadFromUrl(inputUrl, settings = {}, runtime = {}) {
     createRetry: createAttempt.retry,
     create: { status: res.status, body: createBody, sellerProductId: createdId },
     approval,
+    sourcePurchase: buildSourcePurchaseSnapshot({ draft, optionsUsed }),
     followUp: normalizeFollowUp(followUp),
   });
 }

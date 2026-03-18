@@ -8,6 +8,13 @@ import {
   COUPANG_SECRET_KEY,
   COUPANG_VENDOR_ID,
 } from "../config/env.js";
+import {
+  getUploadedProductBySellerProductId,
+  listUploadedProducts,
+  normalizeTitleForDedupe,
+  updateUploadedProductById,
+} from "../server/storage_sqlite.js";
+import { parseProductFromDomaeqq } from "../sources/domaeqq/parseProductFromDomaeqq.js";
 
 const DEFAULT_HEADERS = [
   "마켓",
@@ -32,7 +39,6 @@ function ensureDir(p) {
 }
 
 function formatDateKST(dateStr) {
-  // dateStr: YYYY-MM-DD
   return `${dateStr}+09:00`;
 }
 
@@ -86,6 +92,118 @@ function makeRow({
   ];
 }
 
+function extractDomeggookItemNo(rawUrl) {
+  try {
+    const u = new URL(String(rawUrl || "").trim());
+    const pathNo = String(u.pathname || "").match(/\/(\d{6,})(?:\/|$)/);
+    if (pathNo?.[1]) return pathNo[1];
+    const qNo = String(u.searchParams.get("no") || "").trim();
+    if (/^\d{6,}$/.test(qNo)) return qNo;
+  } catch {}
+  return "";
+}
+
+function normalizeOptionText(raw) {
+  return String(raw || "")
+    .replace(/^\s*\d+\s*[\.\)]\s*/, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+function normalizePurchaseSource(raw = {}, sourceUrl = "") {
+  const itemNo = String(raw?.itemNo || extractDomeggookItemNo(sourceUrl) || "").trim();
+  const minimumOrderQty =
+    Number.isFinite(Number(raw?.minimumOrderQty)) && Number(raw.minimumOrderQty) > 0
+      ? Number(raw.minimumOrderQty)
+      : 1;
+  const optionMappings = Array.isArray(raw?.optionMappings)
+    ? raw.optionMappings
+        .map((mapping) => {
+          const sellerItemName = String(mapping?.sellerItemName || "").trim();
+          const supplierOptionCode = String(
+            mapping?.supplierOptionCode || mapping?.optionCode || "",
+          ).trim();
+          const supplierOptionName = String(
+            mapping?.supplierOptionName || mapping?.optionName || "",
+          ).trim();
+          const values = Array.isArray(mapping?.values)
+            ? mapping.values
+                .map((pair) => ({
+                  optionName: String(pair?.optionName || "").trim(),
+                  optionValue: String(pair?.optionValue || "").trim(),
+                }))
+                .filter((pair) => pair.optionName && pair.optionValue)
+            : [];
+          if (!sellerItemName && !supplierOptionCode && !supplierOptionName) return null;
+          return {
+            sellerItemName,
+            supplierOptionCode,
+            supplierOptionName,
+            values,
+          };
+        })
+        .filter(Boolean)
+    : [];
+
+  return {
+    vendor: String(raw?.vendor || "domeggook").trim() || "domeggook",
+    itemNo,
+    minimumOrderQty,
+    optionMappings,
+  };
+}
+
+function buildPurchaseSourceFromDraft(draft = {}) {
+  const sourceUrl = String(draft?.sourceUrl || "").trim();
+  const purchase = normalizePurchaseSource(draft?.purchaseSource || {}, sourceUrl);
+  if (purchase.itemNo || purchase.optionMappings.length > 0) {
+    return purchase;
+  }
+
+  const minimumOrderQty =
+    Number.isFinite(Number(draft?.purchaseConstraints?.minimumOrderQty)) &&
+    Number(draft.purchaseConstraints.minimumOrderQty) > 0
+      ? Number(draft.purchaseConstraints.minimumOrderQty)
+      : 1;
+
+  const optionMappings = Array.isArray(draft?.options)
+    ? draft.options
+        .map((opt) => {
+          const supplierOptionCode = String(
+            opt?.sourceOptionCode || opt?.optionCode || "",
+          ).trim();
+          const supplierOptionName = String(opt?.name || "").trim();
+          const values = Array.isArray(opt?.values)
+            ? opt.values
+                .map((pair) => ({
+                  optionName: String(pair?.optionName || "").trim(),
+                  optionValue: String(pair?.optionValue || "").trim(),
+                }))
+                .filter((pair) => pair.optionName && pair.optionValue)
+            : [];
+          if (!supplierOptionCode && !supplierOptionName) return null;
+          return {
+            sellerItemName: supplierOptionName,
+            supplierOptionCode,
+            supplierOptionName,
+            values,
+          };
+        })
+        .filter(Boolean)
+    : [];
+
+  return normalizePurchaseSource(
+    {
+      vendor: "domeggook",
+      itemNo: extractDomeggookItemNo(sourceUrl),
+      minimumOrderQty,
+      optionMappings,
+    },
+    sourceUrl,
+  );
+}
+
 async function fetchOrderSheetsAll({ vendorId, accessKey, secretKey, createdAtFrom, createdAtTo, status }) {
   const all = [];
   let nextToken = "";
@@ -124,7 +242,150 @@ async function fetchOrderSheetsAll({ vendorId, accessKey, secretKey, createdAtFr
   return { ok: true, data: all };
 }
 
+async function resolveUploadedProductForOrderItem({ userId, item }) {
+  const sellerProductId = String(item?.sellerProductId || "").trim();
+  if (sellerProductId) {
+    const bySellerProductId = await getUploadedProductBySellerProductId(userId, sellerProductId);
+    if (bySellerProductId) return bySellerProductId;
+  }
+
+  const titleCandidates = [
+    String(item?.sellerProductName || "").trim(),
+    String(item?.vendorItemName || "").trim(),
+  ].filter(Boolean);
+  if (titleCandidates.length === 0) return null;
+
+  const listed = await listUploadedProducts({
+    userId,
+    q: titleCandidates[0],
+    limit: 50,
+    offset: 0,
+  });
+  const normalizedCandidates = new Set(
+    titleCandidates.map((title) => normalizeTitleForDedupe(title)).filter(Boolean),
+  );
+  return (
+    (listed.items || []).find((row) => normalizedCandidates.has(normalizeTitleForDedupe(row?.title))) ||
+    null
+  );
+}
+
+async function resolvePurchaseSourceForUploadedProduct({ uploadedProduct, cache }) {
+  const cacheKey = String(uploadedProduct?.id || uploadedProduct?.sourceUrl || "").trim();
+  if (cacheKey && cache.has(cacheKey)) return cache.get(cacheKey);
+
+  const sourceUrl = String(uploadedProduct?.sourceUrl || uploadedProduct?.meta?.sourceUrl || "").trim();
+  let purchase = normalizePurchaseSource(uploadedProduct?.meta?.sourcePurchase || {}, sourceUrl);
+
+  const hadStoredSourcePurchase =
+    uploadedProduct?.meta?.sourcePurchase && typeof uploadedProduct.meta.sourcePurchase === "object";
+  const needsRebuild = !purchase.itemNo || !hadStoredSourcePurchase;
+
+  if (sourceUrl && needsRebuild) {
+    try {
+      const parsedDraft = await parseProductFromDomaeqq(sourceUrl);
+      const rebuilt = buildPurchaseSourceFromDraft(parsedDraft);
+      if (rebuilt.itemNo || rebuilt.optionMappings.length > 0) {
+        purchase = rebuilt;
+        if (uploadedProduct?.id && uploadedProduct?.userId) {
+          try {
+            await updateUploadedProductById({
+              userId: uploadedProduct.userId,
+              id: uploadedProduct.id,
+              patch: { metaMerge: { sourcePurchase: rebuilt } },
+            });
+          } catch {}
+        }
+      }
+    } catch {}
+  }
+
+  if (!purchase.itemNo && sourceUrl) {
+    purchase = {
+      ...purchase,
+      itemNo: extractDomeggookItemNo(sourceUrl),
+    };
+  }
+
+  if (cacheKey) cache.set(cacheKey, purchase);
+  return purchase;
+}
+
+function resolveSupplierSelection({ item, purchase, manualMapping = null }) {
+  if (manualMapping?.itemNo) {
+    return {
+      ok: true,
+      itemNo: String(manualMapping.itemNo || "").trim(),
+      optionCode: String(manualMapping.optionCode || "").trim() || "00",
+      optionName: String(manualMapping.optionName || "").trim(),
+      source: "manual_map",
+    };
+  }
+
+  if (!purchase?.itemNo) {
+    return { ok: false, reason: "item_no_missing" };
+  }
+
+  const optionMappings = Array.isArray(purchase.optionMappings) ? purchase.optionMappings : [];
+  if (optionMappings.length === 0) {
+    return {
+      ok: true,
+      itemNo: purchase.itemNo,
+      optionCode: "00",
+      optionName: "",
+      source: "source_purchase_single",
+    };
+  }
+
+  const candidateNames = [
+    String(item?.vendorItemName || "").trim(),
+    String(item?.sellerProductItemName || "").trim(),
+    String(item?.itemName || "").trim(),
+  ].filter(Boolean);
+  const normalizedCandidates = candidateNames.map((name) => normalizeOptionText(name)).filter(Boolean);
+
+  const matched = optionMappings.find((mapping) => {
+    const sellerItemName = normalizeOptionText(mapping?.sellerItemName || "");
+    const supplierOptionName = normalizeOptionText(mapping?.supplierOptionName || "");
+    return (
+      (sellerItemName && normalizedCandidates.includes(sellerItemName)) ||
+      (supplierOptionName && normalizedCandidates.includes(supplierOptionName))
+    );
+  });
+
+  if (matched) {
+    return {
+      ok: true,
+      itemNo: purchase.itemNo,
+      optionCode: String(matched.supplierOptionCode || "").trim(),
+      optionName: String(
+        matched.supplierOptionName || matched.sellerItemName || candidateNames[0] || "",
+      ).trim(),
+      source: "source_purchase_option",
+    };
+  }
+
+  if (optionMappings.length === 1) {
+    const only = optionMappings[0] || {};
+    return {
+      ok: true,
+      itemNo: purchase.itemNo,
+      optionCode: String(only.supplierOptionCode || "").trim() || "00",
+      optionName: String(only.supplierOptionName || only.sellerItemName || "").trim(),
+      source: "source_purchase_single_option_fallback",
+    };
+  }
+
+  return {
+    ok: false,
+    reason: "option_mapping_missing",
+    candidates: candidateNames,
+    optionMappings,
+  };
+}
+
 export async function exportOrdersToDomeme({
+  userId = "",
   dateFrom,
   dateTo,
   status = "ACCEPT",
@@ -164,36 +425,72 @@ export async function exportOrdersToDomeme({
 
   const { map: skuMap, path: skuMapPath } = loadSkuMap(settings);
   const missing = [];
+  const sourcePurchaseCache = new Map();
 
   const rows = [];
   for (const sheet of orderRes.data) {
     const receiver = sheet.receiver || {};
     const delivery = sheet.delivery || {};
-    const orderItems = sheet.orderItems || [];
-    for (const item of orderItems) {
-      const vendorItemId = String(item.vendorItemId || "");
-      const key = vendorItemId ? vendorItemId : String(item.sellerProductItemId || "");
-      const mapped = skuMap[key] || null;
-      if (!mapped) {
-        missing.push({ key, vendorItemId, itemName: item.vendorItemName || item.sellerProductName || "" });
-      }
+    const orderItems = Array.isArray(sheet.orderItems) ? sheet.orderItems : [];
 
-      const itemNo = mapped?.itemNo || "";
-      const optionCode = mapped?.optionCode || "";
-      const optionName = mapped?.optionName || item.vendorItemName || item.sellerProductName || "";
+    for (const item of orderItems) {
       const qty = Math.max(
         0,
         Number(item.shippingCount || 0) -
           Number(item.holdCountForCancel || 0) -
           Number(item.cancelCount || 0),
       );
+      if (qty <= 0) continue;
+
+      const vendorItemId = String(item.vendorItemId || "").trim();
+      const sellerProductItemId = String(item.sellerProductItemId || "").trim();
+      const manualKey = vendorItemId || sellerProductItemId;
+      const manualMapping = manualKey ? skuMap[manualKey] || null : null;
+
+      let resolution = resolveSupplierSelection({
+        item,
+        purchase: null,
+        manualMapping,
+      });
+
+      let uploadedProduct = null;
+      if (!resolution.ok && userId) {
+        uploadedProduct = await resolveUploadedProductForOrderItem({ userId, item });
+        if (uploadedProduct) {
+          const purchase = await resolvePurchaseSourceForUploadedProduct({
+            uploadedProduct,
+            cache: sourcePurchaseCache,
+          });
+          resolution = resolveSupplierSelection({
+            item,
+            purchase,
+            manualMapping,
+          });
+        }
+      }
+
+      if (!resolution.ok) {
+        missing.push({
+          reason: resolution.reason || "mapping_missing",
+          key: manualKey,
+          vendorItemId,
+          sellerProductItemId,
+          sellerProductId: String(item.sellerProductId || "").trim(),
+          sellerProductName: String(item.sellerProductName || "").trim(),
+          vendorItemName: String(item.vendorItemName || "").trim(),
+          sourceUrl: String(uploadedProduct?.sourceUrl || "").trim(),
+          itemNo: String(uploadedProduct?.meta?.sourcePurchase?.itemNo || "").trim(),
+          source: uploadedProduct ? "uploaded_product" : (manualMapping ? "manual_map" : "unresolved"),
+        });
+        continue;
+      }
 
       rows.push(
         makeRow({
           market: "쿠팡",
-          itemNo,
-          optionCode,
-          optionName,
+          itemNo: resolution.itemNo,
+          optionCode: resolution.optionCode || "00",
+          optionName: resolution.optionName || "",
           qty,
           receiverName: receiver.name || "",
           postCode: receiver.postCode || "",
@@ -210,11 +507,21 @@ export async function exportOrdersToDomeme({
     }
   }
 
+  if (rows.length === 0) {
+    return {
+      ok: false,
+      error: "supplier_mapping_missing",
+      missingMapCount: missing.length,
+      missing,
+      skuMapPath,
+      rowCount: 0,
+    };
+  }
+
   const outDir = path.join(process.cwd(), "out", "order_exports");
   ensureDir(outDir);
   const fileName = `order_batch_${dateFrom.replace(/-/g, "")}_${dateTo.replace(/-/g, "")}.xlsx`;
   const outPath = path.join(outDir, fileName);
-
   const tempJson = path.join(outDir, `order_batch_${Date.now()}.json`);
   fs.writeFileSync(tempJson, JSON.stringify({ headers: DEFAULT_HEADERS, rows }, null, 2), "utf-8");
 
@@ -224,6 +531,10 @@ export async function exportOrdersToDomeme({
     outPath,
   ]);
 
+  try {
+    fs.unlinkSync(tempJson);
+  } catch {}
+
   if (py.status !== 0) {
     return {
       ok: false,
@@ -232,15 +543,14 @@ export async function exportOrdersToDomeme({
     };
   }
 
-  if (missing.length > 0) {
-    const missingPath = path.join(outDir, "missing_sku_map.json");
-    fs.writeFileSync(missingPath, JSON.stringify(missing, null, 2), "utf-8");
-  }
+  const missingPath = path.join(outDir, "missing_sku_map.json");
+  fs.writeFileSync(missingPath, JSON.stringify(missing, null, 2), "utf-8");
 
   return {
     ok: true,
     filePath: outPath,
     missingMapCount: missing.length,
+    missingPath,
     skuMapPath,
     rowCount: rows.length,
   };

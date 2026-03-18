@@ -251,6 +251,65 @@ function extractDomeggookItemNo(rawUrl) {
   return "";
 }
 
+function buildDraftPurchaseSource({
+  sourceUrl,
+  itemNo = "",
+  options = [],
+  minimumOrderQty = 1,
+} = {}) {
+  const resolvedItemNo = String(itemNo || extractDomeggookItemNo(sourceUrl) || "").trim();
+  const normalizedMinimumOrderQty =
+    Number.isFinite(Number(minimumOrderQty)) && Number(minimumOrderQty) > 0
+      ? Number(minimumOrderQty)
+      : 1;
+
+  const optionMappings = Array.isArray(options)
+    ? options
+        .map((opt) => {
+          const supplierOptionCode = String(
+            opt?.sourceOptionCode || opt?.optionCode || "",
+          ).trim();
+          const supplierOptionName = String(opt?.name || opt?.optionName || "").trim();
+          const values = Array.isArray(opt?.values)
+            ? opt.values
+                .map((pair) => ({
+                  optionName: String(pair?.optionName || "").trim(),
+                  optionValue: String(pair?.optionValue || "").trim(),
+                }))
+                .filter((pair) => pair.optionName && pair.optionValue)
+            : [];
+          if (!supplierOptionCode && !supplierOptionName) return null;
+          return {
+            supplierOptionCode,
+            supplierOptionName,
+            values,
+          };
+        })
+        .filter(Boolean)
+    : [];
+
+  return {
+    vendor: "domeggook",
+    itemNo: resolvedItemNo,
+    minimumOrderQty: normalizedMinimumOrderQty,
+    optionMappings,
+  };
+}
+
+function attachPurchaseSourceToDraft(
+  draft,
+  { sourceUrl, itemNo = "", options = [], minimumOrderQty = 1 } = {},
+) {
+  if (!draft || typeof draft !== "object") return draft;
+  draft.purchaseSource = buildDraftPurchaseSource({
+    sourceUrl,
+    itemNo,
+    options,
+    minimumOrderQty,
+  });
+  return draft;
+}
+
 function toAbsoluteUrl(raw, baseUrl) {
   const v = String(raw || "").trim();
   if (!v) return "";
@@ -1296,6 +1355,7 @@ async function extractOptionVariantsFromRuntimeOptController(page) {
           name,
           priceDelta: Number.isNaN(priceDelta) ? 0 : priceDelta,
           stock: Number.isNaN(stock) ? 0 : stock,
+          sourceOptionCode: String(key || "").trim(),
           values,
         });
       }
@@ -1376,6 +1436,7 @@ function extractOptionVariantsFromItemOptionController(scriptText) {
               name,
               priceDelta,
               stock: Number.isNaN(stock) ? 0 : stock,
+              sourceOptionCode: String(key || "").trim(),
               values,
             });
           }
@@ -1653,7 +1714,12 @@ export async function parseProductFromDomaeqq(url, opts = {}) {
             usedImage: true,
           },
         };
-        return draft;
+        return attachPurchaseSourceToDraft(draft, {
+          sourceUrl: String(url || "").trim(),
+          itemNo: String(openApiItemView?.itemNo || "").trim(),
+          options: [],
+          minimumOrderQty: 1,
+        });
       }
     } catch (e) {
       openApiFailureReason = String(e?.message || e || "openapi_error").trim();
@@ -2111,7 +2177,12 @@ export async function parseProductFromDomaeqq(url, opts = {}) {
           sourceMode: previewSourceMode,
         },
       };
-      return draft;
+      return attachPurchaseSourceToDraft(draft, {
+        sourceUrl: url,
+        itemNo: String(openApiItemView?.itemNo || "").trim(),
+        options: [],
+        minimumOrderQty: 1,
+      });
     }
     const categoryText = await page.evaluate(() => {
       const pick = (sel) =>
@@ -2338,6 +2409,12 @@ export async function parseProductFromDomaeqq(url, opts = {}) {
         : 1,
       quantityPriceTiers: Array.isArray(qtyPriceTiers) ? qtyPriceTiers.slice(0, 10) : [],
     };
+    attachPurchaseSourceToDraft(draft, {
+      sourceUrl: url,
+      itemNo: String(openApiItemView?.itemNo || "").trim(),
+      options: finalOptions,
+      minimumOrderQty: draft.purchaseConstraints.minimumOrderQty,
+    });
 
     // Debug payload for preview (safe: contains no secrets)
     draft.__debug = {

@@ -4048,6 +4048,9 @@ async function executeUploadForUrl({ url, user, force = false, overrides = {} })
         toPositiveIntOrNull(result?.category?.requested) ||
         null,
     };
+    if (result?.sourcePurchase && typeof result.sourcePurchase === "object") {
+      nextMeta.sourcePurchase = JSON.parse(JSON.stringify(result.sourcePurchase));
+    }
     if (followUpProductId) nextMeta.productId = followUpProductId;
     if (followUpProductUrl) nextMeta.productUrl = followUpProductUrl;
 
@@ -4905,6 +4908,7 @@ app.post("/api/orders/export", authRequired, async (req, res) => {
       return res.status(400).json({ ok: false, error: "missing dates" });
     }
     const result = await exportOrdersToDomeme({
+      userId: req.user.id,
       dateFrom,
       dateTo,
       status: "ACCEPT",
