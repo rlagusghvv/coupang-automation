@@ -2,6 +2,7 @@ import sqlite3 from "sqlite3";
 import fs from "node:fs";
 import path from "node:path";
 import { getOrderSheets } from "../coupang/api/getOrderSheets.js";
+import { parseCoupangJson } from "../coupang/parseJson.js";
 
 function resolveDataDir() {
   const override = String(process.env.COUPLEPHANT_DATA_DIR || "").trim();
@@ -186,7 +187,7 @@ async function fetchOrderSheetsAll({ vendorId, accessKey, secretKey, createdAtFr
     }
     let body;
     try {
-      body = typeof res.body === "string" ? JSON.parse(res.body) : res.body;
+      body = typeof res.body === "string" ? parseCoupangJson(res.body) : res.body;
     } catch {
       return { ok: false, error: "invalid_json", body: res.body };
     }
@@ -313,4 +314,42 @@ export async function refreshShippingStatusesFromCoupang({ userId, settings = {}
     processed,
     at: new Date().toISOString(),
   };
+}
+
+export async function upsertCoupangOrderSheet({ userId, sheet, statusOverride = "" }) {
+  if (!userId) throw new Error("userId required");
+  if (!sheet || typeof sheet !== "object") throw new Error("sheet required");
+
+  const normalizedStatus = String(statusOverride || sheet?.status || "").trim() || "ACCEPT";
+  const orderItems = Array.isArray(sheet?.orderItems) ? sheet.orderItems : [];
+
+  if (orderItems.length === 0) {
+    const ids = buildCoupangExternalIds(sheet, {}, 0);
+    await addOrder({
+      userId,
+      source: "coupang",
+      status: normalizedStatus,
+      order: { sheet },
+      externalId: ids.externalId,
+      externalSubId: ids.externalSubId,
+    });
+    return { ok: true, upserted: 1 };
+  }
+
+  let upserted = 0;
+  for (let i = 0; i < orderItems.length; i += 1) {
+    const item = orderItems[i] || {};
+    const ids = buildCoupangExternalIds(sheet, item, i);
+    await addOrder({
+      userId,
+      source: "coupang",
+      status: normalizedStatus,
+      order: { sheet, item },
+      externalId: ids.externalId,
+      externalSubId: ids.externalSubId,
+    });
+    upserted += 1;
+  }
+
+  return { ok: true, upserted };
 }

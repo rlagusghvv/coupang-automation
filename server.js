@@ -43,6 +43,7 @@ import { uploadVendorPurchaseExcel } from "./src/pipeline/uploadVendorPurchaseEx
 import {
   listOrders,
   refreshShippingStatusesFromCoupang,
+  upsertCoupangOrderSheet,
 } from "./src/server/orders_sqlite.js";
 import { runtimeState } from "./src/server/runtime_state.js";
 import {
@@ -52,6 +53,10 @@ import {
 import { spawn } from "node:child_process";
 import { getSellerProduct } from "./src/coupang/api/getSellerProduct.js";
 import { getSellerProductHistories } from "./src/coupang/api/getSellerProductHistories.js";
+import { acknowledgeOrderSheets } from "./src/coupang/api/acknowledgeOrderSheets.js";
+import { getOrderSheetByShipmentBoxId } from "./src/coupang/api/getOrderSheetByShipmentBoxId.js";
+import { uploadOrderInvoices } from "./src/coupang/api/uploadOrderInvoices.js";
+import { parseCoupangJson } from "./src/coupang/parseJson.js";
 import {
   listRecommendations,
   listSavedRecommendations,
@@ -4555,6 +4560,118 @@ app.get("/api/recommendations/auto-run/status", authRequired, async (req, res) =
   });
 });
 
+function getCoupangCredentials(settings = {}) {
+  const accessKey = String(settings?.coupangAccessKey || "").trim();
+  const secretKey = String(settings?.coupangSecretKey || "").trim();
+  const vendorId = String(settings?.coupangVendorId || "").trim();
+  return { accessKey, secretKey, vendorId };
+}
+
+function validateCoupangCredentials(settings = {}) {
+  const { accessKey, secretKey, vendorId } = getCoupangCredentials(settings);
+  const missing = [];
+  if (!accessKey) missing.push("쿠팡 Access Key");
+  if (!secretKey) missing.push("쿠팡 Secret Key");
+  if (!vendorId) missing.push("쿠팡 Vendor ID");
+  return { accessKey, secretKey, vendorId, missing };
+}
+
+function normalizeIdList(raw) {
+  const src = Array.isArray(raw) ? raw : [raw];
+  return src
+    .map((x) => String(x ?? "").trim())
+    .filter(Boolean);
+}
+
+function parseCoupangBody(raw) {
+  try {
+    return typeof raw === "string" ? parseCoupangJson(raw) : raw;
+  } catch {
+    return null;
+  }
+}
+
+function isCoupangSuccessCode(code) {
+  return code === 200 || code === "200" || code === "SUCCESS";
+}
+
+function normalizeInvoiceItems(raw, defaultDeliveryCompanyCode = "") {
+  const items = Array.isArray(raw) ? raw : [];
+  const fallbackCompany = String(defaultDeliveryCompanyCode || "").trim();
+  return items
+    .map((entry) => {
+      const dto = entry && typeof entry === "object" ? entry : {};
+      return {
+        shipmentBoxId: String(dto.shipmentBoxId ?? "").trim(),
+        orderId: String(dto.orderId ?? "").trim(),
+        vendorItemId: String(dto.vendorItemId ?? "").trim(),
+        deliveryCompanyCode: String(dto.deliveryCompanyCode ?? fallbackCompany).trim(),
+        invoiceNumber: String(dto.invoiceNumber ?? "").trim(),
+        splitShipping: dto.splitShipping === true,
+        preSplitShipped: dto.preSplitShipped === true,
+        estimatedShippingDate: String(dto.estimatedShippingDate ?? "").trim(),
+      };
+    })
+    .filter((x) => x.shipmentBoxId && x.orderId && x.vendorItemId && x.deliveryCompanyCode && x.invoiceNumber);
+}
+
+async function syncShipmentBoxesFromCoupang({ userId, settings = {}, shipmentBoxIds = [], statusFallback = "" }) {
+  const ids = normalizeIdList(shipmentBoxIds);
+  if (ids.length === 0) return { ok: true, synced: 0, items: [] };
+
+  const { accessKey, secretKey, vendorId, missing } = validateCoupangCredentials(settings);
+  if (missing.length > 0) {
+    return { ok: false, reason: "missing_keys", missing };
+  }
+
+  const items = [];
+  let synced = 0;
+  for (const shipmentBoxId of ids) {
+    const res = await getOrderSheetByShipmentBoxId({
+      vendorId,
+      shipmentBoxId,
+      accessKey,
+      secretKey,
+    });
+    const body = parseCoupangBody(res.body);
+    const ok = res.status === 200 && body && isCoupangSuccessCode(body?.code);
+    if (!ok) {
+      items.push({
+        shipmentBoxId,
+        ok: false,
+        status: res.status,
+        error: body?.message || "coupang_sheet_fetch_failed",
+      });
+      continue;
+    }
+    const data = Array.isArray(body?.data) ? body.data : [];
+    const sheet = data[0] && typeof data[0] === "object" ? data[0] : null;
+    if (!sheet) {
+      items.push({
+        shipmentBoxId,
+        ok: false,
+        status: res.status,
+        error: "sheet_not_found",
+      });
+      continue;
+    }
+    const upsert = await upsertCoupangOrderSheet({
+      userId,
+      sheet,
+      statusOverride: String(sheet?.status || statusFallback || "").trim(),
+    });
+    synced += Number(upsert?.upserted || 0);
+    items.push({
+      shipmentBoxId,
+      ok: true,
+      status: String(sheet?.status || statusFallback || "").trim(),
+      upserted: Number(upsert?.upserted || 0),
+    });
+  }
+
+  return { ok: true, synced, items };
+}
+
 // ✅ 주문 엑셀 생성
 app.get("/api/orders", authRequired, async (req, res) => {
   try {
@@ -4595,6 +4712,126 @@ app.post("/api/orders/shipping/refresh", authRequired, async (req, res) => {
         ...result,
         scanned: result.scannedSheets ?? 0,
         updated: result.processed ?? 0,
+      },
+    });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+app.post("/api/orders/coupang/acknowledge", authRequired, async (req, res) => {
+  try {
+    const settings = req.user?.settings || {};
+    const { accessKey, secretKey, vendorId, missing } = validateCoupangCredentials(settings);
+    if (missing.length > 0) {
+      return res.status(400).json({ ok: false, error: "missing_keys", missing });
+    }
+
+    const shipmentBoxIds = normalizeIdList(req.body?.shipmentBoxIds?.length ? req.body?.shipmentBoxIds : req.body?.shipmentBoxId);
+    if (shipmentBoxIds.length === 0) {
+      return res.status(400).json({ ok: false, error: "missing_shipment_box_ids" });
+    }
+    if (shipmentBoxIds.length > 50) {
+      return res.status(400).json({ ok: false, error: "too_many_shipment_box_ids" });
+    }
+
+    const ackRes = await acknowledgeOrderSheets({
+      vendorId,
+      shipmentBoxIds,
+      accessKey,
+      secretKey,
+    });
+    const body = parseCoupangBody(ackRes.body);
+    const ok = ackRes.status === 200 && body && isCoupangSuccessCode(body?.code);
+    if (!ok) {
+      return res.status(ackRes.status || 502).json({
+        ok: false,
+        error: "coupang_acknowledge_failed",
+        status: ackRes.status,
+        body,
+      });
+    }
+
+    const responseList = Array.isArray(body?.data?.responseList) ? body.data.responseList : [];
+    const successfulIds = responseList
+      .filter((x) => x?.succeed === true)
+      .map((x) => String(x?.shipmentBoxId ?? "").trim())
+      .filter(Boolean);
+    const sync = await syncShipmentBoxesFromCoupang({
+      userId: req.user.id,
+      settings,
+      shipmentBoxIds: successfulIds,
+      statusFallback: "INSTRUCT",
+    });
+
+    return res.json({
+      ok: true,
+      result: {
+        responseCode: body?.data?.responseCode ?? null,
+        responseMessage: body?.data?.responseMessage ?? body?.message ?? "",
+        responseList,
+        synced: Number(sync?.synced || 0),
+        syncItems: Array.isArray(sync?.items) ? sync.items : [],
+      },
+    });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+app.post("/api/orders/coupang/invoices", authRequired, async (req, res) => {
+  try {
+    const settings = req.user?.settings || {};
+    const { accessKey, secretKey, vendorId, missing } = validateCoupangCredentials(settings);
+    if (missing.length > 0) {
+      return res.status(400).json({ ok: false, error: "missing_keys", missing });
+    }
+
+    const items = normalizeInvoiceItems(
+      req.body?.items,
+      String(settings.coupangDeliveryCompanyCode || "").trim(),
+    );
+    if (items.length === 0) {
+      return res.status(400).json({ ok: false, error: "missing_invoice_items" });
+    }
+
+    const uploadRes = await uploadOrderInvoices({
+      vendorId,
+      items,
+      accessKey,
+      secretKey,
+    });
+    const body = parseCoupangBody(uploadRes.body);
+    const ok = uploadRes.status === 200 && body && isCoupangSuccessCode(body?.code);
+    if (!ok) {
+      return res.status(uploadRes.status || 502).json({
+        ok: false,
+        error: "coupang_invoice_upload_failed",
+        status: uploadRes.status,
+        body,
+      });
+    }
+
+    const responseList = Array.isArray(body?.data?.responseList) ? body.data.responseList : [];
+    const successfulIds = responseList
+      .filter((x) => x?.succeed === true)
+      .map((x) => String(x?.shipmentBoxId ?? "").trim())
+      .filter(Boolean);
+    const sync = await syncShipmentBoxesFromCoupang({
+      userId: req.user.id,
+      settings,
+      shipmentBoxIds: successfulIds,
+      statusFallback: "DELIVERING",
+    });
+
+    return res.json({
+      ok: true,
+      result: {
+        responseCode: body?.data?.responseCode ?? null,
+        responseMessage: body?.data?.responseMessage ?? body?.message ?? "",
+        responseList,
+        synced: Number(sync?.synced || 0),
+        syncItems: Array.isArray(sync?.items) ? sync.items : [],
       },
     });
   } catch (e) {

@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { getOrderSheets } from "../coupang/api/getOrderSheets.js";
+import { parseCoupangJson } from "../coupang/parseJson.js";
 import {
   COUPANG_ACCESS_KEY,
   COUPANG_SECRET_KEY,
@@ -106,7 +107,7 @@ async function fetchOrderSheetsAll({ vendorId, accessKey, secretKey, createdAtFr
     }
     let body;
     try {
-      body = typeof res.body === "string" ? JSON.parse(res.body) : res.body;
+      body = typeof res.body === "string" ? parseCoupangJson(res.body) : res.body;
     } catch {
       return { ok: false, error: "invalid_json", body: res.body };
     }

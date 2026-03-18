@@ -447,7 +447,11 @@ class _OrdersScreenState extends State<OrdersScreen> {
                     onTap: () {
                       Navigator.of(context).push(
                         MaterialPageRoute(
-                          builder: (_) => OrderDetailScreen(order: o),
+                          builder: (_) => OrderDetailScreen(
+                            order: o,
+                            api: widget.api,
+                            onChanged: _refresh,
+                          ),
                         ),
                       );
                     },
