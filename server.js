@@ -39,11 +39,16 @@ import {
   recordMarketingClick,
 } from "./src/server/storage_sqlite.js";
 import { exportOrdersToDomeme } from "./src/pipeline/exportOrdersToDomeme.js";
-import { uploadDomemeExcel } from "./src/pipeline/uploadDomemeExcel.js";
+import { uploadVendorPurchaseExcel } from "./src/pipeline/uploadVendorPurchaseExcel.js";
 import {
   listOrders,
   refreshShippingStatusesFromCoupang,
 } from "./src/server/orders_sqlite.js";
+import { runtimeState } from "./src/server/runtime_state.js";
+import {
+  DOMEME_STORAGE_STATE_PATH,
+  DOMEGGOOK_STORAGE_STATE_PATH,
+} from "./src/config/paths.js";
 import { spawn } from "node:child_process";
 import { getSellerProduct } from "./src/coupang/api/getSellerProduct.js";
 import { getSellerProductHistories } from "./src/coupang/api/getSellerProductHistories.js";
@@ -105,6 +110,53 @@ const ECON_PROGRESS_PATH = path.join(DATA_DIR, 'econ_progress.json');
 const INSTAGRAM_UPLOADS_DIR = path.join(DATA_DIR, "instagram_uploads");
 
 fs.mkdirSync(INSTAGRAM_UPLOADS_DIR, { recursive: true });
+
+function getUserPurchaseLogs(userId, limit = 20) {
+  const key = String(userId || "").trim();
+  if (!key) return [];
+  const logs = runtimeState.purchaseLogs.get(key) || [];
+  return Array.isArray(logs) ? logs.slice(0, Math.max(1, Number(limit) || 20)) : [];
+}
+
+function appendUserPurchaseLog(userId, entry = {}) {
+  const key = String(userId || "").trim();
+  if (!key) return;
+  const prev = getUserPurchaseLogs(key, 50);
+  const next = [
+    {
+      at: new Date().toISOString(),
+      ...entry,
+    },
+    ...prev,
+  ].slice(0, 50);
+  runtimeState.purchaseLogs.set(key, next);
+}
+
+function buildPayUrlsFromLogs(logs = []) {
+  const out = {};
+  let index = 0;
+  for (const row of logs) {
+    const payUrl = String(row?.payUrl || "").trim();
+    if (!payUrl) continue;
+    index += 1;
+    const vendor = String(row?.vendor || "vendor").trim() || "vendor";
+    const at = String(row?.at || "").trim();
+    const label = `${index}. ${vendor}${at ? ` · ${at.slice(0, 16).replace("T", " ")}` : ""}`;
+    out[label] = payUrl;
+  }
+  return out;
+}
+
+function resolveStorageStatePath(settings = {}, vendor = "") {
+  const v = String(vendor || "").trim().toLowerCase();
+  if (v === "domeme") {
+    return String(settings.domemeStorageStatePath || DOMEME_STORAGE_STATE_PATH || "").trim();
+  }
+  if (v === "domeggook") {
+    return String(settings.domeggookStorageStatePath || DOMEGGOOK_STORAGE_STATE_PATH || "").trim();
+  }
+  return "";
+}
 
 app.use(
   "/instagram_uploads",
@@ -1700,11 +1752,20 @@ function startRecommendationRefreshJob({
 
 app.get('/api/dashboard', authRequired, async (_req, res) => {
   const uploadHistory = loadUploadHistory().slice(0, 20);
+  const settings = _req.user?.settings || {};
+  const sessionStatus = {
+    domeggook: { valid: fs.existsSync(resolveStorageStatePath(settings, "domeggook")) },
+    domeme: { valid: fs.existsSync(resolveStorageStatePath(settings, "domeme")) },
+  };
+  const purchaseLogs = getUserPurchaseLogs(_req.user?.id, 20);
   return res.json({
     ok: true,
     auth: { authenticated: true },
-    sessions: { domeggook: { ready: false }, domeme: { ready: false } },
+    sessions: sessionStatus,
+    sessionStatus,
     recentUploads: uploadHistory,
+    purchaseLogs,
+    payUrls: buildPayUrlsFromLogs(purchaseLogs),
   });
 });
 
@@ -4602,8 +4663,32 @@ app.get("/api/orders/missing", authRequired, (req, res) => {
 app.post("/api/orders/upload", authRequired, async (req, res) => {
   try {
     const filePath = String(req.body?.filePath || "").trim();
+    const vendor = String(req.body?.vendor || "domeme").trim().toLowerCase() || "domeme";
     if (!filePath) return res.status(400).json({ ok: false, error: "missing filePath" });
-    const result = await uploadDomemeExcel({ filePath, settings: req.user.settings || {} });
+    const settings = req.user.settings || {};
+    let result;
+
+    if (vendor === "domeme" || vendor === "domeggook") {
+      result = await uploadVendorPurchaseExcel({
+        vendor,
+        filePath,
+        settings,
+        storageStateDefaultPath: resolveStorageStatePath(settings, vendor),
+      });
+    } else {
+      return res.status(400).json({ ok: false, error: "unsupported_vendor" });
+    }
+
+    appendUserPurchaseLog(req.user.id, {
+      type: "upload",
+      vendor,
+      ok: result?.ok === true,
+      error: result?.ok === true ? undefined : String(result?.error || "upload_failed"),
+      filePath,
+      payUrl: result?.payUrl || "",
+      warning: result?.warning || "",
+    });
+
     return res.json({ ok: true, result });
   } catch (e) {
     return res.status(500).json({ ok: false, error: String(e?.message || e) });
@@ -5449,7 +5534,7 @@ app.post("/api/domeme/session/start", authRequired, (req, res) => {
 // ✅ 도매매 세션 상태 확인
 app.get("/api/domeme/session/status", authRequired, (req, res) => {
   try {
-    const filePath = path.join(process.cwd(), "storageState.domeme.json");
+    const filePath = resolveStorageStatePath(req.user?.settings || {}, "domeme");
     if (!fs.existsSync(filePath)) return res.json({ ok: true, exists: false, filePath });
     const stat = fs.statSync(filePath);
     return res.json({

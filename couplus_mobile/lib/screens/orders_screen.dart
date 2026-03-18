@@ -28,6 +28,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
 
   Map<String, dynamic>? _lastExport;
   Map<String, dynamic>? _lastShippingRefresh;
+  Map<String, dynamic>? _lastUpload;
 
   @override
   void initState() {
@@ -142,6 +143,55 @@ class _OrdersScreenState extends State<OrdersScreen> {
     }
   }
 
+  Future<void> _uploadToDomeme() async {
+    final filePath = (_lastExport?['filePath'] ?? '').toString();
+    if (filePath.isEmpty) {
+      setState(() => _error = '먼저 엑셀을 생성해 주세요.');
+      return;
+    }
+
+    setState(() {
+      _loading = true;
+      _error = null;
+      _lastUpload = null;
+    });
+
+    try {
+      final json = await widget.api.postJson('/api/orders/upload', {
+        'vendor': 'domeme',
+        'filePath': filePath,
+      });
+      final result = (json['result'] as Map?)?.cast<String, dynamic>() ?? {};
+      setState(() => _lastUpload = result);
+
+      if (mounted) {
+        final payUrl = (result['payUrl'] ?? '').toString();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              result['ok'] == true
+                  ? (payUrl.startsWith('http') ? '업로드 완료, 결제 링크를 찾았어요.' : '업로드 완료')
+                  : '업로드 결과를 확인해 주세요.',
+            ),
+          ),
+        );
+      }
+    } catch (e) {
+      setState(() => _error = e.toString());
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _openPayUrl() async {
+    final payUrl = (_lastUpload?['payUrl'] ?? '').toString();
+    if (!payUrl.startsWith('http')) return;
+    final uri = Uri.tryParse(payUrl);
+    if (uri != null) {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    }
+  }
+
   bool _isTodoStatus(String st) {
     final s = st.trim().toUpperCase();
     return s == 'ACCEPT' || s == 'INSTRUCT' || s == 'READY';
@@ -167,6 +217,9 @@ class _OrdersScreenState extends State<OrdersScreen> {
   Widget build(BuildContext context) {
     final last = _lastExport;
     final lastOk = last == null ? null : (last['ok'] == true);
+    final lastUpload = _lastUpload;
+    final lastUploadOk = lastUpload == null ? null : (lastUpload['ok'] == true);
+    final lastUploadPayUrl = (lastUpload?['payUrl'] ?? '').toString();
 
     final q = _q.text.trim().toLowerCase();
     final filtered = _orders.where((o) {
@@ -292,6 +345,38 @@ class _OrdersScreenState extends State<OrdersScreen> {
                   KvRow(k: 'ok', v: lastOk == true ? 'true' : 'false'),
                   KvRow(k: 'rowCount', v: (last['rowCount'] ?? '-').toString()),
                   KvRow(k: 'missingMapCount', v: (last['missingMapCount'] ?? '-').toString()),
+                ],
+
+                const SizedBox(height: 10),
+                Row(
+                  children: [
+                    Expanded(
+                      child: FilledButton(
+                        onPressed: _loading || last == null || lastOk != true ? null : _uploadToDomeme,
+                        child: const Text('도매매 업로드'),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: FilledButton.tonal(
+                        onPressed: _loading || !lastUploadPayUrl.startsWith('http') ? null : _openPayUrl,
+                        child: const Text('결제 링크 열기'),
+                      ),
+                    ),
+                  ],
+                ),
+                if (lastUpload != null) ...[
+                  const SizedBox(height: 10),
+                  KvRow(k: 'upload.ok', v: lastUploadOk == true ? 'true' : 'false'),
+                  KvRow(k: 'vendor', v: (lastUpload['vendor'] ?? 'domeme').toString()),
+                  KvRow(
+                    k: 'payUrl',
+                    v: lastUploadPayUrl.isEmpty ? '-' : lastUploadPayUrl,
+                  ),
+                  if ((lastUpload['warning'] ?? '').toString().isNotEmpty)
+                    KvRow(k: 'warning', v: (lastUpload['warning'] ?? '').toString()),
+                  if ((lastUpload['error'] ?? '').toString().isNotEmpty)
+                    KvRow(k: 'error', v: (lastUpload['error'] ?? '').toString()),
                 ],
 
                 const SizedBox(height: 10),

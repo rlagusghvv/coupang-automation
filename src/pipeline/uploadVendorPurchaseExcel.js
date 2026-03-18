@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import { chromium } from "playwright";
 
+const LOGIN_URL = "https://domemedb.domeggook.com/index/";
 const UPLOAD_URL = "https://domeggook.com/main/myBuy/order/my_orderExcelForm.php";
 
 function firstExisting(paths = []) {
@@ -43,6 +44,48 @@ async function bestEffortFindPayUrl(page) {
   return page.url();
 }
 
+async function bestEffortDomemeLogin(page, settings = {}) {
+  const userId = String(settings.domemeId || "").trim();
+  const userPw = String(settings.domemePw || "").trim();
+  if (!userId || !userPw) return false;
+
+  await page.goto(LOGIN_URL, { waitUntil: "domcontentloaded", timeout: 90000 });
+
+  const idSelectors = [
+    "input[name='id']",
+    "input[name='user_id']",
+    "input#id",
+    "input[type='text']",
+  ];
+  const pwSelectors = [
+    "input[name='pw']",
+    "input[name='password']",
+    "input#pw",
+    "input[type='password']",
+  ];
+
+  const idInput = page.locator(idSelectors.join(",")).first();
+  const pwInput = page.locator(pwSelectors.join(",")).first();
+
+  if (await idInput.count()) {
+    await idInput.fill(userId);
+  }
+  if (await pwInput.count()) {
+    await pwInput.fill(userPw);
+  }
+
+  const loginBtn = page
+    .locator("button:has-text('로그인'), input[type='submit'], button[type='submit']")
+    .first();
+  if (await loginBtn.count()) {
+    await Promise.all([
+      page.waitForLoadState("domcontentloaded").catch(() => {}),
+      loginBtn.click().catch(() => {}),
+    ]);
+  }
+  return true;
+}
+
 export async function uploadVendorPurchaseExcel({ vendor, filePath, settings = {}, storageStateDefaultPath = "" }) {
   const v = String(vendor || "").trim();
   if (!v) return { ok: false, error: "missing_vendor" };
@@ -58,6 +101,13 @@ export async function uploadVendorPurchaseExcel({ vendor, filePath, settings = {
       : String(settings.domeggookStorageStatePath || "").trim();
 
   const storageStatePath = firstExisting([configuredPath, storageStateDefaultPath]);
+  const hasDomemeCredentials =
+    String(settings.domemeId || "").trim().isNotEmpty &&
+    String(settings.domemePw || "").trim().isNotEmpty;
+
+  if (v === "domeme" && !storageStatePath && !hasDomemeCredentials) {
+    return { ok: false, error: "missing_domeme_session_or_credentials" };
+  }
 
   const browser = await chromium.launch({ headless: true });
   const context = storageStatePath
@@ -66,6 +116,10 @@ export async function uploadVendorPurchaseExcel({ vendor, filePath, settings = {
   const page = await context.newPage();
 
   try {
+    if (!storageStatePath && v === "domeme") {
+      await bestEffortDomemeLogin(page, settings);
+    }
+
     await page.goto(UPLOAD_URL, { waitUntil: "domcontentloaded", timeout: 90000 });
 
     // IMPORTANT: There are multiple file inputs on the page (e.g., image upload).
