@@ -859,6 +859,14 @@ export function scoreRecommendation({
     return { ok: false, reason: 'bad_price' };
   }
 
+  const minimumOrderQty = Math.max(
+    1,
+    Number(computed.minimumOrderQty ?? computed.purchaseConstraints?.minimumOrderQty ?? 1) || 1,
+  );
+  if (minimumOrderQty > 1) {
+    return { ok: false, reason: 'minimum_order_qty_gt_1', minimumOrderQty };
+  }
+
   const shippingEval = resolveRecommendationShippingCost(draft.shippingFee, shipping);
   const shippingCost = Number(shippingEval.shippingCost) || 0;
 
@@ -899,6 +907,7 @@ export function scoreRecommendation({
     shippingCost,
     shippingEstimated: Boolean(shippingEval.estimated),
     shippingSource: shippingEval.source,
+    minimumOrderQty,
     finalPrice,
     profit,
     marginRate,
@@ -1136,6 +1145,16 @@ export async function listRecommendations(userId, { limit = 50 } = {}) {
       previewImages.length ??
       0
     ) || 0;
+    const minimumOrderQty = Math.max(
+      1,
+      Number(
+        qc?.minimumOrderQty ??
+        prev?.computed?.minimumOrderQty ??
+        prev?.purchaseConstraints?.minimumOrderQty ??
+        prev?.draft?.purchaseConstraints?.minimumOrderQty ??
+        1,
+      ) || 1,
+    );
     const tier = String(qc?.tier || (detailImageCount >= 3 ? 'A' : (detailImageCount >= 1 ? 'B' : 'C')));
     const eligibleUpload = Boolean(qc?.eligibleUpload === true || qc?.ok === true);
     const sourcePrice = Number.isFinite(Number(r.source_price))
@@ -1196,9 +1215,10 @@ export async function listRecommendations(userId, { limit = 50 } = {}) {
       score: r.score,
       reason: r.reason,
       contentImageCount: detailImageCount,
+      minimumOrderQty,
       previewImages,
       shortform,
-      qc: { tier, eligibleUpload, detailImageCount },
+      qc: { tier, eligibleUpload, detailImageCount, minimumOrderQty },
       createdAt: r.created_at,
       saved: savedSet.has(String(r.source_url || '').trim()),
     };
@@ -1330,6 +1350,15 @@ function mapSavedRowToItem(r) {
   const categoryCode = toPositiveInt(payload?.category?.code);
   const categorySourceRaw = String(payload?.category?.source || '').trim();
   const categorySource = categorySourceRaw || (categoryCode ? 'payload' : null);
+  const minimumOrderQty = Math.max(
+    1,
+    Number(
+      qc?.minimumOrderQty ??
+      payload?.preview?.computed?.minimumOrderQty ??
+      payload?.preview?.draft?.purchaseConstraints?.minimumOrderQty ??
+      1,
+    ) || 1,
+  );
   return {
     id: r.id,
     sourceUrl,
@@ -1351,12 +1380,14 @@ function mapSavedRowToItem(r) {
     score: r.score,
     reason: r.reason,
     contentImageCount: detailImageCount,
+    minimumOrderQty,
     previewImages,
     shortform,
     qc: {
       tier: String(qc?.tier || '-'),
       eligibleUpload: Boolean(qc?.eligibleUpload),
       detailImageCount,
+      minimumOrderQty,
     },
     saved: true,
     savedAt: r.saved_at,
@@ -3321,6 +3352,10 @@ async function generateRecommendationsBatch({
     const detailCount = Number(v.contentImageCount || 0) || 0;
     const previewCount = Array.isArray(v.previewImages) ? v.previewImages.length : 0;
     const detailDisplayCount = previewCount > 0 ? previewCount : detailCount;
+    const minimumOrderQty = Math.max(
+      1,
+      Number(v.minimumOrderQty || v.qcPreview?.minimumOrderQty || 1) || 1,
+    );
     const tier = detailCount >= 3 ? 'A' : (detailCount >= 1 ? 'B' : 'C');
     const eligibleUpload = Boolean(qcGate.ok);
 
@@ -3351,6 +3386,10 @@ async function generateRecommendationsBatch({
         },
         computed: {
           contentImageCount: detailDisplayCount,
+          minimumOrderQty,
+          purchaseConstraints: {
+            minimumOrderQty,
+          },
         },
       },
       minProfit: minProfitForItem,
@@ -3375,6 +3414,7 @@ async function generateRecommendationsBatch({
       finalPrice: rescored.finalPrice,
       profit: rescored.profit,
       marginRate: rescored.marginRate,
+      minimumOrderQty,
       score: rescored.score,
       reason: resolvedReason,
       payload: {
@@ -3399,6 +3439,7 @@ async function generateRecommendationsBatch({
           computed: {
             images: v.previewImages || [],
             contentImageCount: detailDisplayCount,
+            minimumOrderQty,
             imageCountRaw: Number(v.qcPreview?.imageCountRaw || 0) || 0,
             imageCountFiltered: Number(v.qcPreview?.imageCountFiltered || detailDisplayCount) || detailDisplayCount,
             imageCountRejected: Number(v.qcPreview?.imageCountRejected || 0) || 0,
@@ -3410,6 +3451,7 @@ async function generateRecommendationsBatch({
           metrics: qcGate.metrics && typeof qcGate.metrics === 'object' ? qcGate.metrics : {},
           stage: qcDecisionStage,
           detailImageCount: detailDisplayCount,
+          minimumOrderQty,
           tier,
           eligibleUpload,
         },

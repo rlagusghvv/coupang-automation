@@ -796,6 +796,14 @@ export async function previewUploadFromUrl(inputUrl, settings = {}) {
     mainImageUrl: draft.imageUrl,
     filteredImageUrls: filteredImages,
   });
+  const minimumOrderQtyRaw =
+    draft?.purchaseConstraints && typeof draft.purchaseConstraints === 'object'
+      ? draft.purchaseConstraints.minimumOrderQty
+      : null;
+  const minimumOrderQty =
+    Number.isFinite(Number(minimumOrderQtyRaw)) && Number(minimumOrderQtyRaw) > 0
+      ? Number(minimumOrderQtyRaw)
+      : 1;
 
   return {
     ok: true,
@@ -805,6 +813,10 @@ export async function previewUploadFromUrl(inputUrl, settings = {}) {
     preview: {
       sourceUrl: draft.sourceUrl,
       title: draft.title,
+      minimumOrderQty,
+      purchaseConstraints: {
+        minimumOrderQty,
+      },
       mainImageUrl: draft.imageUrl,
       contentImagesRaw: rawContentImages,
       contentImagesFiltered: filteredImages,

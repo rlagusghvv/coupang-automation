@@ -209,6 +209,14 @@ async function enrichPreviewForClient(previewRaw, settings = {}) {
     : [];
   const images = uniqueStrings([draft.imageUrl, ...detailImages]);
   const options = Array.isArray(draft.options) ? draft.options : [];
+  const minimumOrderQtyRaw =
+    inspect?.minimumOrderQty ??
+    inspect?.purchaseConstraints?.minimumOrderQty ??
+    draft?.purchaseConstraints?.minimumOrderQty;
+  const minimumOrderQty =
+    Number.isFinite(Number(minimumOrderQtyRaw)) && Number(minimumOrderQtyRaw) > 0
+      ? Number(minimumOrderQtyRaw)
+      : 1;
   const sourcePrice = Number(draft.price);
   const finalPrice = computePrice(draft.price, {
     rate: settings.marginRate,
@@ -223,6 +231,10 @@ async function enrichPreviewForClient(previewRaw, settings = {}) {
     finalPrice: Number.isFinite(Number(finalPrice)) ? Number(finalPrice) : finalPrice ?? null,
     images,
     optionsCount: options.length,
+    minimumOrderQty,
+    purchaseConstraints: {
+      minimumOrderQty,
+    },
   };
 
   const overrideCategoryCode = toPositiveIntOrNull(settings?.categoryOverrideCode);

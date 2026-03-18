@@ -2332,6 +2332,13 @@ export async function parseProductFromDomaeqq(url, opts = {}) {
       shippingFee,
     });
 
+    draft.purchaseConstraints = {
+      minimumOrderQty: Number.isFinite(Number(qtyMinQty)) && Number(qtyMinQty) > 0
+        ? Number(qtyMinQty)
+        : 1,
+      quantityPriceTiers: Array.isArray(qtyPriceTiers) ? qtyPriceTiers.slice(0, 10) : [],
+    };
+
     // Debug payload for preview (safe: contains no secrets)
     draft.__debug = {
       source: "domeggook",

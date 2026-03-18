@@ -50,6 +50,10 @@ export function evaluateQcGate(preview = {}, settings = {}) {
     pathBlockedCountRaw: num(preview.pathBlockedCountRaw, 0),
     suspiciousPathCountRaw: num(preview.suspiciousPathCountRaw, 0),
     suspiciousPathCountFiltered: num(preview.suspiciousPathCountFiltered, 0),
+    minimumOrderQty: Math.max(
+      1,
+      num(preview.minimumOrderQty ?? preview.purchaseConstraints?.minimumOrderQty, 1),
+    ),
   };
 
   const openApiImagePassthrough = Boolean(preview.openApiImagePassthrough);
@@ -86,6 +90,10 @@ export function evaluateQcGate(preview = {}, settings = {}) {
 
   if (!preview.mainImageUrl) {
     reasons.push("대표 이미지가 비어 있습니다.");
+  }
+
+  if (metrics.minimumOrderQty > 1) {
+    reasons.push(`최소주문수량이 ${metrics.minimumOrderQty}개라 단건 주문 처리에 맞지 않습니다.`);
   }
 
   if (metrics.mainImageTokenCount < minMainTokenCount) {

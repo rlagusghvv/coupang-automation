@@ -3264,6 +3264,10 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
                     const <String, dynamic>{};
                 final qcTier = (qc['tier'] ?? '-').toString();
                 final eligibleUpload = qc['eligibleUpload'] == true;
+                final minimumOrderQty = int.tryParse(
+                        (it['minimumOrderQty'] ?? qc['minimumOrderQty'] ?? 1)
+                            .toString()) ??
+                    1;
                 final detailImageCountRaw = int.tryParse(
                         (it['contentImageCount'] ?? qc['detailImageCount'] ?? 0)
                             .toString()) ??
@@ -3402,6 +3406,11 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
                                       ? const Color(0xFF2F9E44)
                                       : Colors.orange,
                                 ),
+                                if (minimumOrderQty > 1)
+                                  InfoChip(
+                                    label: 'MOQ $minimumOrderQty+',
+                                    color: Colors.redAccent,
+                                  ),
                                 if (shortformScore > 0)
                                   InfoChip(
                                     label: shortformTier.isNotEmpty
