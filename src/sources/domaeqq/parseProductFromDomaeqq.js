@@ -1872,6 +1872,43 @@ export async function parseProductFromDomaeqq(url, opts = {}) {
       (await page.locator(".lItemPrice").first().textContent().catch(() => null))?.trim() ||
       (await page.locator("text=/\\d[\\d,]*\\s*원/").first().textContent().catch(() => null))?.trim();
     const bodyText = await page.locator("body").innerText().catch(() => "");
+    const reliablePagePrice = await page.evaluate(() => {
+      const parseNum = (value) => {
+        const text = String(value ?? "").replace(/,/g, " ").trim();
+        const match = text.match(/(\d[\d,]*)/);
+        if (!match) return null;
+        const parsed = Number(String(match[1] || "").replace(/,/g, ""));
+        return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+      };
+
+      const candidates = [];
+
+      try {
+        const state = window?.lItem?.store?.getState?.();
+        const baseAmtDome = parseNum(state?.baseAmtDome);
+        if (baseAmtDome) candidates.push(baseAmtDome);
+      } catch {}
+
+      try {
+        const og = document
+          .querySelector('meta[property="og:description"]')
+          ?.getAttribute("content");
+        const ogPrice = parseNum(og);
+        if (ogPrice) candidates.push(ogPrice);
+      } catch {}
+
+      try {
+        const enpPrice = parseNum(window?.ENP_VAR?.collect?.price);
+        if (enpPrice) candidates.push(enpPrice);
+      } catch {}
+
+      try {
+        const itemPrice = parseNum(window?.itemPrice);
+        if (itemPrice) candidates.push(itemPrice);
+      } catch {}
+
+      return candidates.find((n) => Number.isFinite(n) && n > 0) || null;
+    }).catch(() => null);
     let shippingFee = parseShippingFeeFromText(bodyText);
 
     // Mobile domeggook pages often contain clearer shipping info ("배송정보 3,000원 ~").
@@ -1935,13 +1972,20 @@ export async function parseProductFromDomaeqq(url, opts = {}) {
       return Math.min(...nums);
     })();
 
-    const priceRaw =
-      (is1688 && Number.isFinite(minVariantPrice) ? minVariantPrice : null) ||
+    const openApiPrice = Number.isFinite(Number(openApiItemView?.price))
+      ? Number(openApiItemView.price)
+      : null;
+    const fallbackQtyPrice =
       (Number.isFinite(Number(qtyPriceForOne)) ? Number(qtyPriceForOne) : null) ||
       (qtyMinPriceUsable ? Number(qtyPriceMinQty) : null) ||
+      null;
+    const priceRaw =
+      (is1688 && Number.isFinite(minVariantPrice) ? minVariantPrice : null) ||
+      (Number.isFinite(Number(reliablePagePrice)) ? Number(reliablePagePrice) : null) ||
+      (Number.isFinite(openApiPrice) ? openApiPrice : null) ||
       (Number.isFinite(Number(priceFromPriceText)) ? Number(priceFromPriceText) : null) ||
-      (Number.isFinite(Number(openApiItemView?.price)) ? Number(openApiItemView.price) : null) ||
       pickPriceFromText(bodyText) ||
+      fallbackQtyPrice ||
       9900;
 
     const price = Math.max(1000, floorTo10Won(priceRaw) || 1000);
@@ -2432,6 +2476,10 @@ export async function parseProductFromDomaeqq(url, opts = {}) {
       price: {
         picked: price,
         raw: priceRaw,
+        reliablePagePrice: Number.isFinite(Number(reliablePagePrice)) ? Number(reliablePagePrice) : null,
+        openApiPrice: Number.isFinite(Number(openApiPrice)) ? Number(openApiPrice) : null,
+        priceFromPriceText: Number.isFinite(Number(priceFromPriceText)) ? Number(priceFromPriceText) : null,
+        fallbackQtyPrice: Number.isFinite(Number(fallbackQtyPrice)) ? Number(fallbackQtyPrice) : null,
         qtyTiers: Array.isArray(qtyPriceTiers) ? qtyPriceTiers.slice(0, 10) : [],
       },
       detailSource: finalContentSource,
