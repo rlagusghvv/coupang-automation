@@ -231,9 +231,55 @@ const RECOMMENDATION_THEME_HINTS = {
   ],
 };
 
+const TRENDING_DISCOVERY_KEYWORDS_2026_SPRING = [
+  '봄맞이 정리함',
+  '원룸 틈새 수납',
+  '신학기 책상 정리',
+  '데스크 오거나이저',
+  '냉장고 자석 선반',
+  '싱크대 슬라이드 선반',
+  '세탁기 틈새 선반',
+  '욕실 틈새 수납',
+  '현관 자석 선반',
+  '현관 신발 정리',
+  '피크닉 보냉백',
+  '차량 트렁크 정리',
+  '차량 컵홀더 트레이',
+  '반려동물 산책 파우치',
+  '반려동물 발 세정 컵',
+];
+
+const RECOMMENDATION_PERFORMANCE_IGNORE_TAGS = new Set([
+  '생활용품',
+  '인테리어',
+  '주방용품',
+  '리빙용품',
+  '정리용품',
+  '수납용품',
+  '다용도',
+  '멀티',
+  '추천상품',
+  '인기상품',
+]);
+
+function mergeUniqueKeywords(...groups) {
+  const out = [];
+  const seen = new Set();
+  for (const group of groups) {
+    const list = Array.isArray(group) ? group : [];
+    for (const raw of list) {
+      const keyword = String(raw || '').trim();
+      if (!keyword || seen.has(keyword)) continue;
+      seen.add(keyword);
+      out.push(keyword);
+    }
+  }
+  return out;
+}
+
 export function defaultKeywordSet() {
   // Broad recommendation pool: car + pet + home organize + desk + travel/camping.
-  return [
+  return mergeUniqueKeywords(TRENDING_DISCOVERY_KEYWORDS_2026_SPRING, [
     // car
     '차량용 수납함',
     '차량 틈새 수납',
@@ -301,7 +347,7 @@ export function defaultKeywordSet() {
     '캠핑 수납 박스',
     '캠핑 랜턴 걸이',
     '차박 수납함',
-  ];
+  ]);
 }
 
 export async function fetchDomeggookUrlsByKeyword({ keyword, limit = 40, storageStatePath = '', maxPages = 2 }) {
@@ -646,6 +692,325 @@ function buildRecommendationTitleDedupKey(rawTitle = '') {
   return tokens.slice(0, 7).join('|');
 }
 
+function normalizeRecommendationSignalKey(raw = '') {
+  return String(raw || '')
+    .toLowerCase()
+    .replace(/[^0-9a-zA-Z가-힣ㄱ-ㅎㅏ-ㅣ\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/\s+/g, '');
+}
+
+function buildRecommendationPerformanceSignals({
+  title = '',
+  keyword = '',
+  searchTags = [],
+  themes = [],
+} = {}) {
+  const titleKey = buildRecommendationTitleDedupKey(title);
+  const rawTags = normalizeSearchTags(
+    [
+      ...buildSearchTags({
+        title,
+        keyword,
+        extraTags: Array.isArray(searchTags) ? searchTags : [],
+        max: 12,
+      }),
+      ...(Array.isArray(searchTags) ? searchTags : []),
+    ],
+    { max: 12 },
+  );
+  const tagKeys = [];
+  const seen = new Set();
+  for (const rawTag of rawTags) {
+    const tag = String(rawTag || '').trim();
+    if (!tag) continue;
+    if (!/\s/.test(tag) && tag.length < 4) continue;
+    const key = normalizeRecommendationSignalKey(tag);
+    if (!key || RECOMMENDATION_PERFORMANCE_IGNORE_TAGS.has(key) || seen.has(key)) continue;
+    seen.add(key);
+    tagKeys.push(key);
+  }
+  const themeList = [...new Set(
+    (Array.isArray(themes) ? themes : [])
+      .map((theme) => String(theme || '').trim().toLowerCase())
+      .filter(Boolean),
+  )];
+  return { titleKey, tagKeys, themes: themeList };
+}
+
+function bumpSignalWeight(map, key, weight) {
+  if (!(map instanceof Map)) return;
+  const normalizedKey = String(key || '').trim();
+  const normalizedWeight = Number(weight) || 0;
+  if (!normalizedKey || normalizedWeight === 0) return;
+  const current = Number(map.get(normalizedKey) || 0) || 0;
+  if (normalizedWeight > current) {
+    map.set(normalizedKey, normalizedWeight);
+  }
+}
+
+function collectTopSignalMatches(keys = [], map = new Map(), limit = 2) {
+  if (!(map instanceof Map)) return [];
+  const matched = [];
+  for (const rawKey of Array.isArray(keys) ? keys : []) {
+    const key = String(rawKey || '').trim();
+    if (!key || !map.has(key)) continue;
+    matched.push({ key, weight: Number(map.get(key) || 0) || 0 });
+  }
+  matched.sort((a, b) => b.weight - a.weight);
+  return matched.slice(0, Math.max(0, Number(limit) || 0));
+}
+
+async function buildRecommendationPerformanceProfile(db, userId, settings = {}) {
+  const uid = String(userId || '').trim();
+  if (!uid) {
+    return {
+      hardRejectTitleKeys: new Set(),
+      titlePenalty: new Map(),
+      tagPenalty: new Map(),
+      themePenalty: new Map(),
+      titleBoost: new Map(),
+      tagBoost: new Map(),
+      themeBoost: new Map(),
+      diagnostics: {
+        considered: 0,
+        penalizedFamilies: 0,
+        rejectedFamilies: 0,
+        boostedFamilies: 0,
+        samples: [],
+      },
+    };
+  }
+
+  const lookbackDays = clampNumber(settings?.recommendationPerformanceLookbackDays, 14, 120, 45);
+  const noClickPenaltyDays = clampNumber(settings?.recommendationPerformanceNoClickPenaltyDays, 2, 21, 3);
+  const noClickRejectDays = clampNumber(settings?.recommendationPerformanceNoClickRejectDays, 3, 45, 7);
+  const weakClickPenaltyDays = clampNumber(settings?.recommendationPerformanceWeakClickPenaltyDays, 5, 45, 10);
+  const positiveClickThreshold = Math.floor(
+    clampNumber(settings?.recommendationPerformancePositiveClickThreshold, 1, 20, 2),
+  );
+  const nowTs = Date.now();
+  const rows = await dbAll(
+    db,
+    `SELECT
+       p.source_url,
+       p.normalized_url,
+       p.title,
+       p.created_at,
+       COUNT(DISTINCT l.slug) AS link_count,
+       COUNT(c.id) AS click_count,
+       MAX(c.clicked_at) AS last_clicked_at
+     FROM uploaded_products p
+     LEFT JOIN marketing_links l
+       ON l.user_id = p.user_id
+      AND (
+        l.source_url = p.source_url OR
+        (TRIM(p.normalized_url) <> '' AND l.source_url = p.normalized_url) OR
+        (TRIM(l.source_url) = '' AND TRIM(l.title) <> '' AND l.title = p.title)
+      )
+     LEFT JOIN marketing_clicks c
+       ON c.user_id = p.user_id
+      AND c.slug = l.slug
+     WHERE p.user_id = ?
+       AND p.created_at >= ?
+     GROUP BY p.id, p.source_url, p.normalized_url, p.title, p.created_at
+     ORDER BY p.created_at DESC
+     LIMIT 600`,
+    [uid, cutoffIsoFromDays(lookbackDays)],
+  ).catch(() => []);
+
+  const hardRejectTitleKeys = new Set();
+  const titlePenalty = new Map();
+  const tagPenalty = new Map();
+  const themePenalty = new Map();
+  const titleBoost = new Map();
+  const tagBoost = new Map();
+  const themeBoost = new Map();
+  const samples = [];
+  let penalizedFamilies = 0;
+  let rejectedFamilies = 0;
+  let boostedFamilies = 0;
+
+  for (const row of rows) {
+    const title = String(row?.title || '').trim();
+    const createdAt = String(row?.created_at || '').trim();
+    const linkCount = Number(row?.link_count || 0) || 0;
+    const clickCount = Number(row?.click_count || 0) || 0;
+    if (!title || !createdAt || linkCount <= 0) continue;
+    const createdTs = Date.parse(createdAt);
+    if (!Number.isFinite(createdTs)) continue;
+    const ageDays = Math.max(0, Math.floor((nowTs - createdTs) / 86_400_000));
+    const themes = detectRecommendationThemes({ title });
+    const signals = buildRecommendationPerformanceSignals({
+      title,
+      searchTags: buildSearchTags({ title, max: 10 }),
+      themes,
+    });
+    if (!signals.titleKey) continue;
+
+    if (clickCount <= 0 && ageDays >= noClickRejectDays) {
+      hardRejectTitleKeys.add(signals.titleKey);
+      bumpSignalWeight(titlePenalty, signals.titleKey, 2200);
+      for (const tagKey of signals.tagKeys.slice(0, 3)) bumpSignalWeight(tagPenalty, tagKey, 850);
+      for (const theme of signals.themes) bumpSignalWeight(themePenalty, theme, 250);
+      penalizedFamilies += 1;
+      rejectedFamilies += 1;
+      if (samples.length < 6) {
+        samples.push({
+          kind: 'reject',
+          title,
+          ageDays,
+          clickCount,
+          linkCount,
+        });
+      }
+      continue;
+    }
+
+    if (clickCount <= 0 && ageDays >= noClickPenaltyDays) {
+      bumpSignalWeight(titlePenalty, signals.titleKey, 1400);
+      for (const tagKey of signals.tagKeys.slice(0, 3)) bumpSignalWeight(tagPenalty, tagKey, 520);
+      for (const theme of signals.themes) bumpSignalWeight(themePenalty, theme, 140);
+      penalizedFamilies += 1;
+      if (samples.length < 6) {
+        samples.push({
+          kind: 'penalty',
+          title,
+          ageDays,
+          clickCount,
+          linkCount,
+        });
+      }
+      continue;
+    }
+
+    if (clickCount <= 1 && ageDays >= weakClickPenaltyDays) {
+      bumpSignalWeight(titlePenalty, signals.titleKey, 800);
+      for (const tagKey of signals.tagKeys.slice(0, 2)) bumpSignalWeight(tagPenalty, tagKey, 260);
+      for (const theme of signals.themes) bumpSignalWeight(themePenalty, theme, 90);
+      penalizedFamilies += 1;
+      if (samples.length < 6) {
+        samples.push({
+          kind: 'weak',
+          title,
+          ageDays,
+          clickCount,
+          linkCount,
+        });
+      }
+      continue;
+    }
+
+    if (clickCount >= positiveClickThreshold) {
+      bumpSignalWeight(titleBoost, signals.titleKey, 520);
+      for (const tagKey of signals.tagKeys.slice(0, 3)) bumpSignalWeight(tagBoost, tagKey, 180);
+      for (const theme of signals.themes) bumpSignalWeight(themeBoost, theme, 90);
+      boostedFamilies += 1;
+      if (samples.length < 6) {
+        samples.push({
+          kind: 'boost',
+          title,
+          ageDays,
+          clickCount,
+          linkCount,
+        });
+      }
+    }
+  }
+
+  return {
+    hardRejectTitleKeys,
+    titlePenalty,
+    tagPenalty,
+    themePenalty,
+    titleBoost,
+    tagBoost,
+    themeBoost,
+    diagnostics: {
+      considered: rows.length,
+      penalizedFamilies,
+      rejectedFamilies,
+      boostedFamilies,
+      samples,
+    },
+  };
+}
+
+function evaluateRecommendationPerformance({
+  title = '',
+  keyword = '',
+  searchTags = [],
+  themes = [],
+  profile = null,
+} = {}) {
+  if (!profile || typeof profile !== 'object') {
+    return {
+      hardReject: false,
+      reason: '',
+      scoreDelta: 0,
+      matched: {
+        titlePenalty: 0,
+        titleBoost: 0,
+        tagPenalty: [],
+        tagBoost: [],
+        themePenalty: [],
+        themeBoost: [],
+      },
+    };
+  }
+
+  const signals = buildRecommendationPerformanceSignals({
+    title,
+    keyword,
+    searchTags,
+    themes,
+  });
+  if (signals.titleKey && profile.hardRejectTitleKeys instanceof Set && profile.hardRejectTitleKeys.has(signals.titleKey)) {
+    return {
+      hardReject: true,
+      reason: 'underperforming_title_family',
+      scoreDelta: 0,
+      matched: {
+        titlePenalty: Number(profile.titlePenalty?.get?.(signals.titleKey) || 0) || 0,
+        titleBoost: 0,
+        tagPenalty: [],
+        tagBoost: [],
+        themePenalty: [],
+        themeBoost: [],
+      },
+    };
+  }
+
+  const tagPenaltyMatches = collectTopSignalMatches(signals.tagKeys, profile.tagPenalty, 2);
+  const tagBoostMatches = collectTopSignalMatches(signals.tagKeys, profile.tagBoost, 2);
+  const themePenaltyMatches = collectTopSignalMatches(signals.themes, profile.themePenalty, 2);
+  const themeBoostMatches = collectTopSignalMatches(signals.themes, profile.themeBoost, 2);
+  const titlePenalty = Number(profile.titlePenalty?.get?.(signals.titleKey) || 0) || 0;
+  const titleBoost = Number(profile.titleBoost?.get?.(signals.titleKey) || 0) || 0;
+  const penalty =
+    titlePenalty +
+    tagPenaltyMatches.reduce((sum, row) => sum + (Number(row.weight) || 0), 0) +
+    themePenaltyMatches.reduce((sum, row) => sum + (Number(row.weight) || 0), 0);
+  const boost =
+    titleBoost +
+    tagBoostMatches.reduce((sum, row) => sum + (Number(row.weight) || 0), 0) +
+    themeBoostMatches.reduce((sum, row) => sum + (Number(row.weight) || 0), 0);
+  return {
+    hardReject: false,
+    reason: '',
+    scoreDelta: boost - penalty,
+    matched: {
+      titlePenalty,
+      titleBoost,
+      tagPenalty: tagPenaltyMatches,
+      tagBoost: tagBoostMatches,
+      themePenalty: themePenaltyMatches,
+      themeBoost: themeBoostMatches,
+    },
+  };
+}
+
 function diversifyRecommendationItems({
   items = [],
   backupPool = [],
@@ -846,6 +1211,7 @@ export function scoreRecommendation({
   banKeywords = DEFAULT_BAN_KEYWORDS,
   keyword = '',
   shipping = {},
+  performanceProfile = null,
 } = {}) {
   const draft = preview?.draft || {};
   const computed = preview?.computed || {};
@@ -893,10 +1259,33 @@ export function scoreRecommendation({
 
   const themes = detectRecommendationThemes({ title, keyword });
   const themeBoost = computeThemeBoost(themes);
+  const searchTags = buildSearchTags({ title, keyword, max: 10 });
+  const performance = evaluateRecommendationPerformance({
+    title,
+    keyword,
+    searchTags,
+    themes,
+    profile: performanceProfile,
+  });
+  if (performance.hardReject) {
+    return {
+      ok: false,
+      reason: performance.reason || 'underperforming_title_family',
+      performance,
+    };
+  }
   // Score: profit + detail quality + theme preference(car/pet).
-  const score = profit + Math.min(2000, contentImageCount * 200) + themeBoost;
+  const score =
+    profit +
+    Math.min(2000, contentImageCount * 200) +
+    themeBoost +
+    (Number(performance.scoreDelta) || 0);
   const themeText = themes.length > 0 ? ` / theme=${themes.join('+')}` : '';
-  const reason = `recommend≈${Math.round(finalPrice)} / profit≈${Math.round(profit)} / margin≈${Math.round(marginRate * 100)}% / ship≈${Math.round(shippingCost)} / detailImages=${contentImageCount}${themeText}`;
+  const performanceText =
+    Number(performance.scoreDelta || 0) !== 0
+      ? ` / perf=${performance.scoreDelta > 0 ? '+' : ''}${Math.round(performance.scoreDelta)}`
+      : '';
+  const reason = `recommend≈${Math.round(finalPrice)} / profit≈${Math.round(profit)} / margin≈${Math.round(marginRate * 100)}% / ship≈${Math.round(shippingCost)} / detailImages=${contentImageCount}${themeText}${performanceText}`;
 
   return {
     ok: true,
@@ -915,6 +1304,8 @@ export function scoreRecommendation({
     reason,
     themes,
     themeBoost,
+    searchTags,
+    performance,
   };
 }
 
@@ -1192,6 +1583,10 @@ export async function listRecommendations(userId, { limit = 50 } = {}) {
     const categoryCode = toPositiveInt(payload?.category?.code);
     const categorySourceRaw = String(payload?.category?.source || '').trim();
     const categorySource = categorySourceRaw || (categoryCode ? 'payload' : null);
+    const performance =
+      payload?.performance && typeof payload.performance === 'object'
+        ? payload.performance
+        : null;
 
     return {
       id: r.id,
@@ -1218,6 +1613,7 @@ export async function listRecommendations(userId, { limit = 50 } = {}) {
       minimumOrderQty,
       previewImages,
       shortform,
+      performance,
       qc: { tier, eligibleUpload, detailImageCount, minimumOrderQty },
       createdAt: r.created_at,
       saved: savedSet.has(String(r.source_url || '').trim()),
@@ -2679,6 +3075,7 @@ async function generateRecommendationsBatch({
   keywords,
   topN = 80,
   excludeUrls = new Set(),
+  performanceProfile = null,
   onProgress = null,
   maxRuntimeMs = 110_000,
   previewTimeoutMs = 9_000,
@@ -2877,6 +3274,7 @@ async function generateRecommendationsBatch({
       banKeywords: DEFAULT_BAN_KEYWORDS,
       keyword: c.keyword,
       shipping: shippingSettings,
+      performanceProfile,
     });
     if (!s.ok) {
       const reason = String(s.reason || 'unknown');
@@ -2944,6 +3342,7 @@ async function generateRecommendationsBatch({
         banKeywords: relaxedBanKeywords,
         keyword: c.keyword,
         shipping: shippingSettings,
+        performanceProfile,
       });
       if (!s.ok) {
         const reason = String(s.reason || 'unknown');
@@ -3014,6 +3413,7 @@ async function generateRecommendationsBatch({
         banKeywords: rescueBanKeywords,
         keyword: c.keyword,
         shipping: shippingSettings,
+        performanceProfile,
       });
       if (!s.ok) {
         const reason = String(s.reason || 'unknown');
@@ -3397,6 +3797,7 @@ async function generateRecommendationsBatch({
       banKeywords: DEFAULT_BAN_KEYWORDS,
       keyword: cand.keyword,
       shipping: shippingSettings,
+      performanceProfile,
     });
     if (!rescored.ok) {
       const rescoredReason = `after_preview_${String(rescored.reason || 'unknown')}`;
@@ -3417,6 +3818,7 @@ async function generateRecommendationsBatch({
       minimumOrderQty,
       score: rescored.score,
       reason: resolvedReason,
+      searchTags: Array.isArray(rescored.searchTags) ? rescored.searchTags : [],
       payload: {
         ...candPayload,
         pricing: {
@@ -3455,6 +3857,14 @@ async function generateRecommendationsBatch({
           tier,
           eligibleUpload,
         },
+        performance: rescored.performance && typeof rescored.performance === 'object'
+          ? {
+              scoreDelta: Number(rescored.performance.scoreDelta || 0) || 0,
+              matched: rescored.performance.matched && typeof rescored.performance.matched === 'object'
+                ? rescored.performance.matched
+                : {},
+            }
+          : null,
       },
     });
     if (typeof onProgress === 'function') {
@@ -3620,6 +4030,13 @@ async function generateRecommendationsBatch({
   const diagnostics = {
     candidateSourceMode,
     stopped: stopRequested,
+    performanceProfile: performanceProfile?.diagnostics || {
+      considered: 0,
+      penalizedFamilies: 0,
+      rejectedFamilies: 0,
+      boostedFamilies: 0,
+      samples: [],
+    },
     openApiCircuitBreakApplied,
     openApiFailureStreakFinal: openApiFailureStreak,
     keywordsTried: keywordScanLimit,
@@ -3785,7 +4202,17 @@ async function generateRecommendationsBatch({
 }
 
 export async function generateRecommendationsForUser({ userId, settings, keywords, topN = 80, onProgress = null }) {
-  const batch = await generateRecommendationsBatch({ settings, keywords, topN, excludeUrls: new Set(), onProgress });
+  const db = openDb();
+  const performanceProfile = await buildRecommendationPerformanceProfile(db, userId, settings || {});
+  db.close();
+  const batch = await generateRecommendationsBatch({
+    settings,
+    keywords,
+    topN,
+    excludeUrls: new Set(),
+    performanceProfile,
+    onProgress,
+  });
   await replaceRecommendationsForUser({ userId, items: batch.items });
   return { ok: true, count: batch.items.length, diagnostics: batch.diagnostics };
 }
@@ -3801,6 +4228,7 @@ export async function fillRecommendationsForUser({ userId, settings, keywords, t
   const existingUrlSet = toNormalizedUrlSet(existingUrls);
   const uploadedUrls = await listUploadedSourceUrls(db, userId, 8000);
   const exclude = toNormalizedUrlSet([...existingUrls, ...uploadedUrls]);
+  const performanceProfile = await buildRecommendationPerformanceProfile(db, userId, settings || {});
 
   const state = await getRecommendationsState(db, userId);
   const idx = state.nextKeywordIdx % Math.max(1, seed.length);
@@ -3843,6 +4271,7 @@ export async function fillRecommendationsForUser({ userId, settings, keywords, t
     keywords: [kw],
     topN: fillTopN,
     excludeUrls: exclude,
+    performanceProfile,
     onProgress,
   });
   let fillRescuePlaywrightTried = false;
@@ -3885,6 +4314,7 @@ export async function fillRecommendationsForUser({ userId, settings, keywords, t
       keywords: [kw],
       topN: fillTopN,
       excludeUrls: exclude,
+      performanceProfile,
       onProgress,
       candidateSourceMode: 'playwright',
     });
@@ -3922,6 +4352,7 @@ export async function fillRecommendationsForUser({ userId, settings, keywords, t
       keywords: [kw],
       topN: fillTopN,
       excludeUrls: exclude,
+      performanceProfile,
       onProgress,
       candidateSourceMode: 'auto',
     });
@@ -3977,6 +4408,7 @@ export async function refreshRecommendationsForUser({
   const recentSeenUrls = await listRecentSeenUrls(db, userId, cooldown);
   const uploadedUrls = await listUploadedSourceUrls(db, userId, 8000);
   const excludeUrls = toNormalizedUrlSet([...existingUrls, ...recentSeenUrls, ...uploadedUrls]);
+  const performanceProfile = await buildRecommendationPerformanceProfile(db, userId, settings || {});
 
   await dbRun(db, 'DELETE FROM recommendations WHERE user_id = ?', [userId]);
 
@@ -4010,6 +4442,7 @@ export async function refreshRecommendationsForUser({
     keywords: seed,
     topN: target,
     excludeUrls,
+    performanceProfile,
     onProgress,
     shouldStop,
   });
@@ -4033,6 +4466,7 @@ export async function refreshRecommendationsForUser({
       keywords: seed,
       topN: target,
       excludeUrls: uploadedOnlyExclude,
+      performanceProfile,
       onProgress,
       shouldStop,
     });
@@ -4084,6 +4518,7 @@ export async function refreshRecommendationsForUser({
       keywords: seed,
       topN: target,
       excludeUrls: activeExcludeUrls,
+      performanceProfile,
       onProgress,
       candidateSourceMode: 'playwright',
       shouldStop,
@@ -4127,6 +4562,7 @@ export async function refreshRecommendationsForUser({
       keywords: seed,
       topN: target,
       excludeUrls: activeExcludeUrls,
+      performanceProfile,
       onProgress,
       candidateSourceMode: 'auto',
       shouldStop,

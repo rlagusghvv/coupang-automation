@@ -29,6 +29,21 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
       'description': '전후 비교/실사용 시연이 쉬운 생활템',
     },
     {
+      'key': 'trend_now',
+      'label': '네이버·쿠팡 시즌 키워드',
+      'description': '봄정리/신학기/나들이 시즌형 생활템',
+    },
+    {
+      'key': 'spring_reset',
+      'label': '봄정리·신학기',
+      'description': '원룸/책상/냉장고/세탁실 리셋형',
+    },
+    {
+      'key': 'outing_ready',
+      'label': '나들이·차량·반려외출',
+      'description': '피크닉/차량 수납/반려 외출 준비형',
+    },
+    {
       'key': 'car',
       'label': '차량용 전체',
       'description': '차량 수납/거치/선정리 통합',

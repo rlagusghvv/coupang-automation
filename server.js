@@ -1034,6 +1034,30 @@ const RECOMMENDATION_KEYWORD_POOLS = Object.freeze({
     "데스크 케이블 홀더",
     "캐리어 정리 파우치",
   ],
+  trendLivingNow: [
+    "봄맞이 정리함",
+    "원룸 틈새 수납",
+    "신학기 책상 정리",
+    "데스크 오거나이저",
+    "냉장고 자석 선반",
+    "싱크대 슬라이드 선반",
+    "세탁기 틈새 선반",
+    "욕실 틈새 수납",
+    "현관 자석 선반",
+    "현관 신발 정리",
+  ],
+  trendOutingNow: [
+    "피크닉 보냉백",
+    "차량 트렁크 정리",
+    "차량 컵홀더 트레이",
+    "차량 뒷좌석 테이블",
+    "반려동물 산책 파우치",
+    "반려동물 발 세정 컵",
+    "캠핑 행잉 오거나이저",
+    "차박 수납함",
+    "캐리어 정리 파우치",
+    "아웃도어 수납 가방",
+  ],
 });
 
 function mergeRecommendationKeywords(...groups) {
@@ -1063,6 +1087,28 @@ const RECOMMENDATION_CATEGORY_PRESETS = Object.freeze([
     label: "인스타 숏폼 반응형",
     description: "전후 비교/실사용 시연이 쉬운 생활템",
     keywords: mergeRecommendationKeywords(RECOMMENDATION_KEYWORD_POOLS.shortformWinners),
+  },
+  {
+    key: "trend_now",
+    label: "네이버·쿠팡 시즌 키워드",
+    description: "봄정리/신학기/나들이 시즌형 생활템",
+    keywords: mergeRecommendationKeywords(
+      RECOMMENDATION_KEYWORD_POOLS.trendLivingNow,
+      RECOMMENDATION_KEYWORD_POOLS.trendOutingNow,
+      RECOMMENDATION_KEYWORD_POOLS.shortformWinners,
+    ),
+  },
+  {
+    key: "spring_reset",
+    label: "봄정리·신학기",
+    description: "원룸/책상/냉장고/세탁실 리셋형",
+    keywords: mergeRecommendationKeywords(RECOMMENDATION_KEYWORD_POOLS.trendLivingNow),
+  },
+  {
+    key: "outing_ready",
+    label: "나들이·차량·반려외출",
+    description: "피크닉/차량 수납/반려 외출 준비형",
+    keywords: mergeRecommendationKeywords(RECOMMENDATION_KEYWORD_POOLS.trendOutingNow),
   },
   {
     key: "car",
