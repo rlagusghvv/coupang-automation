@@ -51535,7 +51535,7 @@ q=3
 j=t.N
 i=t.z
 s=6
-return A.j(n.a.c.bZ("/api/orders/export",A.a7(["dateFrom",B.b.G(n.r.a.a),"dateTo",B.b.G(n.w.a.a)],j,i)),$async$Am)
+return A.j(n.a.c.bZ("/api/orders/export",A.a7(["dateFrom",B.b.G(n.r.a.a),"dateTo",B.b.G(n.w.a.a),"vendor","domeggook"],j,i)),$async$Am)
 case 6:m=b
 h=t.Y.a(J.F(m,"result"))
 g=h==null?null:J.ac(h,j,i)
@@ -114203,7 +114203,7 @@ B.B2=new A.wz(3,"bottom")
 B.UC=new A.E6(null,null,null,null,null,null,null,null,null,null,null)
 B.UD=new A.E7(null,null,null,null,null,null,null,null,null,null,null,null)
 B.UE=new A.E8(null,null,null,null,null,null,null,null,null,null,null,null,null)
-B.UF=new A.cQ("\ucfe0\ud321 \u2192 \ub3c4\ub9e4\ub9e4 \uc5d1\uc140",null,null)
+B.UF=new A.cQ("\ucfe0\ud321 \u2192 \ub3c4\ub9e4\uafb9 \uc5d1\uc140",null,null)
 B.UG=new A.cQ("\uc138\uc158 \uc0c1\ud0dc",null,null)
 B.UH=new A.cQ("\ucd5c\uadfc \ubbf8\ub9ac\ubcf4\uae30",null,null)
 B.UI=new A.cQ("\ub85c\uadf8\uc778\uc774 \ud544\uc694\ud574\uc694",null,null)

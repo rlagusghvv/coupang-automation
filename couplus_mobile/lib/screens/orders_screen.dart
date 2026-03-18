@@ -87,6 +87,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
       final json = await widget.api.postJson('/api/orders/export', {
         'dateFrom': _dateFrom.text.trim(),
         'dateTo': _dateTo.text.trim(),
+        'vendor': 'domeggook',
       });
       final result = (json['result'] as Map?)?.cast<String, dynamic>() ?? {};
       setState(() => _lastExport = result);
@@ -300,7 +301,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const SectionHeader('쿠팡 → 도매매 엑셀'),
+                const SectionHeader('쿠팡 → 도매꾹 엑셀'),
                 const SizedBox(height: 10),
                 Row(
                   children: [

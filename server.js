@@ -4904,6 +4904,7 @@ app.post("/api/orders/export", authRequired, async (req, res) => {
   try {
     const dateFrom = String(req.body?.dateFrom || "").trim();
     const dateTo = String(req.body?.dateTo || "").trim();
+    const vendor = String(req.body?.vendor || "domeggook").trim().toLowerCase() || "domeggook";
     if (!dateFrom || !dateTo) {
       return res.status(400).json({ ok: false, error: "missing dates" });
     }
@@ -4912,6 +4913,7 @@ app.post("/api/orders/export", authRequired, async (req, res) => {
       dateFrom,
       dateTo,
       status: "ACCEPT",
+      vendor,
       settings: req.user.settings || {},
       allowEnvFallback: false,
     });
@@ -4923,6 +4925,7 @@ app.post("/api/orders/export", authRequired, async (req, res) => {
       ok: true,
       result: {
         ...result,
+        vendor,
         fileName,
         downloadPath,
         downloadUrl: downloadPath ? (base ? `${base}${downloadPath}` : downloadPath) : "",

@@ -389,6 +389,7 @@ export async function exportOrdersToDomeme({
   dateFrom,
   dateTo,
   status = "ACCEPT",
+  vendor = "domeggook",
   settings = {},
   allowEnvFallback = true,
 }) {
@@ -426,6 +427,9 @@ export async function exportOrdersToDomeme({
   const { map: skuMap, path: skuMapPath } = loadSkuMap(settings);
   const missing = [];
   const sourcePurchaseCache = new Map();
+  const normalizedVendor = String(vendor || "domeggook").trim().toLowerCase() || "domeggook";
+  const marketLabel = normalizedVendor === "domeme" ? "도매매" : "도매꾹";
+  const mallName = normalizedVendor === "domeme" ? "쿠팡" : "";
 
   const rows = [];
   for (const sheet of orderRes.data) {
@@ -487,7 +491,7 @@ export async function exportOrdersToDomeme({
 
       rows.push(
         makeRow({
-          market: "쿠팡",
+          market: marketLabel,
           itemNo: resolution.itemNo,
           optionCode: resolution.optionCode || "00",
           optionName: resolution.optionName || "",
@@ -498,7 +502,7 @@ export async function exportOrdersToDomeme({
           addr2: receiver.addr2 || "",
           phone: receiver.safeNumber || receiver.receiverNumber || "",
           altPhone: receiver.receiverNumber || "",
-          mallName: "쿠팡",
+          mallName,
           memo: "",
           deliveryMemo: delivery.parcelPrintMessage || "",
           pcc: receiver.pcc || "",
