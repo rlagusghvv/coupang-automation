@@ -340,30 +340,49 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
         .where((id) => id.isNotEmpty)
         .toList();
     if (ids.isEmpty) return;
+    const batchSize = 3;
 
     setState(() {
       _priceAuditBusy = true;
       _error = null;
+      _lastPriceAuditSummary = '저가 검사 준비 중…';
     });
 
     try {
-      final json = await widget.api.postJson('/api/catalog/price-audit/scan', {
-        'ids': ids,
-      });
-      final items = (json['items'] as List?) ?? const [];
       final flaggedIds = <String>{};
-      for (final raw in items) {
-        if (raw is! Map) continue;
-        final item = raw.cast<String, dynamic>();
-        if (item['flagged'] != true) continue;
-        final product = (item['product'] as Map?)?.cast<String, dynamic>() ??
-            const <String, dynamic>{};
-        final id = (product['id'] ?? item['id'] ?? '').toString().trim();
-        if (id.isNotEmpty) flaggedIds.add(id);
+      var scanned = 0;
+      var flagged = 0;
+      var skipped = 0;
+
+      for (var start = 0; start < ids.length; start += batchSize) {
+        final end = (start + batchSize > ids.length)
+            ? ids.length
+            : start + batchSize;
+        final chunk = ids.sublist(start, end);
+        if (mounted) {
+          setState(() {
+            _lastPriceAuditSummary =
+                '저가 검사 중… ${start + 1}-$end / ${ids.length}';
+          });
+        }
+        final json = await widget.api.postJson('/api/catalog/price-audit/scan', {
+          'ids': chunk,
+        });
+        final items = (json['items'] as List?) ?? const [];
+        for (final raw in items) {
+          if (raw is! Map) continue;
+          final item = raw.cast<String, dynamic>();
+          if (item['flagged'] == true) {
+            final product = (item['product'] as Map?)?.cast<String, dynamic>() ??
+                const <String, dynamic>{};
+            final id = (product['id'] ?? item['id'] ?? '').toString().trim();
+            if (id.isNotEmpty) flaggedIds.add(id);
+          }
+        }
+        scanned += int.tryParse((json['scanned'] ?? 0).toString()) ?? 0;
+        flagged += int.tryParse((json['flagged'] ?? 0).toString()) ?? 0;
+        skipped += int.tryParse((json['skipped'] ?? 0).toString()) ?? 0;
       }
-      final scanned = int.tryParse((json['scanned'] ?? 0).toString()) ?? 0;
-      final flagged = int.tryParse((json['flagged'] ?? 0).toString()) ?? 0;
-      final skipped = int.tryParse((json['skipped'] ?? 0).toString()) ?? 0;
 
       await _refresh(syncRemote: false);
       if (!mounted) return;
