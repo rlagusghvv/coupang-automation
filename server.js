@@ -200,6 +200,16 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, Math.max(0, Number(ms) || 0)));
 }
 
+function withTimeout(promise, ms, label = "timeout") {
+  let timer = null;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(label)), Math.max(1000, Number(ms) || 1000));
+  });
+  return Promise.race([promise, timeout]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
+}
+
 async function enrichPreviewForClient(previewRaw, settings = {}) {
   if (!previewRaw || typeof previewRaw !== "object") return previewRaw;
   const preview = JSON.parse(JSON.stringify(previewRaw));
@@ -2598,10 +2608,14 @@ async function auditCatalogPriceOne({ user, row }) {
     });
   }
 
-  const supplierDraft = await parseProductFromDomaeqq(sourceUrl, {
-    mode: "full",
-    previewPlaywrightFast: false,
-  });
+  const supplierDraft = await withTimeout(
+    parseProductFromDomaeqq(sourceUrl, {
+      mode: "full",
+      previewPlaywrightFast: false,
+    }),
+    20_000,
+    "price_audit_supplier_timeout",
+  );
   const sourcePrice = extractPositivePrice(supplierDraft?.price);
   const expectedFinalPrice =
     sourcePrice == null
@@ -2618,11 +2632,15 @@ async function auditCatalogPriceOne({ user, row }) {
   let live = null;
   if (sellerProductId) {
     try {
-      live = await fetchSellerStatusLive({
-        sellerProductId,
-        settings: user?.settings || {},
-        includeHistory: false,
-      });
+      live = await withTimeout(
+        fetchSellerStatusLive({
+          sellerProductId,
+          settings: user?.settings || {},
+          includeHistory: false,
+        }),
+        10_000,
+        "price_audit_live_timeout",
+      );
     } catch {}
   }
 

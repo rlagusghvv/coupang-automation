@@ -340,7 +340,7 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
         .where((id) => id.isNotEmpty)
         .toList();
     if (ids.isEmpty) return;
-    const batchSize = 3;
+    const batchSize = 1;
 
     setState(() {
       _priceAuditBusy = true;
