@@ -42,6 +42,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
   final _q = TextEditingController();
   String _status = '';
   bool _onlyTodo = true;
+  bool _hideOldTodo = true;
   List<String> _queueStatuses = const [];
   String? _queueLabel;
   bool _toolsExpanded = false;
@@ -392,6 +393,42 @@ class _OrdersScreenState extends State<OrdersScreen> {
     return s == 'ACCEPT' || s == 'INSTRUCT' || s == 'READY';
   }
 
+  DateTime? _extractOrderDate(Map<String, dynamic> orderRow) {
+    final order = (orderRow['order'] as Map?)?.cast<String, dynamic>() ?? {};
+    final sheet = (order['sheet'] as Map?)?.cast<String, dynamic>() ?? {};
+    final candidates = <String>[
+      (sheet['orderDate'] ?? '').toString(),
+      (sheet['orderedAt'] ?? '').toString(),
+      (sheet['paidAt'] ?? '').toString(),
+      (sheet['createdAt'] ?? '').toString(),
+      (orderRow['at'] ?? '').toString(),
+    ];
+    for (final value in candidates) {
+      if (value.trim().isEmpty) continue;
+      final parsed = DateTime.tryParse(value.trim());
+      if (parsed != null) return parsed;
+    }
+    return null;
+  }
+
+  bool _isOldTodoOrder(Map<String, dynamic> orderRow) {
+    final status = (orderRow['status'] ?? '').toString();
+    if (!_isTodoStatus(status)) return false;
+    final dt = _extractOrderDate(orderRow);
+    if (dt == null) return false;
+    return DateTime.now().difference(dt.toLocal()) >= const Duration(days: 2);
+  }
+
+  String _orderAgeLabel(Map<String, dynamic> orderRow) {
+    final dt = _extractOrderDate(orderRow);
+    if (dt == null) return '';
+    final now = DateTime.now();
+    final diff = now.difference(dt.toLocal());
+    if (diff.inDays <= 0) return '오늘';
+    if (diff.inDays == 1) return '어제';
+    return '${diff.inDays}일 전';
+  }
+
   bool _matchesQueueStatus(String status) {
     if (_queueStatuses.isEmpty) return true;
     return _queueStatuses.contains(status.trim().toUpperCase());
@@ -445,7 +482,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
     final lastUploadPayUrl = (lastUpload?['payUrl'] ?? '').toString();
 
     final q = _q.text.trim().toLowerCase();
-    final filtered = _orders.where((o) {
+    final filteredAll = _orders.where((o) {
       final st = (o['status'] ?? '').toString();
       if (!_matchesQueueStatus(st)) return false;
       if (_status.trim().isNotEmpty && st != _status) return false;
@@ -467,8 +504,17 @@ class _OrdersScreenState extends State<OrdersScreen> {
       ..sort((a, b) {
         final sa = (a['status'] ?? '').toString();
         final sb = (b['status'] ?? '').toString();
-        return _statusRank(sa).compareTo(_statusRank(sb));
+        final statusCmp = _statusRank(sa).compareTo(_statusRank(sb));
+        if (statusCmp != 0) return statusCmp;
+        final atA = _extractOrderDate(a)?.millisecondsSinceEpoch ?? 0;
+        final atB = _extractOrderDate(b)?.millisecondsSinceEpoch ?? 0;
+        return atB.compareTo(atA);
       });
+    final hiddenOldTodoCount =
+        filteredAll.where(_isOldTodoOrder).length;
+    final filtered = _hideOldTodo
+        ? filteredAll.where((o) => !_isOldTodoOrder(o)).toList()
+        : filteredAll;
 
     final acceptCount = _orders
         .where((o) =>
@@ -610,7 +656,40 @@ class _OrdersScreenState extends State<OrdersScreen> {
             title: const Text('해야 할 주문만 보기'),
             subtitle: const Text('접수/지시 같은 처리 전 상태만 남깁니다.'),
           ),
+          SwitchListTile.adaptive(
+            value: _hideOldTodo,
+            onChanged:
+                _loading ? null : (v) => setState(() => _hideOldTodo = v),
+            contentPadding: EdgeInsets.zero,
+            title: const Text('이전 미처리 주문 숨기기'),
+            subtitle: const Text('2일 이상 지난 미처리 주문은 기본으로 가립니다.'),
+          ),
           const SizedBox(height: 6),
+          if (_hideOldTodo && hiddenOldTodoCount > 0) ...[
+            AppCard(
+              child: Row(
+                children: [
+                  InfoChip(
+                    label: '이전 주문 $hiddenOldTodoCount건 숨김',
+                    color: Theme.of(context).colorScheme.outline,
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      '오래된 주문은 기본으로 숨겼습니다. 필요하면 토글을 꺼서 다시 볼 수 있습니다.',
+                      style: TextStyle(
+                        color: Theme.of(context)
+                            .colorScheme
+                            .onSurface
+                            .withValues(alpha: 0.68),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 8),
+          ],
           SingleChildScrollView(
             scrollDirection: Axis.horizontal,
             child: Row(
@@ -816,6 +895,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
                 final receiverPhone =
                     (receiver['receiverNumber'] ?? receiver['safeNumber'] ?? '')
                         .toString();
+                final ageLabel = _orderAgeLabel(o);
                 final needsAction = _isTodoStatus(status);
                 final canQuickAck = status.trim().toUpperCase() == 'ACCEPT';
                 final canQuickInvoice = const {
@@ -848,6 +928,13 @@ class _OrdersScreenState extends State<OrdersScreen> {
                             InfoChip(
                                 label: '수량 $qty',
                                 color: Theme.of(context).colorScheme.outline),
+                          if (ageLabel.isNotEmpty)
+                            InfoChip(
+                              label: ageLabel,
+                              color: _isOldTodoOrder(o)
+                                  ? const Color(0xFFE67700)
+                                  : Theme.of(context).colorScheme.outline,
+                            ),
                           if (id.isNotEmpty)
                             InfoChip(
                                 label: id,
