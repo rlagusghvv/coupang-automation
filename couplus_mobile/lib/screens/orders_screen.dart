@@ -50,6 +50,18 @@ class _OrdersScreenState extends State<OrdersScreen> {
   Map<String, dynamic>? _lastExport;
   Map<String, dynamic>? _lastShippingRefresh;
   Map<String, dynamic>? _lastUpload;
+  static const List<String> _syncStatuses = <String>[
+    'ACCEPT',
+    'INSTRUCT',
+    'READY',
+    'DELIVERING',
+    'DONE',
+  ];
+  static const List<String> _exportStatuses = <String>[
+    'ACCEPT',
+    'INSTRUCT',
+    'READY',
+  ];
 
   @override
   void initState() {
@@ -121,6 +133,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
         'dateFrom': _dateFrom.text.trim(),
         'dateTo': _dateTo.text.trim(),
         'vendor': 'domeggook',
+        'statuses': _exportStatuses,
       });
       final result = (json['result'] as Map?)?.cast<String, dynamic>() ?? {};
       setState(() => _lastExport = result);
@@ -148,7 +161,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
         : '${widget.api.baseUrl}/couplus-out/order_exports/$fileName';
     final uri = Uri.tryParse(url);
     if (uri != null) {
-      await launchUrl(uri, mode: LaunchMode.externalApplication);
+      await launchUrl(uri, mode: LaunchMode.platformDefault);
     }
   }
 
@@ -163,7 +176,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
       final json = await widget.api.postJson('/api/orders/shipping/refresh', {
         'dateFrom': _dateFrom.text.trim(),
         'dateTo': _dateTo.text.trim(),
-        'status': 'ACCEPT',
+        'statuses': _syncStatuses,
       });
       final result = (json['result'] as Map?)?.cast<String, dynamic>() ?? {};
       setState(() => _lastShippingRefresh = result);
@@ -228,7 +241,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
     if (!payUrl.startsWith('http')) return;
     final uri = Uri.tryParse(payUrl);
     if (uri != null) {
-      await launchUrl(uri, mode: LaunchMode.externalApplication);
+      await launchUrl(uri, mode: LaunchMode.platformDefault);
     }
   }
 
@@ -608,6 +621,8 @@ class _OrdersScreenState extends State<OrdersScreen> {
                 const SizedBox(width: 8),
                 _statusChip(context, 'INSTRUCT', '지시'),
                 const SizedBox(width: 8),
+                _statusChip(context, 'READY', '준비'),
+                const SizedBox(width: 8),
                 _statusChip(context, 'DELIVERING', '배송중'),
                 const SizedBox(width: 8),
                 _statusChip(context, 'DONE', '완료'),
@@ -647,7 +662,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  '주문 처리에 꼭 필요할 때만 펼쳐서 씁니다. 평소에는 주문 목록만 보이게 단순화했습니다.',
+                  '주문 처리에 꼭 필요할 때만 펼쳐서 씁니다. 발주확인 후 주문도 엑셀에 포함되도록 접수/지시/준비 상태를 함께 사용합니다.',
                   style: TextStyle(
                     color: Theme.of(context)
                         .colorScheme

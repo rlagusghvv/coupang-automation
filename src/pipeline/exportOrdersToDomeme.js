@@ -242,6 +242,60 @@ async function fetchOrderSheetsAll({ vendorId, accessKey, secretKey, createdAtFr
   return { ok: true, data: all };
 }
 
+function normalizeStatusList(raw, fallback = ["ACCEPT"]) {
+  const src = Array.isArray(raw)
+    ? raw
+    : String(raw || "")
+        .split(",")
+        .map((x) => x.trim())
+        .filter(Boolean);
+  const out = src
+    .map((x) => String(x || "").trim().toUpperCase())
+    .filter(Boolean);
+  return Array.from(new Set(out.length > 0 ? out : fallback));
+}
+
+async function fetchOrderSheetsForStatuses({
+  vendorId,
+  accessKey,
+  secretKey,
+  createdAtFrom,
+  createdAtTo,
+  statuses = [],
+}) {
+  const statusList = normalizeStatusList(statuses, ["ACCEPT"]);
+  const merged = [];
+  const warnings = [];
+  for (const status of statusList) {
+    const res = await fetchOrderSheetsAll({
+      vendorId,
+      accessKey,
+      secretKey,
+      createdAtFrom,
+      createdAtTo,
+      status,
+    });
+    if (!res.ok) {
+      warnings.push({
+        status,
+        error: res.error || "status_fetch_failed",
+        httpStatus: Number(res.status || 0) || null,
+      });
+      continue;
+    }
+    merged.push(...res.data);
+  }
+  if (merged.length === 0 && warnings.length > 0) {
+    return {
+      ok: false,
+      error: "coupang_status_fetch_failed",
+      statuses: statusList,
+      warnings,
+    };
+  }
+  return { ok: true, data: merged, statuses: statusList, warnings };
+}
+
 async function resolveUploadedProductForOrderItem({ userId, item }) {
   const sellerProductId = String(item?.sellerProductId || "").trim();
   if (sellerProductId) {
@@ -389,6 +443,7 @@ export async function exportOrdersToDomeme({
   dateFrom,
   dateTo,
   status = "ACCEPT",
+  statuses = [],
   vendor = "domeggook",
   settings = {},
   allowEnvFallback = true,
@@ -413,14 +468,18 @@ export async function exportOrdersToDomeme({
 
   const createdAtFrom = formatDateKST(dateFrom);
   const createdAtTo = formatDateKST(dateTo);
+  const statusList = normalizeStatusList(
+    statuses,
+    normalizeStatusList(status, ["ACCEPT", "INSTRUCT", "READY"]),
+  );
 
-  const orderRes = await fetchOrderSheetsAll({
+  const orderRes = await fetchOrderSheetsForStatuses({
     vendorId,
     accessKey,
     secretKey,
     createdAtFrom,
     createdAtTo,
-    status,
+    statuses: statusList,
   });
   if (!orderRes.ok) return orderRes;
 
@@ -432,12 +491,21 @@ export async function exportOrdersToDomeme({
   const mallName = normalizedVendor === "domeme" ? "쿠팡" : "";
 
   const rows = [];
+  const seenRowKeys = new Set();
   for (const sheet of orderRes.data) {
     const receiver = sheet.receiver || {};
     const delivery = sheet.delivery || {};
     const orderItems = Array.isArray(sheet.orderItems) ? sheet.orderItems : [];
 
     for (const item of orderItems) {
+      const dedupeKey = [
+        String(sheet?.shipmentBoxId || "").trim(),
+        String(sheet?.orderId || "").trim(),
+        String(item?.vendorItemId || "").trim(),
+        String(item?.orderItemId || "").trim(),
+      ].join("\t");
+      if (seenRowKeys.has(dedupeKey)) continue;
+
       const qty = Math.max(
         0,
         Number(item.shippingCount || 0) -
@@ -489,6 +557,7 @@ export async function exportOrdersToDomeme({
         continue;
       }
 
+      seenRowKeys.add(dedupeKey);
       rows.push(
         makeRow({
           market: marketLabel,
@@ -557,5 +626,7 @@ export async function exportOrdersToDomeme({
     missingPath,
     skuMapPath,
     rowCount: rows.length,
+    statuses: statusList,
+    warnings: Array.isArray(orderRes.warnings) ? orderRes.warnings : [],
   };
 }

@@ -5112,6 +5112,19 @@ function normalizeIdList(raw) {
     .filter(Boolean);
 }
 
+function normalizeOrderStatusList(raw, fallback = ["ACCEPT"]) {
+  const src = Array.isArray(raw)
+    ? raw
+    : String(raw || "")
+        .split(",")
+        .map((x) => x.trim())
+        .filter(Boolean);
+  const out = src
+    .map((x) => String(x || "").trim().toUpperCase())
+    .filter(Boolean);
+  return Array.from(new Set(out.length > 0 ? out : fallback));
+}
+
 function parseCoupangBody(raw) {
   try {
     return typeof raw === "string" ? parseCoupangJson(raw) : raw;
@@ -5217,7 +5230,11 @@ app.post("/api/orders/shipping/refresh", authRequired, async (req, res) => {
   try {
     const dateFrom = String(req.body?.dateFrom || "").trim();
     const dateTo = String(req.body?.dateTo || "").trim();
-    const status = String(req.body?.status || "ACCEPT").trim() || "ACCEPT";
+    const statuses = normalizeOrderStatusList(
+      req.body?.statuses ?? req.body?.status,
+      ["ACCEPT", "INSTRUCT", "READY", "DELIVERING", "DONE"],
+    );
+    const status = statuses[0] || "ACCEPT";
     if (!dateFrom || !dateTo) {
       return res.status(400).json({ ok: false, error: "missing dates" });
     }
@@ -5228,6 +5245,7 @@ app.post("/api/orders/shipping/refresh", authRequired, async (req, res) => {
       dateFrom,
       dateTo,
       status,
+      statuses,
     });
 
     if (!result?.ok) {
@@ -5241,6 +5259,7 @@ app.post("/api/orders/shipping/refresh", authRequired, async (req, res) => {
         ...result,
         scanned: result.scannedSheets ?? 0,
         updated: result.processed ?? 0,
+        statuses,
       },
     });
   } catch (e) {
@@ -5373,6 +5392,10 @@ app.post("/api/orders/export", authRequired, async (req, res) => {
     const dateFrom = String(req.body?.dateFrom || "").trim();
     const dateTo = String(req.body?.dateTo || "").trim();
     const vendor = String(req.body?.vendor || "domeggook").trim().toLowerCase() || "domeggook";
+    const statuses = normalizeOrderStatusList(
+      req.body?.statuses ?? req.body?.status,
+      ["ACCEPT", "INSTRUCT", "READY"],
+    );
     if (!dateFrom || !dateTo) {
       return res.status(400).json({ ok: false, error: "missing dates" });
     }
@@ -5380,7 +5403,8 @@ app.post("/api/orders/export", authRequired, async (req, res) => {
       userId: req.user.id,
       dateFrom,
       dateTo,
-      status: "ACCEPT",
+      status: statuses[0] || "ACCEPT",
+      statuses,
       vendor,
       settings: req.user.settings || {},
       allowEnvFallback: false,
@@ -5394,6 +5418,7 @@ app.post("/api/orders/export", authRequired, async (req, res) => {
       result: {
         ...result,
         vendor,
+        statuses,
         fileName,
         downloadPath,
         downloadUrl: downloadPath ? (base ? `${base}${downloadPath}` : downloadPath) : "",

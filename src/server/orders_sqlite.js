@@ -209,6 +209,19 @@ function formatDateKST(dateStr) {
   return `${dateStr}+09:00`;
 }
 
+function normalizeStatusList(raw, fallback = ["ACCEPT"]) {
+  const src = Array.isArray(raw)
+    ? raw
+    : String(raw || "")
+        .split(",")
+        .map((x) => x.trim())
+        .filter(Boolean);
+  const out = src
+    .map((x) => String(x || "").trim().toUpperCase())
+    .filter(Boolean);
+  return Array.from(new Set(out.length > 0 ? out : fallback));
+}
+
 import crypto from 'node:crypto';
 
 function stableHash(obj) {
@@ -248,7 +261,94 @@ function buildCoupangExternalIds(sheet, item, i) {
   return { externalId: String(externalId), externalSubId: String(externalSubId) };
 }
 
-export async function refreshShippingStatusesFromCoupang({ userId, settings = {}, dateFrom, dateTo, status = "ACCEPT" }) {
+function extractOrderTimestampMs(orderPayload) {
+  const order = orderPayload && typeof orderPayload === "object" ? orderPayload : {};
+  const sheet = order?.sheet && typeof order.sheet === "object" ? order.sheet : {};
+  const candidates = [
+    sheet.orderDate,
+    sheet.orderedAt,
+    sheet.paidAt,
+    sheet.createdAt,
+    sheet.deliveryStartDate,
+    sheet.instructDate,
+    order.orderDate,
+    order.orderedAt,
+    order.createdAt,
+  ];
+  for (const value of candidates) {
+    if (value == null || String(value).trim() === "") continue;
+    const ts = Date.parse(String(value));
+    if (Number.isFinite(ts)) return ts;
+  }
+  return null;
+}
+
+async function markMissingOrdersCancelled({
+  userId,
+  dateFrom,
+  dateTo,
+  seenKeys = new Set(),
+  activeStatuses = [],
+}) {
+  if (!userId) return { reconciled: 0 };
+  const statuses = normalizeStatusList(activeStatuses, []);
+  if (statuses.length === 0) return { reconciled: 0 };
+
+  const fromTs = Date.parse(`${String(dateFrom || "").trim()}T00:00:00+09:00`);
+  const toTs = Date.parse(`${String(dateTo || "").trim()}T23:59:59.999+09:00`);
+  if (!Number.isFinite(fromTs) || !Number.isFinite(toTs)) return { reconciled: 0 };
+
+  const db = openDb();
+  try {
+    await ensureOrdersSchema(db);
+    const placeholders = statuses.map(() => "?").join(", ");
+    const rows = await dbAll(
+      db,
+      `SELECT id, status, external_id, external_sub_id, order_json
+       FROM orders
+       WHERE user_id = ?
+         AND source = 'coupang'
+         AND status IN (${placeholders})`,
+      [userId, ...statuses],
+    );
+
+    const now = new Date().toISOString();
+    let reconciled = 0;
+    for (const row of rows) {
+      const key = `${String(row.external_id || "")}\t${String(row.external_sub_id || "")}`;
+      if (seenKeys.has(key)) continue;
+
+      let order = {};
+      try {
+        order = JSON.parse(row.order_json || "{}");
+      } catch {}
+      const ts = extractOrderTimestampMs(order);
+      if (!Number.isFinite(ts) || ts < fromTs || ts > toTs) continue;
+
+      await dbRun(
+        db,
+        `UPDATE orders
+         SET status = ?, updated_at = ?
+         WHERE id = ?`,
+        ["CANCELLED", now, row.id],
+      );
+      reconciled += 1;
+    }
+
+    return { reconciled };
+  } finally {
+    db.close();
+  }
+}
+
+export async function refreshShippingStatusesFromCoupang({
+  userId,
+  settings = {},
+  dateFrom,
+  dateTo,
+  status = "ACCEPT",
+  statuses = [],
+}) {
   if (!userId) throw new Error('userId required');
   const accessKey = String(settings.coupangAccessKey || "").trim();
   const secretKey = String(settings.coupangSecretKey || "").trim();
@@ -267,41 +367,84 @@ export async function refreshShippingStatusesFromCoupang({ userId, settings = {}
 
   const createdAtFrom = formatDateKST(dateFrom);
   const createdAtTo = formatDateKST(dateTo);
+  const statusList = normalizeStatusList(statuses, normalizeStatusList(status, ["ACCEPT"]));
 
-  const r = await fetchOrderSheetsAll({ vendorId, accessKey, secretKey, createdAtFrom, createdAtTo, status });
-  if (!r.ok) return r;
-
-  // Accumulate + dedupe via unique keys (do NOT clear existing orders)
   let processed = 0;
-  for (const sheet of r.data) {
-    const orderItems = Array.isArray(sheet?.orderItems) ? sheet.orderItems : [];
-    if (orderItems.length === 0) {
-      const ids = buildCoupangExternalIds(sheet, {}, 0);
-      await addOrder({
-        userId,
-        source: 'coupang',
-        status: String(status || 'ACCEPT'),
-        order: { sheet },
-        externalId: ids.externalId,
-        externalSubId: ids.externalSubId,
+  let scannedSheets = 0;
+  const seenKeys = new Set();
+  const warnings = [];
+
+  for (const oneStatus of statusList) {
+    const r = await fetchOrderSheetsAll({
+      vendorId,
+      accessKey,
+      secretKey,
+      createdAtFrom,
+      createdAtTo,
+      status: oneStatus,
+    });
+    if (!r.ok) {
+      warnings.push({
+        status: oneStatus,
+        error: r.error || "status_fetch_failed",
+        httpStatus: Number(r.status || 0) || null,
       });
-      processed += 1;
       continue;
     }
-    let idx = 0;
-    for (const item of orderItems) {
-      const ids = buildCoupangExternalIds(sheet, item, idx);
-      await addOrder({
-        userId,
-        source: 'coupang',
-        status: String(status || 'ACCEPT'),
-        order: { sheet, item },
-        externalId: ids.externalId,
-        externalSubId: ids.externalSubId,
-      });
-      processed += 1;
-      idx += 1;
+
+    scannedSheets += r.data.length;
+    for (const sheet of r.data) {
+      const orderItems = Array.isArray(sheet?.orderItems) ? sheet.orderItems : [];
+      if (orderItems.length === 0) {
+        const ids = buildCoupangExternalIds(sheet, {}, 0);
+        seenKeys.add(`${ids.externalId}\t${ids.externalSubId}`);
+        await addOrder({
+          userId,
+          source: 'coupang',
+          status: String(oneStatus || 'ACCEPT'),
+          order: { sheet },
+          externalId: ids.externalId,
+          externalSubId: ids.externalSubId,
+        });
+        processed += 1;
+        continue;
+      }
+      let idx = 0;
+      for (const item of orderItems) {
+        const ids = buildCoupangExternalIds(sheet, item, idx);
+        seenKeys.add(`${ids.externalId}\t${ids.externalSubId}`);
+        await addOrder({
+          userId,
+          source: 'coupang',
+          status: String(oneStatus || 'ACCEPT'),
+          order: { sheet, item },
+          externalId: ids.externalId,
+          externalSubId: ids.externalSubId,
+        });
+        processed += 1;
+        idx += 1;
+      }
     }
+  }
+
+  const reconciled =
+    warnings.length === 0
+      ? await markMissingOrdersCancelled({
+          userId,
+          dateFrom,
+          dateTo,
+          seenKeys,
+          activeStatuses: statusList,
+        })
+      : { reconciled: 0 };
+
+  if (processed === 0 && warnings.length > 0) {
+    return {
+      ok: false,
+      reason: "shipping_refresh_failed",
+      statuses: statusList,
+      warnings,
+    };
   }
 
   return {
@@ -309,9 +452,12 @@ export async function refreshShippingStatusesFromCoupang({ userId, settings = {}
     mode: 'coupang',
     dateFrom,
     dateTo,
-    status,
-    scannedSheets: r.data.length,
+    status: statusList[0] || String(status || "ACCEPT"),
+    statuses: statusList,
+    scannedSheets,
     processed,
+    reconciled: Number(reconciled?.reconciled || 0),
+    warnings,
     at: new Date().toISOString(),
   };
 }
