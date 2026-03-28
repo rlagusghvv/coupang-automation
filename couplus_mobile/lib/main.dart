@@ -70,7 +70,13 @@ class _RootTabsState extends State<RootTabs> {
   @override
   Widget build(BuildContext context) {
     final pages = [
-      HomeScreen(api: _api),
+      HomeScreen(
+        api: _api,
+        onOpenTab: (i) {
+          setState(() => _index = i);
+          _saveLastTab(i);
+        },
+      ),
       WorkScreen(api: _api),
       MyProductsScreen(api: _api),
       OrdersScreen(api: _api),
@@ -98,12 +104,12 @@ class _RootTabsState extends State<RootTabs> {
               NavigationDestination(
                 icon: Icon(Icons.home_outlined),
                 selectedIcon: Icon(Icons.home),
-                label: '홈',
+                label: '운영',
               ),
               NavigationDestination(
                 icon: Icon(Icons.work_outline),
                 selectedIcon: Icon(Icons.work),
-                label: '상품 업로드',
+                label: '업로드',
               ),
               NavigationDestination(
                 icon: Icon(Icons.inventory_2_outlined),

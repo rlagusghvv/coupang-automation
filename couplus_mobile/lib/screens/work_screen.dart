@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 
 import 'package:couplus_mobile/api/api_client.dart';
 import 'package:couplus_mobile/screens/preview_detail_screen.dart';
@@ -41,6 +40,7 @@ class _WorkScreenState extends State<WorkScreen> {
   bool _loading = false;
   String? _error;
   bool _loginRequired = false;
+  bool _advancedExpanded = false;
 
   bool _forceUpload = false;
   bool _skipPreviewBeforeUpload = false;
@@ -53,6 +53,8 @@ class _WorkScreenState extends State<WorkScreen> {
   // Batch queue
   final List<_QueueItem> _queue = [];
   bool _batchRunning = false;
+  bool _supportExpanded = false;
+  String _supportSection = 'batch';
 
   Map<String, dynamic>? _dashboard;
 
@@ -156,164 +158,7 @@ class _WorkScreenState extends State<WorkScreen> {
     }
   }
 
-  String _humanizeJobStatus(String s) {
-    switch (s) {
-      case 'queued':
-        return '대기중';
-      case 'running':
-        return '진행중';
-      case 'success':
-        return '완료';
-      case 'failed':
-        return '실패';
-      default:
-        return s;
-    }
-  }
-
-  Map<String, dynamic>? _activeJob;
   String? _titleOverride;
-
-  Future<void> _startJob(String kind) async {
-    final u = _url.text.trim();
-    if (u.isEmpty) {
-      setState(() => _error = 'URL을 입력하세요.');
-      return;
-    }
-
-    setState(() {
-      _loading = true;
-      _error = null;
-      _preview = null;
-      _uploadResult = null;
-    });
-
-    try {
-      final json = await widget.api.postJson('/api/jobs/start', {
-        'kind': kind,
-        'url': u,
-        'force': (kind == 'upload' && _forceUpload) ? '1' : '0',
-        if ((_selectedPresetId ?? '').trim().isNotEmpty)
-          'presetId': (_selectedPresetId ?? '').trim(),
-        if (kind == 'upload' && (_titleOverride ?? '').trim().isNotEmpty)
-          'titleOverride': (_titleOverride ?? '').trim(),
-        if (kind == 'upload' && (_imagesOverride ?? const []).isNotEmpty)
-          'imagesOverride': (_imagesOverride ?? const []),
-      });
-      final job = (json['job'] as Map?)?.cast<String, dynamic>();
-      setState(() {
-        _activeJob = job;
-        _loginRequired = false;
-      });
-
-      // poll
-      unawaited(_pollJob());
-    } catch (e) {
-      if (e is ApiException && e.isUnauthorized) {
-        setState(() {
-          _loginRequired = true;
-          _error = null;
-        });
-      } else if (e is ApiException && e.statusCode == 409) {
-        // duplicate_product
-        try {
-          final raw = e.details ?? '';
-          final map = jsonDecode(raw) as Map<String, dynamic>;
-          if (map['error'] == 'duplicate_product') {
-            final existing = (map['existing'] as Map?)?.cast<String, dynamic>();
-            if (existing != null && mounted) {
-              await showDialog<void>(
-                context: context,
-                builder: (_) {
-                  final title = (existing['title'] ?? '').toString();
-                  final pid = (existing['sellerProductId'] ?? '').toString();
-                  final productUrl = (existing['productUrl'] ?? '').toString();
-                  return AlertDialog(
-                    title: const Text('이미 등록된 상품'),
-                    content: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(title.isEmpty ? '(제목 없음)' : title),
-                        const SizedBox(height: 8),
-                        Text('SellerProductId: ${pid.isEmpty ? '-' : pid}'),
-                      ],
-                    ),
-                    actions: [
-                      if (productUrl.isNotEmpty)
-                        TextButton(
-                          onPressed: () async {
-                            final uri = Uri.tryParse(productUrl);
-                            if (uri != null) {
-                              await launchUrl(uri,
-                                  mode: LaunchMode.externalApplication);
-                            }
-                          },
-                          child: const Text('기존 상품 열기'),
-                        ),
-                      TextButton(
-                        onPressed: () {
-                          Navigator.of(context).pop();
-                          unawaited(_executeUpload(force: true));
-                        },
-                        child: const Text('강제 재업로드'),
-                      ),
-                      TextButton(
-                        onPressed: () => Navigator.of(context).pop(),
-                        child: const Text('취소'),
-                      ),
-                    ],
-                  );
-                },
-              );
-              return;
-            }
-          }
-        } catch (_) {}
-        setState(() => _error = '이미 등록된 상품입니다.');
-      } else {
-        setState(() => _error = e.toString());
-      }
-    } finally {
-      if (mounted) setState(() => _loading = false);
-    }
-  }
-
-  Future<void> _pollJob() async {
-    final jobId = (_activeJob?['id'] ?? '').toString();
-    if (jobId.isEmpty) return;
-
-    for (var i = 0; i < 90; i++) {
-      await Future.delayed(const Duration(seconds: 2));
-      try {
-        final json = await widget.api.getJson('/api/jobs/$jobId');
-        final job = (json['job'] as Map?)?.cast<String, dynamic>();
-        if (job == null) continue;
-        if (!mounted) return;
-        setState(() => _activeJob = job);
-
-        final status = (job['status'] ?? '').toString();
-        if (status == 'success' || status == 'failed') {
-          final kind = (job['kind'] ?? '').toString();
-          final result = (job['result'] as Map?)?.cast<String, dynamic>();
-          if (kind == 'preview') {
-            setState(() {
-              _preview = (result?['preview'] as Map?)?.cast<String, dynamic>();
-            });
-          } else if (kind == 'upload') {
-            setState(() {
-              _uploadResult =
-                  (result?['result'] as Map?)?.cast<String, dynamic>();
-            });
-          }
-          unawaited(_refresh());
-          return;
-        }
-      } catch (_) {
-        // ignore polling errors
-      }
-    }
-  }
 
   Future<void> _previewFromUrl() async {
     final u = _url.text.trim();
@@ -422,6 +267,7 @@ class _WorkScreenState extends State<WorkScreen> {
       setState(() {
         _uploadResult = result ?? outcome ?? {'ok': true};
       });
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('업로드 요청 완료')),
       );
@@ -997,7 +843,7 @@ class _WorkScreenState extends State<WorkScreen> {
     final previewOptions = (preview?['options'] as List?) ?? const [];
 
     return AppScaffold(
-      title: '상품 업로드',
+      title: '업로드',
       onRefresh: _refresh,
       actions: [
         IconButton(
@@ -1038,36 +884,18 @@ class _WorkScreenState extends State<WorkScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const SectionHeader('URL → 미리보기 / 업로드'),
+                const SectionHeader('단일 업로드'),
                 const SizedBox(height: 10),
-                DropdownButtonFormField<String?>(
-                  initialValue: (_selectedPresetId != null &&
-                          _presets.any((p) => p['id'] == _selectedPresetId))
-                      ? _selectedPresetId
-                      : null,
-                  items: [
-                    const DropdownMenuItem<String?>(
-                      value: null,
-                      child: Text('기본 설정(현재)'),
-                    ),
-                    ..._presets.map((p) {
-                      final id = (p['id'] ?? '').toString();
-                      final name = (p['name'] ?? '').toString();
-                      return DropdownMenuItem<String?>(
-                        value: id,
-                        child: Text(name.isEmpty ? id : name),
-                      );
-                    }),
-                  ],
-                  onChanged: (!isAuthed || _loading)
-                      ? null
-                      : (v) => setState(() => _selectedPresetId = v),
-                  decoration: const InputDecoration(
-                    labelText: '프리셋(선택)',
-                    helperText: '선택하면 미리보기/업로드/배치에 동일하게 적용돼요',
+                Text(
+                  '가장 자주 쓰는 흐름만 먼저 배치했습니다. URL 하나 넣고 미리보기 후 바로 업로드하면 됩니다.',
+                  style: TextStyle(
+                    color: Theme.of(context)
+                        .colorScheme
+                        .onSurface
+                        .withValues(alpha: 0.68),
                   ),
                 ),
-                const SizedBox(height: 10),
+                const SizedBox(height: 12),
                 ValueListenableBuilder<TextEditingValue>(
                   valueListenable: _url,
                   builder: (context, value, _) {
@@ -1101,6 +929,103 @@ class _WorkScreenState extends State<WorkScreen> {
                 const SizedBox(height: 12),
                 Row(
                   children: [
+                    TextButton.icon(
+                      onPressed: (!isAuthed || _loading)
+                          ? null
+                          : () => setState(
+                                () => _advancedExpanded = !_advancedExpanded,
+                              ),
+                      icon: Icon(
+                        _advancedExpanded
+                            ? Icons.keyboard_arrow_up
+                            : Icons.tune,
+                        size: 18,
+                      ),
+                      label: Text(_advancedExpanded ? '고급 옵션 접기' : '고급 옵션'),
+                    ),
+                  ],
+                ),
+                if (_advancedExpanded) ...[
+                  const SizedBox(height: 8),
+                  DropdownButtonFormField<String?>(
+                    initialValue: (_selectedPresetId != null &&
+                            _presets.any((p) => p['id'] == _selectedPresetId))
+                        ? _selectedPresetId
+                        : null,
+                    items: [
+                      const DropdownMenuItem<String?>(
+                        value: null,
+                        child: Text('기본 설정(현재)'),
+                      ),
+                      ..._presets.map((p) {
+                        final id = (p['id'] ?? '').toString();
+                        final name = (p['name'] ?? '').toString();
+                        return DropdownMenuItem<String?>(
+                          value: id,
+                          child: Text(name.isEmpty ? id : name),
+                        );
+                      }),
+                    ],
+                    onChanged: (!isAuthed || _loading)
+                        ? null
+                        : (v) => setState(() => _selectedPresetId = v),
+                    decoration: const InputDecoration(
+                      labelText: '프리셋(선택)',
+                      helperText: '선택하면 미리보기/업로드/배치에 동일하게 적용돼요',
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  Row(
+                    children: [
+                      Switch(
+                        value: _forceUpload,
+                        onChanged: (!isAuthed || _loading)
+                            ? null
+                            : (v) => setState(() => _forceUpload = v),
+                      ),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          '강제 재업로드(중복 허용)',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Theme.of(context)
+                                .colorScheme
+                                .onSurface
+                                .withValues(alpha: 0.65),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  Row(
+                    children: [
+                      Switch(
+                        value: _skipPreviewBeforeUpload,
+                        onChanged: (!isAuthed || _loading)
+                            ? null
+                            : (v) =>
+                                setState(() => _skipPreviewBeforeUpload = v),
+                      ),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          '바로 업로드(미리보기/컨펌 생략)',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Theme.of(context)
+                                .colorScheme
+                                .onSurface
+                                .withValues(alpha: 0.65),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                ],
+                Row(
+                  children: [
                     Expanded(
                       child: OutlinedButton(
                         onPressed:
@@ -1119,65 +1044,6 @@ class _WorkScreenState extends State<WorkScreen> {
                     ),
                   ],
                 ),
-                const SizedBox(height: 10),
-                Row(
-                  children: [
-                    Switch(
-                      value: _forceUpload,
-                      onChanged: (!isAuthed || _loading)
-                          ? null
-                          : (v) => setState(() => _forceUpload = v),
-                    ),
-                    const SizedBox(width: 6),
-                    Expanded(
-                      child: Text(
-                        '강제 재업로드(중복 허용)',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: Theme.of(context)
-                              .colorScheme
-                              .onSurface
-                              .withValues(alpha: 0.65),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                Row(
-                  children: [
-                    Switch(
-                      value: _skipPreviewBeforeUpload,
-                      onChanged: (!isAuthed || _loading)
-                          ? null
-                          : (v) => setState(() => _skipPreviewBeforeUpload = v),
-                    ),
-                    const SizedBox(width: 6),
-                    Expanded(
-                      child: Text(
-                        '바로 업로드(미리보기/컨펌 생략)',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: Theme.of(context)
-                              .colorScheme
-                              .onSurface
-                              .withValues(alpha: 0.65),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                if (_activeJob != null) ...[
-                  const SizedBox(height: 6),
-                  KvRow(
-                    k: '작업 상태',
-                    v: _humanizeJobStatus(
-                        (_activeJob?['status'] ?? '').toString()),
-                  ),
-                  KvRow(
-                    k: '작업 ID',
-                    v: (_activeJob?['id'] ?? '-').toString(),
-                  ),
-                ],
                 if (preview != null) ...[
                   const Divider(height: 28),
                   InkWell(
@@ -1314,393 +1180,435 @@ class _WorkScreenState extends State<WorkScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                SectionHeader('배치 업로드 큐',
-                    trailing: InfoChip(label: '${_queue.length}')),
-                const SizedBox(height: 10),
-                TextField(
-                  controller: _batchUrls,
-                  enabled: isAuthed && !_loading && !_batchRunning,
-                  minLines: 3,
-                  maxLines: 6,
-                  decoration: const InputDecoration(
-                    labelText: '여러 URL 입력',
-                    hintText: '줄바꿈 또는 쉼표(,)로 여러 URL을 붙여넣기',
-                  ),
-                ),
-                const SizedBox(height: 10),
-                Row(
-                  children: [
-                    Expanded(
-                      child: OutlinedButton(
-                        onPressed: (!isAuthed || _loading || _batchRunning)
-                            ? null
-                            : () {
-                                final added = _enqueueFromText(_batchUrls.text);
-                                if (added > 0) {
-                                  _batchUrls.clear();
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    SnackBar(content: Text('큐에 $added개 추가됨')),
-                                  );
-                                }
-                              },
-                        child: const Text('큐에 추가'),
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: FilledButton(
-                        onPressed: (!isAuthed ||
-                                _loading ||
-                                _batchRunning ||
-                                _queue.isEmpty)
-                            ? null
-                            : _runBatch,
-                        child: Text(_batchRunning ? '진행중...' : '배치 시작'),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                Row(
-                  children: [
-                    Expanded(
-                      child: TextButton(
-                        onPressed: (_batchRunning || _queue.isEmpty)
-                            ? null
-                            : () => setState(() {
-                                  _queue.clear();
-                                }),
-                        child: const Text('큐 비우기'),
-                      ),
-                    ),
-                    if (_batchRunning)
+                SectionHeader(
+                  '보조 도구',
+                  trailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      InfoChip(label: '큐 ${_queue.length}'),
+                      const SizedBox(width: 8),
                       TextButton(
-                        onPressed: () => setState(() => _batchRunning = false),
-                        child: const Text('중단'),
+                        onPressed: () => setState(
+                            () => _supportExpanded = !_supportExpanded),
+                        child: Text(_supportExpanded ? '접기' : '펼치기'),
                       ),
-                  ],
-                ),
-                if (_queue.isNotEmpty) ...[
-                  const Divider(height: 24),
-                  ListView.separated(
-                    shrinkWrap: true,
-                    physics: const NeverScrollableScrollPhysics(),
-                    itemCount: _queue.length,
-                    separatorBuilder: (_, __) => const Divider(height: 18),
-                    itemBuilder: (_, i) {
-                      final it = _queue[i];
-                      final st = it.status;
-                      String statusText = '대기';
-                      if (st == _QueueStatus.confirmed) {
-                        statusText = '확인됨';
-                      }
-                      if (st == _QueueStatus.uploading) {
-                        statusText = '업로드중';
-                      }
-                      if (st == _QueueStatus.success) {
-                        statusText = '완료';
-                      }
-                      if (st == _QueueStatus.failed) {
-                        statusText = '실패';
-                      }
-                      if (st == _QueueStatus.skipped) {
-                        statusText = '스킵';
-                      }
-
-                      Color color = Theme.of(context).colorScheme.outline;
-                      if (st == _QueueStatus.success) {
-                        color = const Color(0xFF2F9E44);
-                      }
-                      if (st == _QueueStatus.failed) {
-                        color = const Color(0xFFE03131);
-                      }
-                      if (st == _QueueStatus.uploading) {
-                        color = const Color(0xFF1971C2);
-                      }
-
-                      return Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          InfoChip(label: statusText, color: color),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(it.url,
-                                    maxLines: 2,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(
-                                        fontWeight: FontWeight.w800)),
-                                if ((it.error ?? '').isNotEmpty) ...[
-                                  const SizedBox(height: 4),
-                                  Text(it.error!,
-                                      style: TextStyle(
-                                        fontSize: 12,
-                                        color: Theme.of(context)
-                                            .colorScheme
-                                            .onSurface
-                                            .withValues(alpha: 0.65),
-                                      )),
-                                ],
-                              ],
-                            ),
-                          ),
-                          if (!_batchRunning)
-                            IconButton(
-                              tooltip: '삭제',
-                              onPressed: () =>
-                                  setState(() => _queue.removeAt(i)),
-                              icon: const Icon(Icons.delete_outline),
-                            ),
-                        ],
-                      );
-                    },
+                    ],
                   ),
-                ],
-              ],
-            ),
-          ),
-          const SizedBox(height: 12),
-          AppCard(
-            child: Text(
-              '주문 관련 기능은 이제 “주문” 탭에서 할 수 있어요.\n\n아래로 내려서 상품 미리보기/업로드만 진행해 주세요.',
-              style: TextStyle(
-                color: Theme.of(context)
-                    .colorScheme
-                    .onSurface
-                    .withValues(alpha: 0.8),
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-          ),
-          const SizedBox(height: 12),
-          AppCard(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                SectionHeader('최근 미리보기',
-                    trailing: InfoChip(label: '${previewHistory.length}')),
-                const SizedBox(height: 10),
-                if (!isAuthed)
-                  Text(
-                    '로그인 후 확인할 수 있어요.',
-                    style: TextStyle(
-                        color: Theme.of(context)
-                            .colorScheme
-                            .onSurface
-                            .withValues(alpha: 0.65)),
-                  )
-                else if (previewHistory.isEmpty)
-                  Text(
-                    '아직 히스토리가 없어요. 미리보기를 실행한 뒤 다시 확인해보세요.',
-                    style: TextStyle(
-                        color: Theme.of(context)
-                            .colorScheme
-                            .onSurface
-                            .withValues(alpha: 0.65)),
-                  )
-                else
-                  ListView.separated(
-                    shrinkWrap: true,
-                    physics: const NeverScrollableScrollPhysics(),
-                    itemCount: previewHistory.length,
-                    separatorBuilder: (_, __) => const Divider(height: 18),
-                    itemBuilder: (context, i) {
-                      final item = previewHistory[i] as Map? ?? {};
-                      final title = (item['title'] ?? '').toString();
-                      final url = (item['url'] ?? '').toString();
-                      final finalPrice = item['finalPrice'];
-                      final imageUrl = (item['imageUrl'] ?? '').toString();
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  '배치 업로드, 최근 미리보기, 운영 로그는 필요할 때만 펼쳐서 봅니다.',
+                  style: TextStyle(
+                    color: Theme.of(context)
+                        .colorScheme
+                        .onSurface
+                        .withValues(alpha: 0.68),
+                  ),
+                ),
+                if (_supportExpanded) ...[
+                  const SizedBox(height: 12),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      ChoiceChip(
+                        label: Text('배치 업로드 ${_queue.length}'),
+                        selected: _supportSection == 'batch',
+                        onSelected: (_) =>
+                            setState(() => _supportSection = 'batch'),
+                      ),
+                      ChoiceChip(
+                        label: Text('최근 미리보기 ${previewHistory.length}'),
+                        selected: _supportSection == 'history',
+                        onSelected: (_) =>
+                            setState(() => _supportSection = 'history'),
+                      ),
+                      ChoiceChip(
+                        label: Text('운영 로그 ${purchaseLogs.length}'),
+                        selected: _supportSection == 'logs',
+                        onSelected: (_) =>
+                            setState(() => _supportSection = 'logs'),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  if (_supportSection == 'batch') ...[
+                    TextField(
+                      controller: _batchUrls,
+                      enabled: isAuthed && !_loading && !_batchRunning,
+                      minLines: 3,
+                      maxLines: 6,
+                      decoration: const InputDecoration(
+                        labelText: '여러 URL 입력',
+                        hintText: '줄바꿈 또는 쉼표(,)로 여러 URL을 붙여넣기',
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: OutlinedButton(
+                            onPressed: (!isAuthed || _loading || _batchRunning)
+                                ? null
+                                : () {
+                                    final added =
+                                        _enqueueFromText(_batchUrls.text);
+                                    if (added > 0) {
+                                      _batchUrls.clear();
+                                      ScaffoldMessenger.of(context)
+                                          .showSnackBar(
+                                        SnackBar(
+                                          content: Text('큐에 $added개 추가됨'),
+                                        ),
+                                      );
+                                    }
+                                  },
+                            child: const Text('큐에 추가'),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: FilledButton(
+                            onPressed: (!isAuthed ||
+                                    _loading ||
+                                    _batchRunning ||
+                                    _queue.isEmpty)
+                                ? null
+                                : _runBatch,
+                            child: Text(_batchRunning ? '진행중...' : '배치 시작'),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TextButton(
+                            onPressed: (_batchRunning || _queue.isEmpty)
+                                ? null
+                                : () => setState(() {
+                                      _queue.clear();
+                                    }),
+                            child: const Text('큐 비우기'),
+                          ),
+                        ),
+                        if (_batchRunning)
+                          TextButton(
+                            onPressed: () =>
+                                setState(() => _batchRunning = false),
+                            child: const Text('중단'),
+                          ),
+                      ],
+                    ),
+                    if (_queue.isNotEmpty) ...[
+                      const Divider(height: 24),
+                      ListView.separated(
+                        shrinkWrap: true,
+                        physics: const NeverScrollableScrollPhysics(),
+                        itemCount: _queue.length,
+                        separatorBuilder: (_, __) => const Divider(height: 18),
+                        itemBuilder: (_, i) {
+                          final it = _queue[i];
+                          final st = it.status;
+                          String statusText = '대기';
+                          if (st == _QueueStatus.confirmed) {
+                            statusText = '확인됨';
+                          }
+                          if (st == _QueueStatus.uploading) {
+                            statusText = '업로드중';
+                          }
+                          if (st == _QueueStatus.success) {
+                            statusText = '완료';
+                          }
+                          if (st == _QueueStatus.failed) {
+                            statusText = '실패';
+                          }
+                          if (st == _QueueStatus.skipped) {
+                            statusText = '스킵';
+                          }
 
-                      final options = (item['options'] as List?) ?? const [];
-                      final images = (item['images'] as List?) ?? const [];
-                      final sourcePrice = item['sourcePrice'];
+                          Color color = Theme.of(context).colorScheme.outline;
+                          if (st == _QueueStatus.success) {
+                            color = const Color(0xFF2F9E44);
+                          }
+                          if (st == _QueueStatus.failed) {
+                            color = const Color(0xFFE03131);
+                          }
+                          if (st == _QueueStatus.uploading) {
+                            color = const Color(0xFF1971C2);
+                          }
 
-                      // Build a minimal preview payload for PreviewDetailScreen.
-                      final previewPayload = <String, dynamic>{
-                        'draft': {
-                          'title': title,
-                          'price': sourcePrice,
-                          'imageUrl': imageUrl,
-                          'sourceUrl': url,
-                        },
-                        'computed': {
-                          'finalPrice': finalPrice,
-                          'images': images,
-                          'optionsCount': options.length,
-                        },
-                        'options': options,
-                        'url': url,
-                        'ok': true,
-                      };
-
-                      return InkWell(
-                        borderRadius: BorderRadius.circular(12),
-                        onTap: () {
-                          if (url.trim().isEmpty) return;
-                          Navigator.of(context).push(
-                            MaterialPageRoute(
-                              builder: (_) => PreviewDetailScreen(
-                                api: widget.api,
-                                url: url.trim(),
-                                preview: previewPayload,
-                              ),
-                            ),
-                          );
-                        },
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 4),
-                          child: Row(
+                          return Row(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              _Thumb(url: widget.api.proxyImageUrl(imageUrl)),
-                              const SizedBox(width: 12),
+                              InfoChip(label: statusText, color: color),
+                              const SizedBox(width: 10),
                               Expanded(
                                 child: Column(
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
                                     Text(
-                                      title.isEmpty ? '(제목 없음)' : title,
+                                      it.url,
                                       maxLines: 2,
                                       overflow: TextOverflow.ellipsis,
                                       style: const TextStyle(
-                                          fontWeight: FontWeight.w800),
+                                        fontWeight: FontWeight.w800,
+                                      ),
                                     ),
-                                    const SizedBox(height: 6),
-                                    Text(
-                                      url,
-                                      maxLines: 2,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: TextStyle(
+                                    if ((it.error ?? '').isNotEmpty) ...[
+                                      const SizedBox(height: 4),
+                                      Text(
+                                        it.error!,
+                                        style: TextStyle(
                                           fontSize: 12,
                                           color: Theme.of(context)
                                               .colorScheme
                                               .onSurface
-                                              .withValues(alpha: 0.60)),
-                                    ),
-                                    const SizedBox(height: 6),
-                                    Text(
-                                      '옵션: ${options.length}개',
-                                      style: TextStyle(
-                                          fontSize: 12,
-                                          color: Theme.of(context)
-                                              .colorScheme
-                                              .onSurface
-                                              .withValues(alpha: 0.60)),
-                                    ),
+                                              .withValues(alpha: 0.65),
+                                        ),
+                                      ),
+                                    ],
                                   ],
                                 ),
                               ),
-                              const SizedBox(width: 10),
-                              Text(
-                                finalPrice == null
-                                    ? '-'
-                                    : finalPrice.toString(),
-                                style: const TextStyle(
-                                    fontWeight: FontWeight.w900),
-                              ),
-                            ],
-                          ),
-                        ),
-                      );
-                    },
-                  ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 12),
-          AppCard(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                SectionHeader('Recent purchase logs',
-                    trailing: InfoChip(label: '${purchaseLogs.length}')),
-                const SizedBox(height: 10),
-                if (!isAuthed)
-                  Text(
-                    '로그인 후 확인할 수 있어요.',
-                    style: TextStyle(
-                        color: Theme.of(context)
-                            .colorScheme
-                            .onSurface
-                            .withValues(alpha: 0.65)),
-                  )
-                else if (purchaseLogs.isEmpty)
-                  Text(
-                    '아직 로그가 없어요.',
-                    style: TextStyle(
-                        color: Theme.of(context)
-                            .colorScheme
-                            .onSurface
-                            .withValues(alpha: 0.65)),
-                  )
-                else
-                  ListView.separated(
-                    shrinkWrap: true,
-                    physics: const NeverScrollableScrollPhysics(),
-                    itemCount: purchaseLogs.length,
-                    separatorBuilder: (_, __) => const Divider(height: 18),
-                    itemBuilder: (context, i) {
-                      final it = purchaseLogs[i] as Map? ?? {};
-                      final at = (it['at'] ?? '').toString();
-                      final type = (it['type'] ?? '').toString();
-                      final vendor = (it['vendor'] ?? '').toString();
-                      final ok = it['ok'] == true;
-                      final payUrl = (it['payUrl'] ?? '').toString();
-
-                      return Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          InfoChip(
-                            label: ok ? 'OK' : 'FAIL',
-                            color: ok
-                                ? const Color(0xFF2F9E44)
-                                : const Color(0xFFE03131),
-                          ),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text('$type · $vendor',
-                                    style: const TextStyle(
-                                        fontWeight: FontWeight.w900)),
-                                const SizedBox(height: 6),
-                                Text(
-                                  at,
-                                  style: TextStyle(
-                                      fontSize: 12,
-                                      color: Theme.of(context)
-                                          .colorScheme
-                                          .onSurface
-                                          .withValues(alpha: 0.60)),
+                              if (!_batchRunning)
+                                IconButton(
+                                  tooltip: '삭제',
+                                  onPressed: () =>
+                                      setState(() => _queue.removeAt(i)),
+                                  icon: const Icon(Icons.delete_outline),
                                 ),
-                                if ((it['error'] ?? '').toString().isNotEmpty)
-                                  Padding(
-                                    padding: const EdgeInsets.only(top: 6),
-                                    child: Text(
-                                      (it['error'] ?? '').toString(),
-                                      style: TextStyle(
-                                          fontSize: 12,
-                                          color: Theme.of(context)
-                                              .colorScheme
-                                              .error),
+                            ],
+                          );
+                        },
+                      ),
+                    ],
+                  ] else if (_supportSection == 'history') ...[
+                    if (!isAuthed)
+                      Text(
+                        '로그인 후 확인할 수 있어요.',
+                        style: TextStyle(
+                          color: Theme.of(context)
+                              .colorScheme
+                              .onSurface
+                              .withValues(alpha: 0.65),
+                        ),
+                      )
+                    else if (previewHistory.isEmpty)
+                      Text(
+                        '아직 히스토리가 없어요. 미리보기를 실행한 뒤 다시 확인해보세요.',
+                        style: TextStyle(
+                          color: Theme.of(context)
+                              .colorScheme
+                              .onSurface
+                              .withValues(alpha: 0.65),
+                        ),
+                      )
+                    else
+                      ListView.separated(
+                        shrinkWrap: true,
+                        physics: const NeverScrollableScrollPhysics(),
+                        itemCount: previewHistory.length,
+                        separatorBuilder: (_, __) => const Divider(height: 18),
+                        itemBuilder: (context, i) {
+                          final item = previewHistory[i] as Map? ?? {};
+                          final title = (item['title'] ?? '').toString();
+                          final url = (item['url'] ?? '').toString();
+                          final finalPrice = item['finalPrice'];
+                          final imageUrl = (item['imageUrl'] ?? '').toString();
+                          final options =
+                              (item['options'] as List?) ?? const [];
+                          final images = (item['images'] as List?) ?? const [];
+                          final sourcePrice = item['sourcePrice'];
+
+                          final previewPayload = <String, dynamic>{
+                            'draft': {
+                              'title': title,
+                              'price': sourcePrice,
+                              'imageUrl': imageUrl,
+                              'sourceUrl': url,
+                            },
+                            'computed': {
+                              'finalPrice': finalPrice,
+                              'images': images,
+                              'optionsCount': options.length,
+                            },
+                            'options': options,
+                            'url': url,
+                            'ok': true,
+                          };
+
+                          return InkWell(
+                            borderRadius: BorderRadius.circular(12),
+                            onTap: () {
+                              if (url.trim().isEmpty) return;
+                              Navigator.of(context).push(
+                                MaterialPageRoute(
+                                  builder: (_) => PreviewDetailScreen(
+                                    api: widget.api,
+                                    url: url.trim(),
+                                    preview: previewPayload,
+                                  ),
+                                ),
+                              );
+                            },
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 4),
+                              child: Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  _Thumb(
+                                      url: widget.api.proxyImageUrl(imageUrl)),
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          title.isEmpty ? '(제목 없음)' : title,
+                                          maxLines: 2,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: const TextStyle(
+                                              fontWeight: FontWeight.w800),
+                                        ),
+                                        const SizedBox(height: 6),
+                                        Text(
+                                          url,
+                                          maxLines: 2,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: TextStyle(
+                                            fontSize: 12,
+                                            color: Theme.of(context)
+                                                .colorScheme
+                                                .onSurface
+                                                .withValues(alpha: 0.60),
+                                          ),
+                                        ),
+                                        const SizedBox(height: 6),
+                                        Text(
+                                          '옵션: ${options.length}개',
+                                          style: TextStyle(
+                                            fontSize: 12,
+                                            color: Theme.of(context)
+                                                .colorScheme
+                                                .onSurface
+                                                .withValues(alpha: 0.60),
+                                          ),
+                                        ),
+                                      ],
                                     ),
                                   ),
-                              ],
+                                  const SizedBox(width: 10),
+                                  Text(
+                                    finalPrice == null
+                                        ? '-'
+                                        : finalPrice.toString(),
+                                    style: const TextStyle(
+                                        fontWeight: FontWeight.w900),
+                                  ),
+                                ],
+                              ),
                             ),
-                          ),
-                          if (payUrl.startsWith('http'))
-                            TextButton.icon(
-                              onPressed: () => _openExternal(payUrl),
-                              icon: const Icon(Icons.open_in_new, size: 18),
-                              label: const Text('결제'),
-                            ),
-                        ],
-                      );
-                    },
-                  ),
+                          );
+                        },
+                      ),
+                  ] else ...[
+                    if (!isAuthed)
+                      Text(
+                        '로그인 후 확인할 수 있어요.',
+                        style: TextStyle(
+                          color: Theme.of(context)
+                              .colorScheme
+                              .onSurface
+                              .withValues(alpha: 0.65),
+                        ),
+                      )
+                    else if (purchaseLogs.isEmpty)
+                      Text(
+                        '아직 로그가 없어요.',
+                        style: TextStyle(
+                          color: Theme.of(context)
+                              .colorScheme
+                              .onSurface
+                              .withValues(alpha: 0.65),
+                        ),
+                      )
+                    else
+                      ListView.separated(
+                        shrinkWrap: true,
+                        physics: const NeverScrollableScrollPhysics(),
+                        itemCount: purchaseLogs.length,
+                        separatorBuilder: (_, __) => const Divider(height: 18),
+                        itemBuilder: (context, i) {
+                          final it = purchaseLogs[i] as Map? ?? {};
+                          final at = (it['at'] ?? '').toString();
+                          final type = (it['type'] ?? '').toString();
+                          final vendor = (it['vendor'] ?? '').toString();
+                          final ok = it['ok'] == true;
+                          final payUrl = (it['payUrl'] ?? '').toString();
+
+                          return Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              InfoChip(
+                                label: ok ? 'OK' : 'FAIL',
+                                color: ok
+                                    ? const Color(0xFF2F9E44)
+                                    : const Color(0xFFE03131),
+                              ),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      '$type · $vendor',
+                                      style: const TextStyle(
+                                          fontWeight: FontWeight.w900),
+                                    ),
+                                    const SizedBox(height: 6),
+                                    Text(
+                                      at,
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        color: Theme.of(context)
+                                            .colorScheme
+                                            .onSurface
+                                            .withValues(alpha: 0.60),
+                                      ),
+                                    ),
+                                    if ((it['error'] ?? '')
+                                        .toString()
+                                        .isNotEmpty)
+                                      Padding(
+                                        padding: const EdgeInsets.only(top: 6),
+                                        child: Text(
+                                          (it['error'] ?? '').toString(),
+                                          style: TextStyle(
+                                            fontSize: 12,
+                                            color: Theme.of(context)
+                                                .colorScheme
+                                                .error,
+                                          ),
+                                        ),
+                                      ),
+                                  ],
+                                ),
+                              ),
+                              if (payUrl.startsWith('http'))
+                                TextButton.icon(
+                                  onPressed: () => _openExternal(payUrl),
+                                  icon: const Icon(Icons.open_in_new, size: 18),
+                                  label: const Text('결제'),
+                                ),
+                            ],
+                          );
+                        },
+                      ),
+                  ],
+                ],
               ],
             ),
           ),

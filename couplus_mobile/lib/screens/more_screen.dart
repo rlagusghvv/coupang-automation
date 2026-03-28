@@ -55,6 +55,9 @@ class _MoreScreenState extends State<MoreScreen> {
   bool _revealDomemePw = false;
   bool _startingDomemeSession = false;
   bool _checkingDomemeSession = false;
+  bool _accountExpanded = false;
+  bool _sensitiveExpanded = false;
+  bool _pricingExpanded = false;
 
   String? _error;
   String? _sensitiveError;
@@ -140,10 +143,8 @@ class _MoreScreenState extends State<MoreScreen> {
               _coupangDeliveryCompanyCode.text;
       _pagesApiToken.text =
           local[SensitiveSettingsStore.pagesApiToken] ?? _pagesApiToken.text;
-      _domemeId.text =
-          local[SensitiveSettingsStore.domemeId] ?? _domemeId.text;
-      _domemePw.text =
-          local[SensitiveSettingsStore.domemePw] ?? _domemePw.text;
+      _domemeId.text = local[SensitiveSettingsStore.domemeId] ?? _domemeId.text;
+      _domemePw.text = local[SensitiveSettingsStore.domemePw] ?? _domemePw.text;
       if (mounted) setState(() {});
     } catch (e) {
       // Non-fatal.
@@ -348,6 +349,216 @@ class _MoreScreenState extends State<MoreScreen> {
     }
   }
 
+  Future<void> _openPresetTools() async {
+    await _refreshPresets();
+    if (!mounted) return;
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (sheetContext) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 20, 20, 28),
+            child: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Row(
+                    children: [
+                      Text(
+                        '프리셋 관리',
+                        style: Theme.of(sheetContext).textTheme.titleMedium,
+                      ),
+                      const Spacer(),
+                      IconButton(
+                        onPressed: () => Navigator.of(sheetContext).pop(),
+                        icon: const Icon(Icons.close),
+                      ),
+                    ],
+                  ),
+                  Text(
+                    '여러 운영 정책을 번갈아 쓸 때만 사용합니다.',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Theme.of(sheetContext)
+                          .colorScheme
+                          .onSurface
+                          .withValues(alpha: 0.65),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  SizedBox(
+                    width: double.infinity,
+                    child: FilledButton.tonal(
+                      onPressed: (_me == null)
+                          ? null
+                          : () async {
+                              Navigator.of(sheetContext).pop();
+                              await _saveAsPreset();
+                            },
+                      child: const Text('현재 설정을 프리셋으로 저장'),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  if (_loadingPresets)
+                    const Center(
+                      child: Padding(
+                        padding: EdgeInsets.symmetric(vertical: 16),
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
+                    )
+                  else if (_presets.isEmpty)
+                    Text(
+                      '저장된 프리셋이 없어요.',
+                      style: TextStyle(
+                        color: Theme.of(sheetContext)
+                            .colorScheme
+                            .onSurface
+                            .withValues(alpha: 0.65),
+                      ),
+                    )
+                  else
+                    ListView.separated(
+                      shrinkWrap: true,
+                      physics: const NeverScrollableScrollPhysics(),
+                      itemCount: _presets.length,
+                      separatorBuilder: (_, __) => const Divider(height: 18),
+                      itemBuilder: (_, i) {
+                        final p = _presets[i];
+                        final id = (p['id'] ?? '').toString();
+                        final name = (p['name'] ?? '').toString();
+                        return Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                name.isEmpty ? id : name,
+                                style: const TextStyle(
+                                    fontWeight: FontWeight.w800),
+                              ),
+                            ),
+                            TextButton(
+                              onPressed: (_me == null)
+                                  ? null
+                                  : () async {
+                                      Navigator.of(sheetContext).pop();
+                                      await _applyPreset(id);
+                                    },
+                              child: const Text('적용'),
+                            ),
+                            IconButton(
+                              tooltip: '삭제',
+                              onPressed: (_me == null)
+                                  ? null
+                                  : () async {
+                                      Navigator.of(sheetContext).pop();
+                                      await _deletePreset(id);
+                                    },
+                              icon: const Icon(Icons.delete_outline),
+                            ),
+                          ],
+                        );
+                      },
+                    ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _openServerTools() async {
+    final serverController = TextEditingController(text: widget.api.baseUrl);
+    try {
+      await showModalBottomSheet<void>(
+        context: context,
+        isScrollControlled: true,
+        builder: (sheetContext) {
+          return SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(20, 20, 20, 28),
+              child: SingleChildScrollView(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Row(
+                      children: [
+                        Text(
+                          '서버 / 대시보드',
+                          style: Theme.of(sheetContext).textTheme.titleMedium,
+                        ),
+                        const Spacer(),
+                        IconButton(
+                          onPressed: () => Navigator.of(sheetContext).pop(),
+                          icon: const Icon(Icons.close),
+                        ),
+                      ],
+                    ),
+                    KvRow(k: '현재 서버 주소', v: widget.api.baseUrl),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: serverController,
+                      decoration: const InputDecoration(
+                        labelText:
+                            '서버 주소 바꾸기 (예: https://xxxx.trycloudflare.com)',
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    SizedBox(
+                      width: double.infinity,
+                      child: FilledButton.tonal(
+                        onPressed: () async {
+                          await widget.api.setBaseUrl(serverController.text);
+                          if (!mounted || !sheetContext.mounted) return;
+                          Navigator.of(sheetContext).pop();
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(content: Text('서버 주소를 저장했어요.')),
+                          );
+                          setState(() {});
+                        },
+                        child: const Text('서버 주소 저장'),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    KvRow(
+                      k: 'Dashboard',
+                      v: '${widget.api.baseUrl}/api/dashboard',
+                    ),
+                    const SizedBox(height: 10),
+                    SizedBox(
+                      width: double.infinity,
+                      child: OutlinedButton.icon(
+                        icon: const Icon(Icons.open_in_new),
+                        onPressed: () {
+                          Navigator.of(sheetContext).pop();
+                          Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (_) => WebviewScreen(
+                                title: 'Web Dashboard',
+                                url: widget.api.baseUrl,
+                              ),
+                            ),
+                          );
+                        },
+                        label: const Text('웹 대시보드 열기'),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          );
+        },
+      );
+    } finally {
+      serverController.dispose();
+    }
+  }
+
   Future<void> _saveSensitive() async {
     if (!_sensitiveUnlocked) return;
 
@@ -380,10 +591,8 @@ class _MoreScreenState extends State<MoreScreen> {
           deliveryCompanyCode);
       await _sensitiveStore.write(
           SensitiveSettingsStore.pagesApiToken, pagesToken);
-      await _sensitiveStore.write(
-          SensitiveSettingsStore.domemeId, domemeId);
-      await _sensitiveStore.write(
-          SensitiveSettingsStore.domemePw, domemePw);
+      await _sensitiveStore.write(SensitiveSettingsStore.domemeId, domemeId);
+      await _sensitiveStore.write(SensitiveSettingsStore.domemePw, domemePw);
 
       // Sync to server (requires auth cookie).
       await widget.api.postJson('/api/settings', {
@@ -526,8 +735,12 @@ class _MoreScreenState extends State<MoreScreen> {
     final domemeSessionUpdatedAt =
         (_domemeSessionStatus?['updatedAt'] ?? '').toString();
 
+    final hasCoupangKeys = _coupangAccessKey.text.trim().isNotEmpty &&
+        _coupangSecretKey.text.trim().isNotEmpty &&
+        _coupangVendorId.text.trim().isNotEmpty;
+
     return AppScaffold(
-      title: 'More',
+      title: '설정',
       onRefresh: _refreshMe,
       actions: [
         IconButton(
@@ -542,97 +755,44 @@ class _MoreScreenState extends State<MoreScreen> {
             const SizedBox(height: 12),
           ],
           AppCard(
-            onTap: () {
-              Navigator.of(context).push(
-                MaterialPageRoute(
-                  builder: (_) => RecommendationsScreen(api: widget.api),
-                ),
-              );
-            },
-            child: Row(
-              children: [
-                Icon(Icons.auto_awesome,
-                    color: Theme.of(context).colorScheme.primary),
-                const SizedBox(width: 10),
-                const Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text('추천', style: TextStyle(fontWeight: FontWeight.w900)),
-                      SizedBox(height: 2),
-                      Text('추천 채우기/자동업로드 실행', style: TextStyle(fontSize: 12)),
-                      SizedBox(height: 2),
-                      Text('매일 오전 9시, 순마진≥3,000 / 마진율≥35% 기준',
-                          style: TextStyle(fontSize: 12)),
-                    ],
-                  ),
-                ),
-                const Icon(Icons.chevron_right),
-              ],
-            ),
-          ),
-          const SizedBox(height: 12),
-          AppCard(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                SectionHeader('Account',
-                    trailing: _loading
-                        ? const SizedBox(
-                            width: 16,
-                            height: 16,
-                            child: CircularProgressIndicator(strokeWidth: 2))
-                        : null),
-                const SizedBox(height: 10),
-                KvRow(
-                    k: 'Session cookie',
-                    v: widget.api.cookie == null ? '-' : 'Saved'),
-                KvRow(
-                    k: 'APNs token',
-                    v: PushTokenService.instance.pendingToken == null
-                        ? '-'
-                        : 'Received'),
-                if (PushTokenService.instance.lastError != null)
-                  KvRow(
-                      k: 'APNs error', v: PushTokenService.instance.lastError!),
-                KvRow(k: 'Signed in', v: authedEmail.isEmpty ? 'No' : 'Yes'),
-                if (authedEmail.isNotEmpty) KvRow(k: 'Email', v: authedEmail),
-                const Divider(height: 24),
-                TextField(
-                  controller: _email,
-                  keyboardType: TextInputType.emailAddress,
-                  decoration: const InputDecoration(labelText: 'Email'),
-                ),
-                const SizedBox(height: 10),
-                TextField(
-                  controller: _pw,
-                  obscureText: true,
-                  decoration: const InputDecoration(labelText: 'Password'),
-                ),
+                const SectionHeader('현재 상태'),
                 const SizedBox(height: 12),
-                Row(
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
                   children: [
-                    Expanded(
-                      child: FilledButton(
-                        onPressed: _loading ? null : _login,
-                        child: const Text('Login'),
-                      ),
+                    InfoChip(
+                      label: authedEmail.isEmpty ? '로그인 필요' : '로그인됨',
+                      color: authedEmail.isEmpty
+                          ? const Color(0xFFE03131)
+                          : const Color(0xFF2F9E44),
                     ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: OutlinedButton(
-                        onPressed: _loading ? null : _signup,
-                        child: const Text('Sign up'),
-                      ),
+                    InfoChip(
+                      label: domemeSessionExists ? '도매매 연결됨' : '도매매 미연결',
+                      color: domemeSessionExists
+                          ? const Color(0xFF2F9E44)
+                          : const Color(0xFFE67700),
+                    ),
+                    InfoChip(
+                      label: hasCoupangKeys ? '쿠팡 키 저장됨' : '쿠팡 키 확인 필요',
+                      color: hasCoupangKeys
+                          ? const Color(0xFF2F9E44)
+                          : const Color(0xFFE67700),
                     ),
                   ],
                 ),
                 const SizedBox(height: 10),
-                SizedBox(
-                  width: double.infinity,
-                  child: TextButton(
-                    onPressed: _loading ? null : _logout,
-                    child: const Text('Logout'),
+                Text(
+                  '필수 설정만 먼저 끝내고, 실험 도구와 고급 설정은 필요할 때만 펼쳐서 사용하는 구조로 정리했습니다.',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Theme.of(context)
+                        .colorScheme
+                        .onSurface
+                        .withValues(alpha: 0.68),
                   ),
                 ),
               ],
@@ -644,10 +804,75 @@ class _MoreScreenState extends State<MoreScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 SectionHeader(
-                  'Sensitive settings',
+                  '계정',
+                  trailing: TextButton(
+                    onPressed: () =>
+                        setState(() => _accountExpanded = !_accountExpanded),
+                    child: Text(_accountExpanded ? '접기' : '펼치기'),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                KvRow(k: '로그인', v: authedEmail.isEmpty ? '안 됨' : '됨'),
+                if (authedEmail.isNotEmpty) KvRow(k: 'Email', v: authedEmail),
+                if (_accountExpanded || authedEmail.isEmpty) ...[
+                  const Divider(height: 24),
+                  TextField(
+                    controller: _email,
+                    keyboardType: TextInputType.emailAddress,
+                    decoration: const InputDecoration(labelText: 'Email'),
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: _pw,
+                    obscureText: true,
+                    decoration: const InputDecoration(labelText: 'Password'),
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: FilledButton(
+                          onPressed: _loading ? null : _login,
+                          child: const Text('Login'),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: OutlinedButton(
+                          onPressed: _loading ? null : _signup,
+                          child: const Text('Sign up'),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  SizedBox(
+                    width: double.infinity,
+                    child: TextButton(
+                      onPressed: _loading ? null : _logout,
+                      child: const Text('Logout'),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+          AppCard(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                SectionHeader(
+                  '민감정보 / API 키',
                   trailing: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
+                      TextButton(
+                        onPressed: () => setState(
+                          () => _sensitiveExpanded = !_sensitiveExpanded,
+                        ),
+                        child: Text(_sensitiveExpanded ? '접기' : '펼치기'),
+                      ),
                       if (_sensitiveUnlocked)
                         TextButton(
                           onPressed: _savingSensitive
@@ -701,196 +926,205 @@ class _MoreScreenState extends State<MoreScreen> {
                   ),
                 ),
                 const SizedBox(height: 10),
-                if (_sensitiveError != null) ...[
-                  ErrorBanner(
-                      message: _sensitiveError!, onRetry: _refreshSettings),
+                KvRow(k: '쿠팡 키', v: hasCoupangKeys ? '저장됨' : '확인 필요'),
+                KvRow(
+                    k: '도매매 ID/PW',
+                    v: _domemeId.text.trim().isNotEmpty ? '저장됨' : '미입력'),
+                if (_sensitiveExpanded) ...[
+                  if (_sensitiveError != null) ...[
+                    ErrorBanner(
+                        message: _sensitiveError!, onRetry: _refreshSettings),
+                    const SizedBox(height: 12),
+                  ],
+                  Text(
+                    '기기(Keychain/Keystore)에 저장되고 Save를 누르면 서버 설정에도 동기화됩니다.',
+                    style: TextStyle(
+                        fontSize: 12,
+                        color: Theme.of(context)
+                            .colorScheme
+                            .onSurface
+                            .withValues(alpha: 0.60)),
+                  ),
                   const SizedBox(height: 12),
+                  TextField(
+                    controller: _coupangAccessKey,
+                    enabled: _sensitiveUnlocked && !_savingSensitive,
+                    obscureText: !_revealCoupangAccessKey,
+                    decoration: InputDecoration(
+                      labelText: 'Coupang access key',
+                      suffixIcon: IconButton(
+                        onPressed: _sensitiveUnlocked
+                            ? () => setState(() => _revealCoupangAccessKey =
+                                !_revealCoupangAccessKey)
+                            : null,
+                        icon: Icon(_revealCoupangAccessKey
+                            ? Icons.visibility_off
+                            : Icons.visibility),
+                        tooltip: _revealCoupangAccessKey ? 'Hide' : 'Reveal',
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: _coupangSecretKey,
+                    enabled: _sensitiveUnlocked && !_savingSensitive,
+                    obscureText: !_revealCoupangSecretKey,
+                    decoration: InputDecoration(
+                      labelText: 'Coupang secret key',
+                      suffixIcon: IconButton(
+                        onPressed: _sensitiveUnlocked
+                            ? () => setState(() => _revealCoupangSecretKey =
+                                !_revealCoupangSecretKey)
+                            : null,
+                        icon: Icon(_revealCoupangSecretKey
+                            ? Icons.visibility_off
+                            : Icons.visibility),
+                        tooltip: _revealCoupangSecretKey ? 'Hide' : 'Reveal',
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: _coupangVendorId,
+                    enabled: _sensitiveUnlocked && !_savingSensitive,
+                    obscureText: !_revealCoupangVendorId,
+                    decoration: InputDecoration(
+                      labelText: 'Coupang vendorId',
+                      helperText: '쿠팡 Wing의 판매자(Vendor) ID',
+                      suffixIcon: IconButton(
+                        onPressed: _sensitiveUnlocked
+                            ? () => setState(() => _revealCoupangVendorId =
+                                !_revealCoupangVendorId)
+                            : null,
+                        icon: Icon(_revealCoupangVendorId
+                            ? Icons.visibility_off
+                            : Icons.visibility),
+                        tooltip: _revealCoupangVendorId ? 'Hide' : 'Reveal',
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: _coupangVendorUserId,
+                    enabled: _sensitiveUnlocked && !_savingSensitive,
+                    obscureText: !_revealCoupangVendorUserId,
+                    decoration: InputDecoration(
+                      labelText: 'Coupang vendorUserId',
+                      helperText: '쿠팡 Wing 로그인 계정 ID(또는 사용자 식별자)',
+                      suffixIcon: IconButton(
+                        onPressed: _sensitiveUnlocked
+                            ? () => setState(() => _revealCoupangVendorUserId =
+                                !_revealCoupangVendorUserId)
+                            : null,
+                        icon: Icon(_revealCoupangVendorUserId
+                            ? Icons.visibility_off
+                            : Icons.visibility),
+                        tooltip: _revealCoupangVendorUserId ? 'Hide' : 'Reveal',
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: _coupangDeliveryCompanyCode,
+                    enabled: _sensitiveUnlocked && !_savingSensitive,
+                    obscureText: !_revealCoupangDeliveryCompanyCode,
+                    decoration: InputDecoration(
+                      labelText: 'Coupang delivery company code',
+                      helperText:
+                          '쿠팡 배송사 코드 (기본값은 CJ대한통운=KOREA_POST 등 아님, 환경에 따라 다름)',
+                      suffixIcon: IconButton(
+                        onPressed: _sensitiveUnlocked
+                            ? () => setState(() =>
+                                _revealCoupangDeliveryCompanyCode =
+                                    !_revealCoupangDeliveryCompanyCode)
+                            : null,
+                        icon: Icon(_revealCoupangDeliveryCompanyCode
+                            ? Icons.visibility_off
+                            : Icons.visibility),
+                        tooltip: _revealCoupangDeliveryCompanyCode
+                            ? 'Hide'
+                            : 'Reveal',
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: _pagesApiToken,
+                    enabled: _sensitiveUnlocked && !_savingSensitive,
+                    obscureText: !_revealPagesApiToken,
+                    decoration: InputDecoration(
+                      labelText: 'Cloudflare (Pages) API token',
+                      suffixIcon: IconButton(
+                        onPressed: _sensitiveUnlocked
+                            ? () => setState(() =>
+                                _revealPagesApiToken = !_revealPagesApiToken)
+                            : null,
+                        icon: Icon(_revealPagesApiToken
+                            ? Icons.visibility_off
+                            : Icons.visibility),
+                        tooltip: _revealPagesApiToken ? 'Hide' : 'Reveal',
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: _domemeId,
+                    enabled: _sensitiveUnlocked && !_savingSensitive,
+                    obscureText: !_revealDomemeId,
+                    decoration: InputDecoration(
+                      labelText: 'Domeme ID',
+                      helperText: '도매매 로그인 ID',
+                      suffixIcon: IconButton(
+                        onPressed: _sensitiveUnlocked
+                            ? () => setState(
+                                () => _revealDomemeId = !_revealDomemeId)
+                            : null,
+                        icon: Icon(_revealDomemeId
+                            ? Icons.visibility_off
+                            : Icons.visibility),
+                        tooltip: _revealDomemeId ? 'Hide' : 'Reveal',
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: _domemePw,
+                    enabled: _sensitiveUnlocked && !_savingSensitive,
+                    obscureText: !_revealDomemePw,
+                    decoration: InputDecoration(
+                      labelText: 'Domeme password',
+                      helperText: '도매매 로그인 비밀번호',
+                      suffixIcon: IconButton(
+                        onPressed: _sensitiveUnlocked
+                            ? () => setState(
+                                () => _revealDomemePw = !_revealDomemePw)
+                            : null,
+                        icon: Icon(_revealDomemePw
+                            ? Icons.visibility_off
+                            : Icons.visibility),
+                        tooltip: _revealDomemePw ? 'Hide' : 'Reveal',
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  SizedBox(
+                    width: double.infinity,
+                    child: FilledButton(
+                      onPressed: (_savingSensitive ||
+                              !_sensitiveUnlocked ||
+                              authedEmail.isEmpty)
+                          ? null
+                          : _saveSensitive,
+                      child: _savingSensitive
+                          ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2))
+                          : Text(
+                              authedEmail.isEmpty ? 'Sign in to save' : 'Save'),
+                    ),
+                  ),
                 ],
-                Text(
-                  'Stored on this device (Keychain/Keystore) and synced to the server settings when you press Save.',
-                  style: TextStyle(
-                      fontSize: 12,
-                      color: Theme.of(context)
-                          .colorScheme
-                          .onSurface
-                          .withValues(alpha: 0.60)),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: _coupangAccessKey,
-                  enabled: _sensitiveUnlocked && !_savingSensitive,
-                  obscureText: !_revealCoupangAccessKey,
-                  decoration: InputDecoration(
-                    labelText: 'Coupang access key',
-                    suffixIcon: IconButton(
-                      onPressed: _sensitiveUnlocked
-                          ? () => setState(() => _revealCoupangAccessKey =
-                              !_revealCoupangAccessKey)
-                          : null,
-                      icon: Icon(_revealCoupangAccessKey
-                          ? Icons.visibility_off
-                          : Icons.visibility),
-                      tooltip: _revealCoupangAccessKey ? 'Hide' : 'Reveal',
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 10),
-                TextField(
-                  controller: _coupangSecretKey,
-                  enabled: _sensitiveUnlocked && !_savingSensitive,
-                  obscureText: !_revealCoupangSecretKey,
-                  decoration: InputDecoration(
-                    labelText: 'Coupang secret key',
-                    suffixIcon: IconButton(
-                      onPressed: _sensitiveUnlocked
-                          ? () => setState(() => _revealCoupangSecretKey =
-                              !_revealCoupangSecretKey)
-                          : null,
-                      icon: Icon(_revealCoupangSecretKey
-                          ? Icons.visibility_off
-                          : Icons.visibility),
-                      tooltip: _revealCoupangSecretKey ? 'Hide' : 'Reveal',
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 10),
-                TextField(
-                  controller: _coupangVendorId,
-                  enabled: _sensitiveUnlocked && !_savingSensitive,
-                  obscureText: !_revealCoupangVendorId,
-                  decoration: InputDecoration(
-                    labelText: 'Coupang vendorId',
-                    helperText: '쿠팡 Wing의 판매자(Vendor) ID',
-                    suffixIcon: IconButton(
-                      onPressed: _sensitiveUnlocked
-                          ? () => setState(() =>
-                              _revealCoupangVendorId = !_revealCoupangVendorId)
-                          : null,
-                      icon: Icon(_revealCoupangVendorId
-                          ? Icons.visibility_off
-                          : Icons.visibility),
-                      tooltip: _revealCoupangVendorId ? 'Hide' : 'Reveal',
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 10),
-                TextField(
-                  controller: _coupangVendorUserId,
-                  enabled: _sensitiveUnlocked && !_savingSensitive,
-                  obscureText: !_revealCoupangVendorUserId,
-                  decoration: InputDecoration(
-                    labelText: 'Coupang vendorUserId',
-                    helperText: '쿠팡 Wing 로그인 계정 ID(또는 사용자 식별자)',
-                    suffixIcon: IconButton(
-                      onPressed: _sensitiveUnlocked
-                          ? () => setState(() => _revealCoupangVendorUserId =
-                              !_revealCoupangVendorUserId)
-                          : null,
-                      icon: Icon(_revealCoupangVendorUserId
-                          ? Icons.visibility_off
-                          : Icons.visibility),
-                      tooltip: _revealCoupangVendorUserId ? 'Hide' : 'Reveal',
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 10),
-                TextField(
-                  controller: _coupangDeliveryCompanyCode,
-                  enabled: _sensitiveUnlocked && !_savingSensitive,
-                  obscureText: !_revealCoupangDeliveryCompanyCode,
-                  decoration: InputDecoration(
-                    labelText: 'Coupang delivery company code',
-                    helperText:
-                        '쿠팡 배송사 코드 (기본값은 CJ대한통운=KOREA_POST 등 아님, 환경에 따라 다름)',
-                    suffixIcon: IconButton(
-                      onPressed: _sensitiveUnlocked
-                          ? () => setState(() =>
-                              _revealCoupangDeliveryCompanyCode =
-                                  !_revealCoupangDeliveryCompanyCode)
-                          : null,
-                      icon: Icon(_revealCoupangDeliveryCompanyCode
-                          ? Icons.visibility_off
-                          : Icons.visibility),
-                      tooltip:
-                          _revealCoupangDeliveryCompanyCode ? 'Hide' : 'Reveal',
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 10),
-                TextField(
-                  controller: _pagesApiToken,
-                  enabled: _sensitiveUnlocked && !_savingSensitive,
-                  obscureText: !_revealPagesApiToken,
-                  decoration: InputDecoration(
-                    labelText: 'Cloudflare (Pages) API token',
-                    suffixIcon: IconButton(
-                      onPressed: _sensitiveUnlocked
-                          ? () => setState(() =>
-                              _revealPagesApiToken = !_revealPagesApiToken)
-                          : null,
-                      icon: Icon(_revealPagesApiToken
-                          ? Icons.visibility_off
-                          : Icons.visibility),
-                      tooltip: _revealPagesApiToken ? 'Hide' : 'Reveal',
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 10),
-                TextField(
-                  controller: _domemeId,
-                  enabled: _sensitiveUnlocked && !_savingSensitive,
-                  obscureText: !_revealDomemeId,
-                  decoration: InputDecoration(
-                    labelText: 'Domeme ID',
-                    helperText: '도매매 로그인 ID',
-                    suffixIcon: IconButton(
-                      onPressed: _sensitiveUnlocked
-                          ? () => setState(() => _revealDomemeId = !_revealDomemeId)
-                          : null,
-                      icon: Icon(_revealDomemeId
-                          ? Icons.visibility_off
-                          : Icons.visibility),
-                      tooltip: _revealDomemeId ? 'Hide' : 'Reveal',
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 10),
-                TextField(
-                  controller: _domemePw,
-                  enabled: _sensitiveUnlocked && !_savingSensitive,
-                  obscureText: !_revealDomemePw,
-                  decoration: InputDecoration(
-                    labelText: 'Domeme password',
-                    helperText: '도매매 로그인 비밀번호',
-                    suffixIcon: IconButton(
-                      onPressed: _sensitiveUnlocked
-                          ? () => setState(() => _revealDomemePw = !_revealDomemePw)
-                          : null,
-                      icon: Icon(_revealDomemePw
-                          ? Icons.visibility_off
-                          : Icons.visibility),
-                      tooltip: _revealDomemePw ? 'Hide' : 'Reveal',
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 14),
-                SizedBox(
-                  width: double.infinity,
-                  child: FilledButton(
-                    onPressed: (_savingSensitive ||
-                            !_sensitiveUnlocked ||
-                            authedEmail.isEmpty)
-                        ? null
-                        : _saveSensitive,
-                    child: _savingSensitive
-                        ? const SizedBox(
-                            width: 16,
-                            height: 16,
-                            child: CircularProgressIndicator(strokeWidth: 2))
-                        : Text(
-                            authedEmail.isEmpty ? 'Sign in to save' : 'Save'),
-                  ),
-                ),
               ],
             ),
           ),
@@ -908,7 +1142,9 @@ class _MoreScreenState extends State<MoreScreen> {
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
                       : TextButton(
-                          onPressed: authedEmail.isEmpty ? null : _refreshDomemeSessionStatus,
+                          onPressed: authedEmail.isEmpty
+                              ? null
+                              : _refreshDomemeSessionStatus,
                           child: const Text('상태 확인'),
                         ),
                 ),
@@ -916,7 +1152,9 @@ class _MoreScreenState extends State<MoreScreen> {
                 KvRow(k: '세션', v: domemeSessionExists ? '연결됨' : '미연결'),
                 KvRow(
                   k: '마지막 갱신',
-                  v: domemeSessionUpdatedAt.isEmpty ? '-' : domemeSessionUpdatedAt,
+                  v: domemeSessionUpdatedAt.isEmpty
+                      ? '-'
+                      : domemeSessionUpdatedAt,
                 ),
                 const SizedBox(height: 8),
                 Text(
@@ -955,81 +1193,119 @@ class _MoreScreenState extends State<MoreScreen> {
               children: [
                 const SectionHeader('가격/배송비/카테고리'),
                 const SizedBox(height: 10),
-                TextField(
-                  controller: _marginRate,
-                  keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(
-                    labelText: '마진율 (예: 0.5 = 50%)',
-                  ),
+                TextButton(
+                  onPressed: () =>
+                      setState(() => _pricingExpanded = !_pricingExpanded),
+                  child: Text(_pricingExpanded ? '접기' : '펼치기'),
                 ),
+                if (_pricingExpanded) ...[
+                  const SizedBox(height: 6),
+                  TextField(
+                    controller: _marginRate,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(
+                      labelText: '마진율 (예: 0.5 = 50%)',
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: _marginAdd,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(
+                      labelText: '마진 고정금액 (원)',
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: _priceMin,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(
+                      labelText: '최소 판매가 (원)',
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: _roundUnit,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(
+                      labelText: '반올림 단위 (예: 10)',
+                    ),
+                  ),
+                  const Divider(height: 24),
+                  DropdownButtonFormField<String>(
+                    key: ValueKey(_shippingPolicy),
+                    initialValue: _shippingPolicy,
+                    items: const [
+                      DropdownMenuItem(value: 'none', child: Text('배송비 반영 안함')),
+                      DropdownMenuItem(
+                          value: 'actual', child: Text('실제 배송비만큼 가산')),
+                      DropdownMenuItem(
+                          value: 'fixed', child: Text('유료면 고정금액 가산')),
+                      DropdownMenuItem(
+                          value: 'error_unknown', child: Text('유료(금액없음)면 에러')),
+                    ],
+                    onChanged: (v) =>
+                        setState(() => _shippingPolicy = v ?? 'actual'),
+                    decoration: const InputDecoration(labelText: '배송비 가격 정책'),
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: _shippingFixedAmount,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(
+                      labelText: '고정 배송비 가산액 (원) - 정책이 유료면 고정일 때',
+                    ),
+                  ),
+                  const Divider(height: 24),
+                  TextField(
+                    controller: _categoryOverrideCode,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(
+                      labelText: '카테고리 코드 고정(선택) - 0이면 자동',
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('쿠팡 카테고리 예측 사용(추천)'),
+                    subtitle: const Text('도매처 카테고리 정보가 없을 때 오분류(19세 등) 방지'),
+                    value: _autoCategoryPredict,
+                    onChanged: (v) => setState(() => _autoCategoryPredict = v),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    '저장은 위의 Save 버튼을 누르면 함께 반영돼요.',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Theme.of(context)
+                          .colorScheme
+                          .onSurface
+                          .withValues(alpha: 0.65),
+                    ),
+                  ),
+                ] else
+                  Text(
+                    '마진, 배송비, 카테고리 정책은 필요할 때만 펼쳐서 수정합니다.',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Theme.of(context)
+                          .colorScheme
+                          .onSurface
+                          .withValues(alpha: 0.65),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+          AppCard(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const SectionHeader('고급 도구'),
                 const SizedBox(height: 10),
-                TextField(
-                  controller: _marginAdd,
-                  keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(
-                    labelText: '마진 고정금액 (원)',
-                  ),
-                ),
-                const SizedBox(height: 10),
-                TextField(
-                  controller: _priceMin,
-                  keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(
-                    labelText: '최소 판매가 (원)',
-                  ),
-                ),
-                const SizedBox(height: 10),
-                TextField(
-                  controller: _roundUnit,
-                  keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(
-                    labelText: '반올림 단위 (예: 10)',
-                  ),
-                ),
-                const Divider(height: 24),
-                DropdownButtonFormField<String>(
-                  key: ValueKey(_shippingPolicy),
-                  initialValue: _shippingPolicy,
-                  items: const [
-                    DropdownMenuItem(value: 'none', child: Text('배송비 반영 안함')),
-                    DropdownMenuItem(
-                        value: 'actual', child: Text('실제 배송비만큼 가산')),
-                    DropdownMenuItem(
-                        value: 'fixed', child: Text('유료면 고정금액 가산')),
-                    DropdownMenuItem(
-                        value: 'error_unknown', child: Text('유료(금액없음)면 에러')),
-                  ],
-                  onChanged: (v) =>
-                      setState(() => _shippingPolicy = v ?? 'actual'),
-                  decoration: const InputDecoration(labelText: '배송비 가격 정책'),
-                ),
-                const SizedBox(height: 10),
-                TextField(
-                  controller: _shippingFixedAmount,
-                  keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(
-                    labelText: '고정 배송비 가산액 (원) - 정책이 유료면 고정일 때',
-                  ),
-                ),
-                const Divider(height: 24),
-                TextField(
-                  controller: _categoryOverrideCode,
-                  keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(
-                    labelText: '카테고리 코드 고정(선택) - 0이면 자동',
-                  ),
-                ),
-                const SizedBox(height: 10),
-                SwitchListTile(
-                  contentPadding: EdgeInsets.zero,
-                  title: const Text('쿠팡 카테고리 예측 사용(추천)'),
-                  subtitle: const Text('도매처 카테고리 정보가 없을 때 오분류(19세 등) 방지'),
-                  value: _autoCategoryPredict,
-                  onChanged: (v) => setState(() => _autoCategoryPredict = v),
-                ),
-                const SizedBox(height: 8),
                 Text(
-                  '저장은 위의 Save 버튼을 누르면 함께 반영돼요.',
+                  '메인 운영에 꼭 필요하지 않은 도구만 모아두었습니다.',
                   style: TextStyle(
                     fontSize: 12,
                     color: Theme.of(context)
@@ -1038,151 +1314,38 @@ class _MoreScreenState extends State<MoreScreen> {
                         .withValues(alpha: 0.65),
                   ),
                 ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 12),
-          AppCard(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                SectionHeader(
-                  '프리셋',
-                  trailing: _loadingPresets
-                      ? const SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : TextButton(
-                          onPressed: (_me == null) ? null : _refreshPresets,
-                          child: const Text('새로고침'),
-                        ),
+                const SizedBox(height: 12),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.tune),
+                  title: const Text('프리셋 관리'),
+                  subtitle: const Text('운영 정책 저장 / 적용 / 삭제'),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: _openPresetTools,
                 ),
-                const SizedBox(height: 10),
-                Text(
-                  '현재 설정(마진/배송/카테고리/키 등)을 이름으로 저장하고 불러올 수 있어요.',
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: Theme.of(context)
-                        .colorScheme
-                        .onSurface
-                        .withValues(alpha: 0.60),
-                  ),
+                const Divider(height: 12),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.dns_outlined),
+                  title: const Text('서버 / 대시보드'),
+                  subtitle: const Text('서버 주소 변경, 웹 대시보드 열기'),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: _openServerTools,
                 ),
-                const SizedBox(height: 10),
-                SizedBox(
-                  width: double.infinity,
-                  child: FilledButton.tonal(
-                    onPressed: (_me == null) ? null : _saveAsPreset,
-                    child: const Text('현재 설정을 프리셋으로 저장'),
-                  ),
-                ),
-                const SizedBox(height: 8),
-                if (_presets.isEmpty)
-                  Text(
-                    '저장된 프리셋이 없어요.',
-                    style: TextStyle(
-                      color: Theme.of(context)
-                          .colorScheme
-                          .onSurface
-                          .withValues(alpha: 0.65),
-                    ),
-                  )
-                else
-                  ListView.separated(
-                    shrinkWrap: true,
-                    physics: const NeverScrollableScrollPhysics(),
-                    itemCount: _presets.length,
-                    separatorBuilder: (_, __) => const Divider(height: 18),
-                    itemBuilder: (_, i) {
-                      final p = _presets[i];
-                      final id = (p['id'] ?? '').toString();
-                      final name = (p['name'] ?? '').toString();
-                      return Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              name.isEmpty ? id : name,
-                              style:
-                                  const TextStyle(fontWeight: FontWeight.w800),
-                            ),
-                          ),
-                          TextButton(
-                            onPressed:
-                                (_me == null) ? null : () => _applyPreset(id),
-                            child: const Text('적용'),
-                          ),
-                          IconButton(
-                            tooltip: '삭제',
-                            onPressed:
-                                (_me == null) ? null : () => _deletePreset(id),
-                            icon: const Icon(Icons.delete_outline),
-                          ),
-                        ],
-                      );
-                    },
-                  ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 12),
-          AppCard(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const SectionHeader('Server'),
-                const SizedBox(height: 10),
-                KvRow(k: '현재 서버 주소', v: widget.api.baseUrl),
-                const SizedBox(height: 10),
-                TextField(
-                  enabled: true,
-                  decoration: const InputDecoration(
-                    labelText: '서버 주소 바꾸기 (예: https://xxxx.trycloudflare.com)',
-                    border: OutlineInputBorder(),
-                  ),
-                  onSubmitted: (v) async {
-                    await widget.api.setBaseUrl(v);
-                    if (context.mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('서버 주소를 저장했어요.')),
-                      );
-                    }
-                    if (context.mounted) setState(() {});
+                const Divider(height: 12),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.auto_awesome),
+                  title: const Text('추천 실험실'),
+                  subtitle: const Text('추천 채우기 / 자동업로드 / 마케팅 실험'),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => RecommendationsScreen(api: widget.api),
+                      ),
+                    );
                   },
-                ),
-                const SizedBox(height: 10),
-                KvRow(
-                  k: 'Dashboard',
-                  v: '${widget.api.baseUrl}/api/dashboard',
-                ),
-                const Divider(height: 24),
-                SizedBox(
-                  width: double.infinity,
-                  child: OutlinedButton.icon(
-                    icon: const Icon(Icons.open_in_new),
-                    onPressed: () {
-                      Navigator.of(context).push(
-                        MaterialPageRoute(
-                          builder: (_) => WebviewScreen(
-                            title: 'Web Dashboard',
-                            url: widget.api.baseUrl,
-                          ),
-                        ),
-                      );
-                    },
-                    label: const Text('Open web dashboard'),
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  'Tip: WebView는 서버 HTML UI를 그대로 띄웁니다. 모바일 API 세션은 위 Login 버튼으로 저장돼요.',
-                  style: TextStyle(
-                      fontSize: 12,
-                      color: Theme.of(context)
-                          .colorScheme
-                          .onSurface
-                          .withValues(alpha: 0.60)),
                 ),
               ],
             ),

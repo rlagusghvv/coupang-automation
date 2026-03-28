@@ -8,9 +8,22 @@ import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 class MyProductsScreen extends StatefulWidget {
-  const MyProductsScreen({super.key, required this.api});
+  const MyProductsScreen({
+    super.key,
+    required this.api,
+    this.initialStatus = '',
+    this.initialRecoveryOnly = false,
+    this.initialLowPriceOnly = false,
+    this.initialQuery = '',
+    this.titleOverride,
+  });
 
   final ApiClient api;
+  final String initialStatus;
+  final bool initialRecoveryOnly;
+  final bool initialLowPriceOnly;
+  final String initialQuery;
+  final String? titleOverride;
 
   @override
   State<MyProductsScreen> createState() => _MyProductsScreenState();
@@ -29,12 +42,23 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
 
   final _q = TextEditingController();
   String _status = '';
+  bool _recoveryOnly = false;
+  bool _lowPriceOnly = false;
   bool _selectMode = false;
   final Set<String> _selected = {};
 
   @override
   void initState() {
     super.initState();
+    _status = widget.initialStatus.trim();
+    _recoveryOnly = widget.initialRecoveryOnly;
+    _lowPriceOnly = widget.initialLowPriceOnly;
+    if (_lowPriceOnly) {
+      _recoveryOnly = true;
+    }
+    if (widget.initialQuery.trim().isNotEmpty) {
+      _q.text = widget.initialQuery.trim();
+    }
     _refresh();
   }
 
@@ -277,7 +301,7 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
   }
 
   void _selectAllVisible() {
-    final ids = _products
+    final ids = _visibleProducts
         .map((p) => (p['id'] ?? '').toString())
         .where((id) => id.isNotEmpty)
         .toSet();
@@ -305,6 +329,37 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
     return audit['flagged'] == true;
   }
 
+  bool _isRecoveryProduct(Map<String, dynamic> product) {
+    final status = (product['status'] ?? '').toString().trim().toLowerCase();
+    return status == 'deployed_invalid' ||
+        status == 'deploy_failed' ||
+        status == 'draft_saved' ||
+        _isLowPriceFlagged(product);
+  }
+
+  List<Map<String, dynamic>> get _visibleProducts {
+    Iterable<Map<String, dynamic>> items = _products;
+    if (_recoveryOnly) {
+      items = items.where(_isRecoveryProduct);
+    }
+    if (_lowPriceOnly) {
+      items = items.where(_isLowPriceFlagged);
+    }
+    return items.toList(growable: false);
+  }
+
+  String get _screenTitle {
+    final override = widget.titleOverride?.trim() ?? '';
+    final base = override.isNotEmpty
+        ? override
+        : _lowPriceOnly
+            ? '저가 의심 상품'
+            : _recoveryOnly
+                ? '복구 큐'
+                : '내 상품';
+    return _selectMode ? '$base(선택 ${_selected.length})' : base;
+  }
+
   String _formatPriceValue(dynamic raw) {
     final n = num.tryParse((raw ?? '').toString());
     if (n == null || !n.isFinite || n <= 0) return '-';
@@ -321,7 +376,7 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
   }
 
   void _selectFlaggedVisible() {
-    final ids = _products
+    final ids = _visibleProducts
         .where(_isLowPriceFlagged)
         .map((p) => (p['id'] ?? '').toString().trim())
         .where((id) => id.isNotEmpty)
@@ -335,7 +390,7 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
   }
 
   Future<void> _scanLowPriceMisparses() async {
-    final ids = _products
+    final ids = _visibleProducts
         .map((p) => (p['id'] ?? '').toString().trim())
         .where((id) => id.isNotEmpty)
         .toList();
@@ -355,9 +410,8 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
       var skipped = 0;
 
       for (var start = 0; start < ids.length; start += batchSize) {
-        final end = (start + batchSize > ids.length)
-            ? ids.length
-            : start + batchSize;
+        final end =
+            (start + batchSize > ids.length) ? ids.length : start + batchSize;
         final chunk = ids.sublist(start, end);
         if (mounted) {
           setState(() {
@@ -365,7 +419,8 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
                 '저가 검사 중… ${start + 1}-$end / ${ids.length}';
           });
         }
-        final json = await widget.api.postJson('/api/catalog/price-audit/scan', {
+        final json =
+            await widget.api.postJson('/api/catalog/price-audit/scan', {
           'ids': chunk,
         });
         final items = (json['items'] as List?) ?? const [];
@@ -373,8 +428,9 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
           if (raw is! Map) continue;
           final item = raw.cast<String, dynamic>();
           if (item['flagged'] == true) {
-            final product = (item['product'] as Map?)?.cast<String, dynamic>() ??
-                const <String, dynamic>{};
+            final product =
+                (item['product'] as Map?)?.cast<String, dynamic>() ??
+                    const <String, dynamic>{};
             final id = (product['id'] ?? item['id'] ?? '').toString().trim();
             if (id.isNotEmpty) flaggedIds.add(id);
           }
@@ -2168,28 +2224,57 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
     return Theme.of(context).colorScheme.outline;
   }
 
+  Future<void> _handleCardMenuAction(
+    String action,
+    String id,
+    Map<String, dynamic> product,
+  ) async {
+    if (action == 'detail') {
+      await Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => ProductDetailScreen(
+            api: widget.api,
+            productId: id,
+          ),
+        ),
+      );
+      if (mounted) {
+        await _refresh(syncRemote: false);
+      }
+      return;
+    }
+
+    if (action == 'marketing') {
+      await _generateMarketingOneShot(product);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
+    final visibleProducts = _visibleProducts;
+    final deployedCount = _products
+        .where(
+          (p) =>
+              (p['status'] ?? '').toString().trim().toLowerCase() == 'deployed',
+        )
+        .length;
+    final pendingApprovalCount = _products
+        .where(
+          (p) =>
+              (p['status'] ?? '').toString().trim().toLowerCase() ==
+              'pending_approval',
+        )
+        .length;
+    final reviewCount = _products.where((p) {
+      final status = (p['status'] ?? '').toString().trim().toLowerCase();
+      return status == 'deployed_invalid' || status == 'deploy_failed';
+    }).length;
+    final lowPriceCount = _products.where(_isLowPriceFlagged).length;
+
     return AppScaffold(
-      title: _selectMode ? '내 상품(선택 ${_selected.length})' : '내 상품',
+      title: _screenTitle,
       onRefresh: _refreshWithStatusSync,
       actions: [
-        IconButton(
-          onPressed: _loading ? null : _importBySellerProductId,
-          tooltip: '기존 상품 가져오기',
-          icon: const Icon(Icons.playlist_add),
-        ),
-        IconButton(
-          onPressed: _loading || _priceAuditBusy ? null : _scanLowPriceMisparses,
-          tooltip: '저가 오파싱 검사',
-          icon: _priceAuditBusy
-              ? const SizedBox(
-                  width: 18,
-                  height: 18,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
-              : const Icon(Icons.price_check_outlined),
-        ),
         IconButton(
           onPressed: _loading
               ? null
@@ -2209,6 +2294,190 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          AppCard(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const SectionHeader('카탈로그 요약'),
+                const SizedBox(height: 12),
+                Wrap(
+                  spacing: 10,
+                  runSpacing: 10,
+                  children: [
+                    _CatalogMetric(
+                      title: '판매중',
+                      value: '$deployedCount',
+                      subtitle: '현재 노출 중',
+                    ),
+                    _CatalogMetric(
+                      title: '승인대기',
+                      value: '$pendingApprovalCount',
+                      subtitle: 'Wing 승인 대기',
+                    ),
+                    _CatalogMetric(
+                      title: '검증 필요',
+                      value: '$reviewCount',
+                      subtitle: '실패/예외 상품',
+                    ),
+                    _CatalogMetric(
+                      title: '저가 의심',
+                      value: '$lowPriceCount',
+                      subtitle: '가격 오파싱 점검',
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+          AppCard(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                SectionHeader(
+                  '빠른 작업',
+                  trailing: _selectMode
+                      ? InfoChip(
+                          label: '선택 ${_selected.length}',
+                          color: Theme.of(context).colorScheme.primary,
+                        )
+                      : null,
+                ),
+                const SizedBox(height: 12),
+                Wrap(
+                  spacing: 10,
+                  runSpacing: 10,
+                  children: [
+                    FilledButton.tonalIcon(
+                      onPressed: _loading ? null : _refreshWithStatusSync,
+                      icon: _syncingStatus
+                          ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.sync),
+                      label: const Text('상태 동기화'),
+                    ),
+                    FilledButton.tonalIcon(
+                      onPressed: _loading || _priceAuditBusy
+                          ? null
+                          : _scanLowPriceMisparses,
+                      icon: _priceAuditBusy
+                          ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.price_check_outlined),
+                      label: const Text('저가 검사'),
+                    ),
+                    FilledButton.tonalIcon(
+                      onPressed: _loading ? null : _importBySellerProductId,
+                      icon: const Icon(Icons.playlist_add),
+                      label: const Text('기존 상품 가져오기'),
+                    ),
+                    OutlinedButton.icon(
+                      onPressed: _loading
+                          ? null
+                          : () {
+                              setState(() {
+                                _selectMode = !_selectMode;
+                                _selected.clear();
+                              });
+                            },
+                      icon: Icon(_selectMode ? Icons.close : Icons.checklist),
+                      label: Text(_selectMode ? '선택 종료' : '선택 작업'),
+                    ),
+                    OutlinedButton.icon(
+                      onPressed: _loading
+                          ? null
+                          : () {
+                              setState(() {
+                                _recoveryOnly = !_recoveryOnly;
+                                if (!_recoveryOnly) {
+                                  _lowPriceOnly = false;
+                                }
+                                _selected.clear();
+                              });
+                            },
+                      icon: Icon(
+                        _recoveryOnly
+                            ? Icons.assignment_turned_in
+                            : Icons.assignment_turned_in_outlined,
+                      ),
+                      label: Text(_recoveryOnly ? '복구 모드' : '복구 큐'),
+                    ),
+                    OutlinedButton.icon(
+                      onPressed: _loading
+                          ? null
+                          : () {
+                              setState(() {
+                                _lowPriceOnly = !_lowPriceOnly;
+                                if (_lowPriceOnly) {
+                                  _recoveryOnly = true;
+                                }
+                                _selected.clear();
+                              });
+                            },
+                      icon: Icon(
+                        _lowPriceOnly
+                            ? Icons.price_check
+                            : Icons.price_check_outlined,
+                      ),
+                      label: Text(_lowPriceOnly ? '저가만 보기' : '저가 의심'),
+                    ),
+                  ],
+                ),
+                if (_selectMode) ...[
+                  const SizedBox(height: 12),
+                  Wrap(
+                    spacing: 10,
+                    runSpacing: 10,
+                    children: [
+                      TextButton(
+                        onPressed: _loading ? null : _selectAllVisible,
+                        child: const Text('전체선택'),
+                      ),
+                      TextButton(
+                        onPressed: _loading ? null : _selectFlaggedVisible,
+                        child: const Text('문제만 선택'),
+                      ),
+                      TextButton(
+                        onPressed: _loading || _selected.isEmpty
+                            ? null
+                            : _clearSelection,
+                        child: const Text('선택해제'),
+                      ),
+                      TextButton(
+                        onPressed:
+                            _loading || _selected.isEmpty ? null : _bulkSync,
+                        child: const Text('동기화'),
+                      ),
+                      TextButton(
+                        onPressed: _loading || _selected.isEmpty
+                            ? null
+                            : _bulkRedeploy,
+                        child: const Text('재배포'),
+                      ),
+                      TextButton(
+                        onPressed:
+                            _loading || _selected.isEmpty ? null : _bulkArchive,
+                        child: const Text('삭제'),
+                      ),
+                      TextButton(
+                        onPressed: _loading || _selected.isEmpty
+                            ? null
+                            : _bulkDeleteRemote,
+                        child: const Text('쿠팡 삭제'),
+                      ),
+                    ],
+                  ),
+                ],
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
           TextField(
             controller: _q,
             onSubmitted: (_) => _refresh(syncRemote: false),
@@ -2258,7 +2527,11 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
           Row(
             children: [
               InfoChip(
-                label: _loading ? '불러오는 중…' : '총 ${_products.length}개',
+                label: _loading
+                    ? '불러오는 중…'
+                    : _recoveryOnly || _lowPriceOnly
+                        ? '보이는 ${visibleProducts.length}개'
+                        : '총 ${_products.length}개',
                 color: Theme.of(context).colorScheme.primary,
               ),
               const SizedBox(width: 8),
@@ -2267,39 +2540,18 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
                   label: '상태 동기화 중…',
                   color: Theme.of(context).colorScheme.tertiary,
                 ),
-              const Spacer(),
-              if (_selectMode) ...[
-                TextButton(
-                  onPressed: _loading ? null : _selectAllVisible,
-                  child: const Text('전체선택'),
+              if (_recoveryOnly) ...[
+                const SizedBox(width: 8),
+                const InfoChip(
+                  label: '복구 큐',
+                  color: Color(0xFFE67700),
                 ),
-                TextButton(
-                  onPressed: _loading ? null : _selectFlaggedVisible,
-                  child: const Text('문제만 선택'),
-                ),
-                TextButton(
-                  onPressed:
-                      _loading || _selected.isEmpty ? null : _clearSelection,
-                  child: const Text('선택해제'),
-                ),
-                TextButton(
-                  onPressed:
-                      _loading || _selected.isEmpty ? null : _bulkArchive,
-                  child: const Text('삭제'),
-                ),
-                TextButton(
-                  onPressed:
-                      _loading || _selected.isEmpty ? null : _bulkDeleteRemote,
-                  child: const Text('쿠팡 삭제'),
-                ),
-                TextButton(
-                  onPressed: _loading || _selected.isEmpty ? null : _bulkSync,
-                  child: const Text('동기화'),
-                ),
-                TextButton(
-                  onPressed:
-                      _loading || _selected.isEmpty ? null : _bulkRedeploy,
-                  child: const Text('재배포'),
+              ],
+              if (_lowPriceOnly) ...[
+                const SizedBox(width: 8),
+                const InfoChip(
+                  label: '저가 의심만',
+                  color: Color(0xFFC92A2A),
                 ),
               ],
             ],
@@ -2335,10 +2587,12 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
             ),
           ],
           const SizedBox(height: 12),
-          if (_products.isEmpty && !_loading)
+          if (visibleProducts.isEmpty && !_loading)
             AppCard(
               child: Text(
-                '아직 확정된 상품이 없어요. 작업 탭에서 미리보기 → 업로드 실행 후, 우상단 + 버튼으로 기존 쿠팡 상품도 가져올 수 있어요.',
+                _recoveryOnly
+                    ? '지금 복구가 필요한 상품이 없습니다. 저가 의심, 업로드 실패, 검증 필요 상품이 생기면 여기서 바로 정리할 수 있어요.'
+                    : '아직 확정된 상품이 없어요. 업로드 탭에서 미리보기 → 업로드 실행 후, 빠른 작업의 기존 상품 가져오기로 기존 쿠팡 상품도 불러올 수 있어요.',
                 style: TextStyle(
                   color: Theme.of(
                     context,
@@ -2350,10 +2604,10 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
             ListView.separated(
               shrinkWrap: true,
               physics: const NeverScrollableScrollPhysics(),
-              itemCount: _products.length,
+              itemCount: visibleProducts.length,
               separatorBuilder: (_, __) => const SizedBox(height: 10),
               itemBuilder: (ctx, i) {
-                final p = _products[i];
+                final p = visibleProducts[i];
                 final id = (p['id'] ?? '').toString();
                 final title = (p['confirmedTitle'] ?? '').toString();
                 final status = (p['status'] ?? '').toString();
@@ -2495,40 +2749,75 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
                                 TextButton.icon(
                                   onPressed: id.isEmpty || _loading
                                       ? null
-                                      : () async {
-                                          await Navigator.of(context).push(
-                                            MaterialPageRoute(
-                                              builder: (_) =>
-                                                  ProductDetailScreen(
-                                                api: widget.api,
-                                                productId: id,
-                                              ),
-                                            ),
-                                          );
-                                          if (mounted) {
-                                            await _refresh(syncRemote: false);
-                                          }
-                                        },
+                                      : () => _handleCardMenuAction(
+                                            'detail',
+                                            id,
+                                            p,
+                                          ),
                                   icon: const Icon(Icons.open_in_new, size: 18),
                                   label: const Text('상세'),
                                 ),
-                                const SizedBox(width: 4),
-                                TextButton.icon(
-                                  onPressed: (_loading ||
-                                          marketingBusy ||
-                                          !canGenerateOneShot)
-                                      ? null
-                                      : () => _generateMarketingOneShot(p),
-                                  icon: marketingBusy
-                                      ? const SizedBox(
-                                          width: 16,
-                                          height: 16,
-                                          child: CircularProgressIndicator(
-                                              strokeWidth: 2),
-                                        )
-                                      : const Icon(Icons.bolt_outlined,
-                                          size: 18),
-                                  label: const Text('인스타/Sora 원샷'),
+                                const Spacer(),
+                                PopupMenuButton<String>(
+                                  enabled: !_loading,
+                                  onSelected: (value) async {
+                                    await _handleCardMenuAction(value, id, p);
+                                  },
+                                  itemBuilder: (context) => [
+                                    const PopupMenuItem<String>(
+                                      value: 'detail',
+                                      child: Text('상세 열기'),
+                                    ),
+                                    PopupMenuItem<String>(
+                                      value: 'marketing',
+                                      enabled:
+                                          !marketingBusy && canGenerateOneShot,
+                                      child: Row(
+                                        children: [
+                                          if (marketingBusy) ...[
+                                            const SizedBox(
+                                              width: 14,
+                                              height: 14,
+                                              child: CircularProgressIndicator(
+                                                strokeWidth: 2,
+                                              ),
+                                            ),
+                                            const SizedBox(width: 8),
+                                          ],
+                                          const Text('인스타/Sora 원샷'),
+                                        ],
+                                      ),
+                                    ),
+                                  ],
+                                  child: Padding(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 6,
+                                      vertical: 4,
+                                    ),
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Icon(
+                                          Icons.more_horiz,
+                                          size: 18,
+                                          color: Theme.of(context)
+                                              .colorScheme
+                                              .onSurface
+                                              .withValues(alpha: 0.7),
+                                        ),
+                                        const SizedBox(width: 4),
+                                        Text(
+                                          '더보기',
+                                          style: TextStyle(
+                                            color: Theme.of(context)
+                                                .colorScheme
+                                                .onSurface
+                                                .withValues(alpha: 0.72),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
                                 ),
                               ],
                             ),
@@ -2540,6 +2829,59 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
                 );
               },
             ),
+        ],
+      ),
+    );
+  }
+}
+
+class _CatalogMetric extends StatelessWidget {
+  const _CatalogMetric({
+    required this.title,
+    required this.value,
+    required this.subtitle,
+  });
+
+  final String title;
+  final String value;
+  final String subtitle;
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return Container(
+      width: 150,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: cs.primary.withValues(alpha: 0.06),
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+              color: cs.onSurface.withValues(alpha: 0.68),
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            value,
+            style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w900),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            subtitle,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: 12,
+              color: cs.onSurface.withValues(alpha: 0.62),
+            ),
+          ),
         ],
       ),
     );
