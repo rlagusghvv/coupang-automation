@@ -22,6 +22,9 @@ class SensitiveSettingsStore {
   static const pagesApiToken = 'pagesApiToken';
   static const domemeId = 'domemeId';
   static const domemePw = 'domemePw';
+  static const domeggookPrivateId = 'domeggookPrivateId';
+  static const domeggookPrivatePw = 'domeggookPrivatePw';
+  static const domeggookPrivateApiKey = 'domeggookPrivateApiKey';
 
   static const allKeys = <String>[
     coupangAccessKey,
@@ -32,6 +35,9 @@ class SensitiveSettingsStore {
     pagesApiToken,
     domemeId,
     domemePw,
+    domeggookPrivateId,
+    domeggookPrivatePw,
+    domeggookPrivateApiKey,
   ];
 
   String _k(String key) => '$_kPrefix$key';

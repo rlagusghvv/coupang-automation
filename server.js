@@ -66,6 +66,12 @@ import {
   removeSavedRecommendationForUser,
   refreshRecommendationsForUser,
 } from "./src/server/recommendations.js";
+import {
+  domeggookPrivateApiGetOrderList,
+  domeggookPrivateApiLogin,
+  normalizeDomeggookPrivateOrderList,
+  resolveDomeggookPrivateCredentials,
+} from "./src/utils/domeggook_private_api.js";
 
 const app = express();
 app.set("trust proxy", true);
@@ -198,6 +204,17 @@ function uniqueStrings(values = []) {
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, Math.max(0, Number(ms) || 0)));
+}
+
+function getForwardedClientIp(req) {
+  const forwarded = String(req.headers["x-forwarded-for"] || "")
+    .split(",")[0]
+    .trim();
+  const candidate = forwarded || String(req.ip || "").trim();
+  if (!candidate) return "127.0.0.1";
+  if (candidate === "::1") return "127.0.0.1";
+  if (candidate.startsWith("::ffff:")) return candidate.slice(7).trim() || "127.0.0.1";
+  return candidate;
 }
 
 function withTimeout(promise, ms, label = "timeout") {
@@ -6351,6 +6368,99 @@ app.get("/api/domeme/session/status", authRequired, (req, res) => {
     });
   } catch (e) {
     return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+app.post("/api/domeggook/private/login-test", authRequired, async (req, res) => {
+  try {
+    const settings = req.user?.settings || {};
+    const creds = resolveDomeggookPrivateCredentials(settings);
+    if (!creds.apiKey || !creds.memberId || !creds.password) {
+      return res.status(400).json({
+        ok: false,
+        error: "missing_domeggook_private_credentials",
+      });
+    }
+
+    const profile = await domeggookPrivateApiLogin({
+      apiKey: creds.apiKey,
+      memberId: creds.memberId,
+      password: creds.password,
+      ip: getForwardedClientIp(req),
+      userAgent: String(req.headers["user-agent"] || "Couplus/1.0"),
+    });
+
+    return res.json({
+      ok: true,
+      connected: true,
+      profile: {
+        id: String(profile?.id || creds.memberId),
+        grade: String(profile?.grade || "").trim(),
+        affid: String(profile?.affid || "").trim(),
+        loginKeepTime: Number(profile?.loginKeepTime || 0) || 0,
+        sIdRenewDate: Number(profile?.sIdRenewDate || 0) || 0,
+        hasSession: String(profile?.sId || "").trim().length > 0,
+      },
+    });
+  } catch (e) {
+    return res.status(400).json({
+      ok: false,
+      connected: false,
+      error: String(e?.message || e),
+      details: String(e?.details || "").trim(),
+    });
+  }
+});
+
+app.get("/api/domeggook/private/orders", authRequired, async (req, res) => {
+  try {
+    const settings = req.user?.settings || {};
+    const creds = resolveDomeggookPrivateCredentials(settings);
+    if (!creds.apiKey || !creds.memberId || !creds.password) {
+      return res.status(400).json({
+        ok: false,
+        error: "missing_domeggook_private_credentials",
+      });
+    }
+
+    const profile = await domeggookPrivateApiLogin({
+      apiKey: creds.apiKey,
+      memberId: creds.memberId,
+      password: creds.password,
+      ip: getForwardedClientIp(req),
+      userAgent: String(req.headers["user-agent"] || "Couplus/1.0"),
+    });
+
+    const raw = await domeggookPrivateApiGetOrderList({
+      apiKey: creds.apiKey,
+      memberId: creds.memberId,
+      sessionId: String(profile?.sId || "").trim(),
+      day: req.query?.day,
+      page: req.query?.pg,
+      pageSize: req.query?.ic,
+      status: req.query?.st,
+      orderNo: req.query?.no,
+      itemNo: req.query?.itemNo,
+    });
+    const normalized = normalizeDomeggookPrivateOrderList(raw);
+
+    return res.json({
+      ok: true,
+      connected: true,
+      profile: {
+        id: String(profile?.id || creds.memberId),
+        grade: String(profile?.grade || "").trim(),
+      },
+      header: normalized.header,
+      items: normalized.items,
+    });
+  } catch (e) {
+    return res.status(400).json({
+      ok: false,
+      connected: false,
+      error: String(e?.message || e),
+      details: String(e?.details || "").trim(),
+    });
   }
 });
 

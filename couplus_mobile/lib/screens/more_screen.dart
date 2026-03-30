@@ -31,6 +31,9 @@ class _MoreScreenState extends State<MoreScreen> {
   final _pagesApiToken = TextEditingController();
   final _domemeId = TextEditingController();
   final _domemePw = TextEditingController();
+  final _domeggookPrivateId = TextEditingController();
+  final _domeggookPrivatePw = TextEditingController();
+  final _domeggookPrivateApiKey = TextEditingController();
 
   // Pricing / shipping / category settings
   final _marginRate = TextEditingController();
@@ -53,8 +56,13 @@ class _MoreScreenState extends State<MoreScreen> {
   bool _revealPagesApiToken = false;
   bool _revealDomemeId = false;
   bool _revealDomemePw = false;
+  bool _revealDomeggookPrivateId = false;
+  bool _revealDomeggookPrivatePw = false;
+  bool _revealDomeggookPrivateApiKey = false;
   bool _startingDomemeSession = false;
   bool _checkingDomemeSession = false;
+  bool _testingDomeggookPrivate = false;
+  bool _loadingDomeggookPrivateOrders = false;
   bool _accountExpanded = false;
   bool _sensitiveExpanded = false;
   bool _pricingExpanded = false;
@@ -63,6 +71,8 @@ class _MoreScreenState extends State<MoreScreen> {
   String? _sensitiveError;
   Map<String, dynamic>? _me;
   Map<String, dynamic>? _domemeSessionStatus;
+  Map<String, dynamic>? _domeggookPrivateStatus;
+  Map<String, dynamic>? _domeggookPrivateOrders;
 
   // Presets
   List<Map<String, dynamic>> _presets = const [];
@@ -87,6 +97,9 @@ class _MoreScreenState extends State<MoreScreen> {
     _pagesApiToken.dispose();
     _domemeId.dispose();
     _domemePw.dispose();
+    _domeggookPrivateId.dispose();
+    _domeggookPrivatePw.dispose();
+    _domeggookPrivateApiKey.dispose();
     _marginRate.dispose();
     _marginAdd.dispose();
     _priceMin.dispose();
@@ -145,6 +158,15 @@ class _MoreScreenState extends State<MoreScreen> {
           local[SensitiveSettingsStore.pagesApiToken] ?? _pagesApiToken.text;
       _domemeId.text = local[SensitiveSettingsStore.domemeId] ?? _domemeId.text;
       _domemePw.text = local[SensitiveSettingsStore.domemePw] ?? _domemePw.text;
+      _domeggookPrivateId.text =
+          local[SensitiveSettingsStore.domeggookPrivateId] ??
+              _domeggookPrivateId.text;
+      _domeggookPrivatePw.text =
+          local[SensitiveSettingsStore.domeggookPrivatePw] ??
+              _domeggookPrivatePw.text;
+      _domeggookPrivateApiKey.text =
+          local[SensitiveSettingsStore.domeggookPrivateApiKey] ??
+              _domeggookPrivateApiKey.text;
       if (mounted) setState(() {});
     } catch (e) {
       // Non-fatal.
@@ -186,6 +208,16 @@ class _MoreScreenState extends State<MoreScreen> {
       _domemePw.text = _domemePw.text.isNotEmpty
           ? _domemePw.text
           : (s[SensitiveSettingsStore.domemePw]?.toString() ?? '');
+      _domeggookPrivateId.text = _domeggookPrivateId.text.isNotEmpty
+          ? _domeggookPrivateId.text
+          : (s[SensitiveSettingsStore.domeggookPrivateId]?.toString() ?? '');
+      _domeggookPrivatePw.text = _domeggookPrivatePw.text.isNotEmpty
+          ? _domeggookPrivatePw.text
+          : (s[SensitiveSettingsStore.domeggookPrivatePw]?.toString() ?? '');
+      _domeggookPrivateApiKey.text = _domeggookPrivateApiKey.text.isNotEmpty
+          ? _domeggookPrivateApiKey.text
+          : (s[SensitiveSettingsStore.domeggookPrivateApiKey]?.toString() ??
+              '');
 
       // General settings
       _marginRate.text = (s['marginRate'] ?? '').toString();
@@ -221,6 +253,12 @@ class _MoreScreenState extends State<MoreScreen> {
       SensitiveSettingsStore.pagesApiToken: _pagesApiToken.text.trim(),
       SensitiveSettingsStore.domemeId: _domemeId.text.trim(),
       SensitiveSettingsStore.domemePw: _domemePw.text.trim(),
+      SensitiveSettingsStore.domeggookPrivateId:
+          _domeggookPrivateId.text.trim(),
+      SensitiveSettingsStore.domeggookPrivatePw:
+          _domeggookPrivatePw.text.trim(),
+      SensitiveSettingsStore.domeggookPrivateApiKey:
+          _domeggookPrivateApiKey.text.trim(),
 
       // General
       'marginRate': double.tryParse(_marginRate.text.trim()) ?? 0,
@@ -576,6 +614,9 @@ class _MoreScreenState extends State<MoreScreen> {
       final pagesToken = _pagesApiToken.text.trim();
       final domemeId = _domemeId.text.trim();
       final domemePw = _domemePw.text.trim();
+      final domeggookPrivateId = _domeggookPrivateId.text.trim();
+      final domeggookPrivatePw = _domeggookPrivatePw.text.trim();
+      final domeggookPrivateApiKey = _domeggookPrivateApiKey.text.trim();
 
       // Save on-device first.
       await _sensitiveStore.write(
@@ -593,6 +634,12 @@ class _MoreScreenState extends State<MoreScreen> {
           SensitiveSettingsStore.pagesApiToken, pagesToken);
       await _sensitiveStore.write(SensitiveSettingsStore.domemeId, domemeId);
       await _sensitiveStore.write(SensitiveSettingsStore.domemePw, domemePw);
+      await _sensitiveStore.write(
+          SensitiveSettingsStore.domeggookPrivateId, domeggookPrivateId);
+      await _sensitiveStore.write(
+          SensitiveSettingsStore.domeggookPrivatePw, domeggookPrivatePw);
+      await _sensitiveStore.write(SensitiveSettingsStore.domeggookPrivateApiKey,
+          domeggookPrivateApiKey);
 
       // Sync to server (requires auth cookie).
       await widget.api.postJson('/api/settings', {
@@ -604,6 +651,9 @@ class _MoreScreenState extends State<MoreScreen> {
         SensitiveSettingsStore.pagesApiToken: pagesToken,
         SensitiveSettingsStore.domemeId: domemeId,
         SensitiveSettingsStore.domemePw: domemePw,
+        SensitiveSettingsStore.domeggookPrivateId: domeggookPrivateId,
+        SensitiveSettingsStore.domeggookPrivatePw: domeggookPrivatePw,
+        SensitiveSettingsStore.domeggookPrivateApiKey: domeggookPrivateApiKey,
 
         // General settings
         'marginRate': double.tryParse(_marginRate.text.trim()) ?? 0,
@@ -672,6 +722,46 @@ class _MoreScreenState extends State<MoreScreen> {
     }
   }
 
+  Future<void> _testDomeggookPrivateLogin() async {
+    setState(() {
+      _testingDomeggookPrivate = true;
+      _sensitiveError = null;
+    });
+    try {
+      final json = await widget.api.postJson('/api/domeggook/private/login-test', {});
+      if (mounted) {
+        setState(() => _domeggookPrivateStatus = json);
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _domeggookPrivateStatus = null;
+          _sensitiveError = e.toString();
+        });
+      }
+    } finally {
+      if (mounted) setState(() => _testingDomeggookPrivate = false);
+    }
+  }
+
+  Future<void> _loadDomeggookPrivateOrders() async {
+    setState(() {
+      _loadingDomeggookPrivateOrders = true;
+      _sensitiveError = null;
+    });
+    try {
+      final json = await widget.api.getJson('/api/domeggook/private/orders',
+          query: {'day': '30', 'ic': '10', 'pg': '1'});
+      if (mounted) {
+        setState(() => _domeggookPrivateOrders = json);
+      }
+    } catch (e) {
+      if (mounted) setState(() => _sensitiveError = e.toString());
+    } finally {
+      if (mounted) setState(() => _loadingDomeggookPrivateOrders = false);
+    }
+  }
+
   Future<void> _login() async {
     setState(() {
       _loading = true;
@@ -734,6 +824,15 @@ class _MoreScreenState extends State<MoreScreen> {
     final domemeSessionExists = _domemeSessionStatus?['exists'] == true;
     final domemeSessionUpdatedAt =
         (_domemeSessionStatus?['updatedAt'] ?? '').toString();
+    final domeggookPrivateConfigured =
+        _domeggookPrivateId.text.trim().isNotEmpty &&
+            _domeggookPrivatePw.text.trim().isNotEmpty &&
+            _domeggookPrivateApiKey.text.trim().isNotEmpty;
+    final domeggookPrivateConnected =
+        _domeggookPrivateStatus?['connected'] == true;
+    final domeggookPrivateOrderCount =
+        ((_domeggookPrivateOrders?['header'] as Map?)?['numberOfItems'] ?? 0)
+            .toString();
 
     final hasCoupangKeys = _coupangAccessKey.text.trim().isNotEmpty &&
         _coupangSecretKey.text.trim().isNotEmpty &&
@@ -779,6 +878,16 @@ class _MoreScreenState extends State<MoreScreen> {
                     InfoChip(
                       label: hasCoupangKeys ? '쿠팡 키 저장됨' : '쿠팡 키 확인 필요',
                       color: hasCoupangKeys
+                          ? const Color(0xFF2F9E44)
+                          : const Color(0xFFE67700),
+                    ),
+                    InfoChip(
+                      label: domeggookPrivateConnected
+                          ? '도매꾹 Private API 연결됨'
+                          : (domeggookPrivateConfigured
+                              ? '도매꾹 Private API 확인 필요'
+                              : '도매꾹 Private API 미설정'),
+                      color: domeggookPrivateConnected
                           ? const Color(0xFF2F9E44)
                           : const Color(0xFFE67700),
                     ),
@@ -888,6 +997,9 @@ class _MoreScreenState extends State<MoreScreen> {
                                     _revealPagesApiToken = false;
                                     _revealDomemeId = false;
                                     _revealDomemePw = false;
+                                    _revealDomeggookPrivateId = false;
+                                    _revealDomeggookPrivatePw = false;
+                                    _revealDomeggookPrivateApiKey = false;
                                   });
                                 },
                           child: const Text('Lock'),
@@ -930,6 +1042,9 @@ class _MoreScreenState extends State<MoreScreen> {
                 KvRow(
                     k: '도매매 ID/PW',
                     v: _domemeId.text.trim().isNotEmpty ? '저장됨' : '미입력'),
+                KvRow(
+                    k: '도매꾹 Private API',
+                    v: domeggookPrivateConfigured ? '저장됨' : '미입력'),
                 if (_sensitiveExpanded) ...[
                   if (_sensitiveError != null) ...[
                     ErrorBanner(
@@ -1106,6 +1221,73 @@ class _MoreScreenState extends State<MoreScreen> {
                       ),
                     ),
                   ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: _domeggookPrivateId,
+                    enabled: _sensitiveUnlocked && !_savingSensitive,
+                    obscureText: !_revealDomeggookPrivateId,
+                    decoration: InputDecoration(
+                      labelText: 'Domeggook Private ID',
+                      helperText: '일반 로그인 도매꾹 ID',
+                      suffixIcon: IconButton(
+                        onPressed: _sensitiveUnlocked
+                            ? () => setState(() =>
+                                _revealDomeggookPrivateId =
+                                    !_revealDomeggookPrivateId)
+                            : null,
+                        icon: Icon(_revealDomeggookPrivateId
+                            ? Icons.visibility_off
+                            : Icons.visibility),
+                        tooltip:
+                            _revealDomeggookPrivateId ? 'Hide' : 'Reveal',
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: _domeggookPrivatePw,
+                    enabled: _sensitiveUnlocked && !_savingSensitive,
+                    obscureText: !_revealDomeggookPrivatePw,
+                    decoration: InputDecoration(
+                      labelText: 'Domeggook Private password',
+                      helperText: '일반 로그인 비밀번호',
+                      suffixIcon: IconButton(
+                        onPressed: _sensitiveUnlocked
+                            ? () => setState(() =>
+                                _revealDomeggookPrivatePw =
+                                    !_revealDomeggookPrivatePw)
+                            : null,
+                        icon: Icon(_revealDomeggookPrivatePw
+                            ? Icons.visibility_off
+                            : Icons.visibility),
+                        tooltip:
+                            _revealDomeggookPrivatePw ? 'Hide' : 'Reveal',
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: _domeggookPrivateApiKey,
+                    enabled: _sensitiveUnlocked && !_savingSensitive,
+                    obscureText: !_revealDomeggookPrivateApiKey,
+                    decoration: InputDecoration(
+                      labelText: 'Domeggook Private API key',
+                      helperText: '구매관리 / 주문관련 Private API용 KEY',
+                      suffixIcon: IconButton(
+                        onPressed: _sensitiveUnlocked
+                            ? () => setState(() =>
+                                _revealDomeggookPrivateApiKey =
+                                    !_revealDomeggookPrivateApiKey)
+                            : null,
+                        icon: Icon(_revealDomeggookPrivateApiKey
+                            ? Icons.visibility_off
+                            : Icons.visibility),
+                        tooltip: _revealDomeggookPrivateApiKey
+                            ? 'Hide'
+                            : 'Reveal',
+                      ),
+                    ),
+                  ),
                   const SizedBox(height: 14),
                   SizedBox(
                     width: double.infinity,
@@ -1124,6 +1306,117 @@ class _MoreScreenState extends State<MoreScreen> {
                               authedEmail.isEmpty ? 'Sign in to save' : 'Save'),
                     ),
                   ),
+                ],
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+          AppCard(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                SectionHeader(
+                  '도매꾹 Private API',
+                  trailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (_testingDomeggookPrivate ||
+                          _loadingDomeggookPrivateOrders)
+                        const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 10),
+                KvRow(k: '설정', v: domeggookPrivateConfigured ? '저장됨' : '미입력'),
+                KvRow(k: '연결', v: domeggookPrivateConnected ? '성공' : '미확인'),
+                KvRow(k: '최근 30일 구매주문', v: domeggookPrivateOrderCount),
+                if (_domeggookPrivateStatus != null) ...[
+                  const SizedBox(height: 8),
+                  KvRow(
+                      k: '회원등급',
+                      v: ((_domeggookPrivateStatus?['profile'] as Map?)?['grade'] ??
+                              '-')
+                          .toString()),
+                  KvRow(
+                      k: '회원 ID',
+                      v: ((_domeggookPrivateStatus?['profile'] as Map?)?['id'] ??
+                              '-')
+                          .toString()),
+                ],
+                const SizedBox(height: 8),
+                Text(
+                  '일반 로그인 계정으로 setLogin 후 구매 주문서 목록 조회까지 확인합니다. 주문 자동화 전환 전 연결 상태를 먼저 검증하는 용도입니다.',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Theme.of(context)
+                        .colorScheme
+                        .onSurface
+                        .withValues(alpha: 0.65),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Expanded(
+                      child: FilledButton.tonal(
+                        onPressed: authedEmail.isEmpty ||
+                                _testingDomeggookPrivate ||
+                                !domeggookPrivateConfigured
+                            ? null
+                            : _testDomeggookPrivateLogin,
+                        child: const Text('로그인 테스트'),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: OutlinedButton(
+                        onPressed: authedEmail.isEmpty ||
+                                _loadingDomeggookPrivateOrders ||
+                                !domeggookPrivateConfigured
+                            ? null
+                            : _loadDomeggookPrivateOrders,
+                        child: const Text('최근 주문 조회'),
+                      ),
+                    ),
+                  ],
+                ),
+                if ((_domeggookPrivateOrders?['items'] as List?)?.isNotEmpty ==
+                    true) ...[
+                  const SizedBox(height: 12),
+                  const Divider(height: 1),
+                  const SizedBox(height: 12),
+                  ...((_domeggookPrivateOrders?['items'] as List)
+                      .take(5)
+                      .map<Widget>((row) {
+                    final item = (row as Map).cast<String, dynamic>();
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 10),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            (item['itemTitle'] ?? '-').toString(),
+                            style: Theme.of(context).textTheme.labelLarge,
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            '주문번호 ${(item['orderNo'] ?? '-')} · ${(item['status'] ?? '-')} · 수량 ${(item['orderQty'] ?? 0)}',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Theme.of(context)
+                                  .colorScheme
+                                  .onSurface
+                                  .withValues(alpha: 0.68),
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  })),
                 ],
               ],
             ),
