@@ -32,8 +32,10 @@ class OrdersScreen extends StatefulWidget {
 
 class _OrdersScreenState extends State<OrdersScreen> {
   bool _loading = false;
+  bool _loadingDomeggookAsset = false;
   String? _error;
   List<Map<String, dynamic>> _orders = const [];
+  Map<String, dynamic>? _domeggookAsset;
 
   final _dateFrom = TextEditingController();
   final _dateTo = TextEditingController();
@@ -85,6 +87,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
     }
 
     _refresh();
+    _loadDomeggookAsset();
   }
 
   @override
@@ -100,6 +103,19 @@ class _OrdersScreenState extends State<OrdersScreen> {
     final m = d.month.toString().padLeft(2, '0');
     final day = d.day.toString().padLeft(2, '0');
     return '$y-$m-$day';
+  }
+
+  String _formatWon(dynamic value) {
+    final n = num.tryParse('${value ?? ''}');
+    if (n == null) return '-';
+    final text = n.toStringAsFixed(0);
+    final out = StringBuffer();
+    for (var i = 0; i < text.length; i++) {
+      final idxFromEnd = text.length - i;
+      out.write(text[i]);
+      if (idxFromEnd > 1 && idxFromEnd % 3 == 1) out.write(',');
+    }
+    return '${out.toString()}원';
   }
 
   Future<void> _refresh() async {
@@ -119,6 +135,25 @@ class _OrdersScreenState extends State<OrdersScreen> {
       setState(() => _error = e.toString());
     } finally {
       if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _loadDomeggookAsset() async {
+    setState(() => _loadingDomeggookAsset = true);
+    try {
+      final json = await widget.api.getJson('/api/domeggook/private/asset');
+      if (!mounted) return;
+      setState(() => _domeggookAsset = json);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _domeggookAsset = {
+          'ok': false,
+          'error': e.toString(),
+        };
+      });
+    } finally {
+      if (mounted) setState(() => _loadingDomeggookAsset = false);
     }
   }
 
@@ -531,6 +566,10 @@ class _OrdersScreenState extends State<OrdersScreen> {
         .where((o) =>
             (o['status'] ?? '').toString().trim().toUpperCase() == 'DONE')
         .length;
+    final domeggookAssetMap =
+        (_domeggookAsset?['asset'] as Map?)?.cast<String, dynamic>() ?? {};
+    final domeggookCash = domeggookAssetMap['emoneyCash'];
+    final domeggookAssetError = (_domeggookAsset?['error'] ?? '').toString();
 
     return AppScaffold(
       title: _screenTitle,
@@ -570,6 +609,45 @@ class _OrdersScreenState extends State<OrdersScreen> {
                         subtitle: '송장 반영 후 상태'),
                     _OrderMetric(
                         title: '완료', value: '$doneCount', subtitle: '처리 끝난 주문'),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    InfoChip(
+                      label: _loadingDomeggookAsset
+                          ? 'e머니 확인 중'
+                          : domeggookAssetMap.isNotEmpty
+                              ? '현금성 e머니 ${_formatWon(domeggookCash)}'
+                              : 'e머니 미확인',
+                      color: domeggookAssetMap.isNotEmpty &&
+                              (num.tryParse('${domeggookCash ?? ''}') ?? 0) > 0
+                          ? Theme.of(context).colorScheme.primary
+                          : Theme.of(context).colorScheme.outline,
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        domeggookAssetMap.isNotEmpty
+                            ? '주문 상세에 들어가기 전에도 잔액을 바로 볼 수 있습니다.'
+                            : (domeggookAssetError.isNotEmpty
+                                ? '도매꾹 잔액 조회에 실패했습니다. 연결 상태를 확인하세요.'
+                                : '도매꾹 자동 주문 전 현금성 e머니를 먼저 확인합니다.'),
+                        style: TextStyle(
+                          color: Theme.of(context)
+                              .colorScheme
+                              .onSurface
+                              .withValues(alpha: 0.68),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    TextButton(
+                      onPressed: _loadingDomeggookAsset
+                          ? null
+                          : _loadDomeggookAsset,
+                      child: const Text('잔액 확인'),
+                    ),
                   ],
                 ),
                 const SizedBox(height: 12),
