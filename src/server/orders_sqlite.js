@@ -84,6 +84,15 @@ function dbAll(db, sql, params = []) {
   });
 }
 
+function dbGet(db, sql, params = []) {
+  return new Promise((resolve, reject) => {
+    db.get(sql, params, (err, row) => {
+      if (err) reject(err);
+      else resolve(row || null);
+    });
+  });
+}
+
 export async function addOrder({ userId, source, status = "paid", order, externalId = null, externalSubId = null }) {
   if (!userId) throw new Error("userId required");
   if (!source) throw new Error("source required");
