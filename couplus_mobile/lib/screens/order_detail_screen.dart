@@ -26,6 +26,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
   String? _error;
   Map<String, dynamic>? _lastAck;
   Map<String, dynamic>? _lastInvoiceUpload;
+  Map<String, dynamic>? _lastDomeggookCreate;
 
   Map<String, dynamic> get _raw =>
       (widget.order['order'] as Map?)?.cast<String, dynamic>() ?? {};
@@ -133,12 +134,95 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
     }
   }
 
+  Future<void> _createDomeggookOrder() async {
+    final orderId = widget.order['id'];
+    if (orderId == null) {
+      setState(() => _error = '주문 ID가 없어 도매꾹 자동 주문을 진행할 수 없습니다.');
+      return;
+    }
+
+    setState(() {
+      _loading = true;
+      _error = null;
+      _lastDomeggookCreate = null;
+    });
+
+    try {
+      final json = await widget.api.postJson('/api/orders/domeggook/create', {
+        'orderId': orderId,
+        'receipt': 0,
+      });
+      final result = (json['result'] as Map?)?.cast<String, dynamic>() ?? {};
+      setState(() => _lastDomeggookCreate = result);
+      if (mounted) {
+        final orders = (result['orderCreate'] as Map?)?['orders'] as List?;
+        final orderNo = orders != null && orders.isNotEmpty
+            ? ((orders.first as Map)['orderNo'] ?? '').toString()
+            : '';
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              orderNo.isNotEmpty
+                  ? '도매꾹 주문 생성 완료: $orderNo'
+                  : '도매꾹 주문 생성 결과를 확인해 주세요.',
+            ),
+          ),
+        );
+      }
+    } catch (e) {
+      setState(() => _error = e.toString());
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
   Widget _resultCard(
     BuildContext context, {
     required String title,
     required Map<String, dynamic>? result,
   }) {
     if (result == null) return const SizedBox.shrink();
+    final orderCreate =
+        (result['orderCreate'] as Map?)?.cast<String, dynamic>() ??
+            const <String, dynamic>{};
+    if (orderCreate.isNotEmpty) {
+      final orders = (orderCreate['orders'] as List?) ?? const [];
+      final first = orders.isNotEmpty
+          ? (orders.first as Map).cast<String, dynamic>()
+          : const <String, dynamic>{};
+      final mapping =
+          (result['mapping'] as Map?)?.cast<String, dynamic>() ??
+              const <String, dynamic>{};
+      final payload =
+          (result['payloadPreview'] as Map?)?.cast<String, dynamic>() ??
+              const <String, dynamic>{};
+      return Padding(
+        padding: const EdgeInsets.only(top: 12),
+        child: AppCard(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              SectionHeader(title),
+              const SizedBox(height: 10),
+              KvRow(k: 'result', v: (orderCreate['result'] ?? '-').toString()),
+              KvRow(k: 'itemNo', v: (mapping['itemNo'] ?? '-').toString()),
+              KvRow(
+                  k: 'optionCode',
+                  v: (mapping['optionCode'] ?? '-').toString()),
+              KvRow(
+                  k: 'shippingMethod',
+                  v: (mapping['shippingMethodCode'] ?? '-').toString()),
+              if (first.isNotEmpty) ...[
+                KvRow(k: 'orderNo', v: (first['orderNo'] ?? '-').toString()),
+                KvRow(k: '수령인', v: (first['getName'] ?? '-').toString()),
+              ],
+              if (payload['deliinfo'] != null)
+                KvRow(k: 'deliinfo', v: payload['deliinfo'].toString()),
+            ],
+          ),
+        ),
+      );
+    }
     final responseList = (result['responseList'] as List?) ?? const [];
     final first = responseList.isNotEmpty
         ? (responseList.first as Map).cast<String, dynamic>()
@@ -306,7 +390,30 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                   ),
                   const Divider(height: 28),
                   Text(
-                    '2. 송장 업로드',
+                    '2. 도매꾹 자동 주문',
+                    style: TextStyle(
+                      fontWeight: FontWeight.w900,
+                      color: Theme.of(context).colorScheme.onSurface,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    '공급처 상품번호와 옵션코드가 매핑된 주문이면 바로 도매꾹 구매주문을 생성합니다. e-money가 차감될 수 있습니다.',
+                    style: TextStyle(
+                      color: Theme.of(context)
+                          .colorScheme
+                          .onSurface
+                          .withValues(alpha: 0.68),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  FilledButton.tonal(
+                    onPressed: _loading ? null : _createDomeggookOrder,
+                    child: const Text('도매꾹 자동 주문'),
+                  ),
+                  const Divider(height: 28),
+                  Text(
+                    '3. 송장 업로드',
                     style: TextStyle(
                       fontWeight: FontWeight.w900,
                       color: Theme.of(context).colorScheme.onSurface,
@@ -372,6 +479,8 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
             _resultCard(context, title: '발주확인 결과', result: _lastAck),
             _resultCard(context,
                 title: '송장 업로드 결과', result: _lastInvoiceUpload),
+            _resultCard(context,
+                title: '도매꾹 자동 주문 결과', result: _lastDomeggookCreate),
           ],
         ),
       ),

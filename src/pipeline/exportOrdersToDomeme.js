@@ -296,7 +296,7 @@ async function fetchOrderSheetsForStatuses({
   return { ok: true, data: merged, statuses: statusList, warnings };
 }
 
-async function resolveUploadedProductForOrderItem({ userId, item }) {
+export async function resolveUploadedProductForOrderItem({ userId, item }) {
   const sellerProductId = String(item?.sellerProductId || "").trim();
   if (sellerProductId) {
     const bySellerProductId = await getUploadedProductBySellerProductId(userId, sellerProductId);
@@ -324,7 +324,7 @@ async function resolveUploadedProductForOrderItem({ userId, item }) {
   );
 }
 
-async function resolvePurchaseSourceForUploadedProduct({ uploadedProduct, cache }) {
+export async function resolvePurchaseSourceForUploadedProduct({ uploadedProduct, cache }) {
   const cacheKey = String(uploadedProduct?.id || uploadedProduct?.sourceUrl || "").trim();
   if (cacheKey && cache.has(cacheKey)) return cache.get(cacheKey);
 
@@ -365,7 +365,7 @@ async function resolvePurchaseSourceForUploadedProduct({ uploadedProduct, cache 
   return purchase;
 }
 
-function resolveSupplierSelection({ item, purchase, manualMapping = null }) {
+export function resolveSupplierSelection({ item, purchase, manualMapping = null }) {
   if (manualMapping?.itemNo) {
     return {
       ok: true,

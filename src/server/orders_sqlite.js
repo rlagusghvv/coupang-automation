@@ -166,6 +166,40 @@ export async function listOrders(userId, limit = 50) {
   }
 }
 
+export async function getOrderById(userId, id) {
+  if (!userId) throw new Error("userId required");
+  const nid = Number(id);
+  if (!Number.isFinite(nid) || nid <= 0) throw new Error("invalid id");
+  const db = openDb();
+  try {
+    await ensureOrdersSchema(db);
+    const row = await dbGet(
+      db,
+      `SELECT id, source, status, order_json, created_at, external_id, external_sub_id
+       FROM orders
+       WHERE user_id = ? AND id = ?
+       LIMIT 1`,
+      [userId, Math.floor(nid)],
+    );
+    if (!row) return null;
+    let order = {};
+    try {
+      order = JSON.parse(row.order_json || "{}");
+    } catch {}
+    return {
+      id: row.id,
+      at: row.created_at,
+      source: row.source,
+      status: row.status,
+      externalId: row.external_id,
+      externalSubId: row.external_sub_id,
+      order,
+    };
+  } finally {
+    db.close();
+  }
+}
+
 async function fetchOrderSheetsAll({ vendorId, accessKey, secretKey, createdAtFrom, createdAtTo, status }) {
   const all = [];
   let nextToken = "";

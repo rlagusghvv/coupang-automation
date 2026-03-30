@@ -157,6 +157,50 @@ export async function domeggookPrivateApiGetOrderList({
   return parseResponse(response.text, "domeggook_private_getOrderList");
 }
 
+export async function domeggookPrivateApiCreateOrder({
+  apiKey,
+  memberId,
+  sessionId,
+  receipt = 0,
+  itemEntries = {},
+  deliinfo = "",
+  alliance = "",
+  timeoutMs = 30_000,
+} = {}) {
+  const body = new URLSearchParams({
+    ver: "4.3",
+    mode: "setOrder",
+    aid: String(apiKey || "").trim(),
+    id: String(memberId || "").trim(),
+    sId: String(sessionId || "").trim(),
+    receipt: String(Number(receipt) === 1 ? 1 : 0),
+    ie: "utf-8",
+    oe: "utf-8",
+    om: "json",
+    deliinfo: String(deliinfo || "").trim(),
+  });
+  const allianceText = String(alliance || "").trim();
+  if (allianceText) body.set("alliance", allianceText);
+  for (const [key, value] of Object.entries(itemEntries || {})) {
+    const itemNo = String(key || "").trim();
+    const itemValue = String(value || "").trim();
+    if (!itemNo || !itemValue) continue;
+    body.set(`item[${itemNo}]`, itemValue);
+  }
+
+  const response = await fetchText(new URL(API_ENDPOINT), {
+    method: "POST",
+    body,
+    timeoutMs,
+  });
+  if (!response.ok || /<html|<!doctype/i.test(response.text || "")) {
+    const error = new Error("domeggook_private_setOrder_failed");
+    error.details = String(response.text || "").slice(0, 600);
+    throw error;
+  }
+  return parseResponse(response.text, "domeggook_private_setOrder");
+}
+
 export function normalizeDomeggookPrivateOrderList(raw = {}) {
   const header = raw?.header && typeof raw.header === "object" ? raw.header : {};
   const sourceItems = Array.isArray(raw?.items)
@@ -188,6 +232,25 @@ export function normalizeDomeggookPrivateOrderList(raw = {}) {
       numberOfPages: Number(header.numberOfPages || 0) || 0,
     },
     items,
+    raw,
+  };
+}
+
+export function normalizeDomeggookPrivateCreateOrder(raw = {}) {
+  const sourceOrders = Array.isArray(raw?.order)
+    ? raw.order
+    : raw?.order && typeof raw.order === "object"
+      ? [raw.order]
+      : [];
+  return {
+    result: String(raw?.result || "").trim(),
+    orders: sourceOrders
+      .filter((row) => row && typeof row === "object")
+      .map((row) => ({
+        orderNo: String(row.orderNo || "").trim(),
+        itemNo: String(row.itemNo || "").trim(),
+        getName: String(row.getName || "").trim(),
+      })),
     raw,
   };
 }

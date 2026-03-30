@@ -41,8 +41,10 @@ import {
 } from "./src/server/storage_sqlite.js";
 import { exportOrdersToDomeme } from "./src/pipeline/exportOrdersToDomeme.js";
 import { uploadVendorPurchaseExcel } from "./src/pipeline/uploadVendorPurchaseExcel.js";
+import { createDomeggookOrderForCoupangOrder } from "./src/pipeline/createDomeggookOrder.js";
 import {
   listOrders,
+  getOrderById,
   refreshShippingStatusesFromCoupang,
   upsertCoupangOrderSheet,
 } from "./src/server/orders_sqlite.js";
@@ -6458,6 +6460,45 @@ app.get("/api/domeggook/private/orders", authRequired, async (req, res) => {
     return res.status(400).json({
       ok: false,
       connected: false,
+      error: String(e?.message || e),
+      details: String(e?.details || "").trim(),
+    });
+  }
+});
+
+app.post("/api/orders/domeggook/create", authRequired, async (req, res) => {
+  try {
+    const orderId = Number(req.body?.orderId);
+    if (!Number.isFinite(orderId) || orderId <= 0) {
+      return res.status(400).json({ ok: false, error: "invalid_order_id" });
+    }
+    const orderRecord = await getOrderById(req.user.id, Math.floor(orderId));
+    if (!orderRecord) {
+      return res.status(404).json({ ok: false, error: "order_not_found" });
+    }
+    const result = await createDomeggookOrderForCoupangOrder({
+      userId: req.user.id,
+      settings: req.user?.settings || {},
+      orderRecord,
+      receipt: req.body?.receipt,
+      dryRun: req.body?.dryRun === true || String(req.body?.dryRun || "") === "1",
+    });
+    if (!result?.ok) {
+      return res.status(400).json({ ok: false, error: result?.error || "domeggook_order_create_failed", result });
+    }
+    appendUserPurchaseLog(req.user.id, {
+      vendor: "domeggook_private",
+      orderId: orderId,
+      orderNo:
+        (Array.isArray(result?.orderCreate?.orders) && result.orderCreate.orders[0]?.orderNo) || "",
+      itemNo: result?.mapping?.itemNo || "",
+      payUrl: "",
+      dryRun: result?.dryRun === true,
+    });
+    return res.json({ ok: true, result });
+  } catch (e) {
+    return res.status(500).json({
+      ok: false,
       error: String(e?.message || e),
       details: String(e?.details || "").trim(),
     });
