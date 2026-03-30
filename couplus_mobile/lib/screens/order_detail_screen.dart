@@ -23,10 +23,12 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
   final _invoiceNumber = TextEditingController();
 
   bool _loading = false;
+  bool _checkingDomeggookPreflight = false;
   String? _error;
   Map<String, dynamic>? _lastAck;
   Map<String, dynamic>? _lastInvoiceUpload;
   Map<String, dynamic>? _lastDomeggookCreate;
+  Map<String, dynamic>? _domeggookPreflight;
 
   Map<String, dynamic> get _raw =>
       (widget.order['order'] as Map?)?.cast<String, dynamic>() ?? {};
@@ -52,11 +54,67 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
       _orderId.isNotEmpty &&
       _vendorItemId.isNotEmpty;
 
+  bool get _canStartDomeggookOrder {
+    final preflight = _domeggookPreflight;
+    if (preflight == null) return !_checkingDomeggookPreflight;
+    final canOrder = preflight['canOrder'];
+    return canOrder != false;
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _loadDomeggookPreflight();
+    });
+  }
+
   @override
   void dispose() {
     _deliveryCompanyCode.dispose();
     _invoiceNumber.dispose();
     super.dispose();
+  }
+
+  String _formatWon(dynamic value) {
+    final n = num.tryParse('${value ?? ''}');
+    if (n == null) return '-';
+    final text = n.toStringAsFixed(0);
+    final out = StringBuffer();
+    for (var i = 0; i < text.length; i++) {
+      final idxFromEnd = text.length - i;
+      out.write(text[i]);
+      if (idxFromEnd > 1 && idxFromEnd % 3 == 1) out.write(',');
+    }
+    return '${out.toString()}원';
+  }
+
+  Future<void> _loadDomeggookPreflight() async {
+    final orderId = widget.order['id'];
+    if (orderId == null) return;
+    setState(() {
+      _checkingDomeggookPreflight = true;
+      _error = null;
+    });
+    try {
+      final json = await widget.api.postJson('/api/orders/domeggook/preflight', {
+        'orderId': orderId,
+        'receipt': 0,
+      });
+      final result = (json['result'] as Map?)?.cast<String, dynamic>() ?? {};
+      if (mounted) {
+        setState(() => _domeggookPreflight = result);
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _domeggookPreflight = null;
+          _error = e.toString();
+        });
+      }
+    } finally {
+      if (mounted) setState(() => _checkingDomeggookPreflight = false);
+    }
   }
 
   Future<void> _acknowledge() async {
@@ -153,7 +211,10 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
         'receipt': 0,
       });
       final result = (json['result'] as Map?)?.cast<String, dynamic>() ?? {};
-      setState(() => _lastDomeggookCreate = result);
+      setState(() {
+        _lastDomeggookCreate = result;
+        _domeggookPreflight = result;
+      });
       if (mounted) {
         final orders = (result['orderCreate'] as Map?)?['orders'] as List?;
         final orderNo = orders != null && orders.isNotEmpty
@@ -172,6 +233,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
     } catch (e) {
       setState(() => _error = e.toString());
     } finally {
+      await _loadDomeggookPreflight();
       if (mounted) setState(() => _loading = false);
     }
   }
@@ -407,9 +469,66 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                     ),
                   ),
                   const SizedBox(height: 10),
-                  FilledButton.tonal(
-                    onPressed: _loading ? null : _createDomeggookOrder,
-                    child: const Text('도매꾹 자동 주문'),
+                  if (_checkingDomeggookPreflight)
+                    Text(
+                      '이머니 잔액과 예상 차감액을 확인하는 중입니다.',
+                      style: TextStyle(
+                        color: Theme.of(context)
+                            .colorScheme
+                            .onSurface
+                            .withValues(alpha: 0.68),
+                      ),
+                    )
+                  else if (_domeggookPreflight != null) ...[
+                    KvRow(
+                      k: '현금성 이머니',
+                      v: _formatWon(
+                        ((_domeggookPreflight?['asset'] as Map?)?['emoneyCash']),
+                      ),
+                    ),
+                    KvRow(
+                      k: '예상 차감액',
+                      v: _formatWon(
+                        ((_domeggookPreflight?['estimate'] as Map?)?['total']),
+                      ),
+                    ),
+                    KvRow(
+                      k: '주문 가능',
+                      v: (_domeggookPreflight?['canOrder'] == false)
+                          ? '불가'
+                          : ((_domeggookPreflight?['canOrder'] == true)
+                              ? '가능'
+                              : '잔액만 확인됨'),
+                    ),
+                    if (_domeggookPreflight?['canOrder'] == false)
+                      Text(
+                        '현금성 이머니가 부족해서 지금은 주문 버튼을 막아둡니다. 충전 후 다시 확인해 주세요.',
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.error,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                  ],
+                  const SizedBox(height: 10),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      FilledButton.tonal(
+                        onPressed: _loading ||
+                                _checkingDomeggookPreflight ||
+                                !_canStartDomeggookOrder
+                            ? null
+                            : _createDomeggookOrder,
+                        child: const Text('도매꾹 자동 주문'),
+                      ),
+                      OutlinedButton(
+                        onPressed: _loading || _checkingDomeggookPreflight
+                            ? null
+                            : _loadDomeggookPreflight,
+                        child: const Text('잔액 확인'),
+                      ),
+                    ],
                   ),
                   const Divider(height: 28),
                   Text(

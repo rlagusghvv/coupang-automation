@@ -157,6 +157,33 @@ export async function domeggookPrivateApiGetOrderList({
   return parseResponse(response.text, "domeggook_private_getOrderList");
 }
 
+export async function domeggookPrivateApiGetMyAsset({
+  apiKey,
+  memberId,
+  sessionId,
+  timeoutMs = 20_000,
+} = {}) {
+  const body = new URLSearchParams({
+    ver: "1.0",
+    mode: "getMyAsset",
+    aid: String(apiKey || "").trim(),
+    id: String(memberId || "").trim(),
+    sId: String(sessionId || "").trim(),
+    om: "json",
+  });
+  const response = await fetchText(new URL(API_ENDPOINT), {
+    method: "POST",
+    body,
+    timeoutMs,
+  });
+  if (!response.ok || /<html|<!doctype/i.test(response.text || "")) {
+    const error = new Error("domeggook_private_getMyAsset_failed");
+    error.details = String(response.text || "").slice(0, 600);
+    throw error;
+  }
+  return parseResponse(response.text, "domeggook_private_getMyAsset");
+}
+
 export async function domeggookPrivateApiCreateOrder({
   apiKey,
   memberId,
@@ -199,6 +226,22 @@ export async function domeggookPrivateApiCreateOrder({
     throw error;
   }
   return parseResponse(response.text, "domeggook_private_setOrder");
+}
+
+export function normalizeDomeggookPrivateAsset(raw = {}) {
+  const data = raw?.data && typeof raw.data === "object" ? raw.data : {};
+  const currEmoney =
+    data?.currEmoney && typeof data.currEmoney === "object"
+      ? data.currEmoney
+      : {};
+  return {
+    id: String(raw?.id || "").trim(),
+    result: String(raw?.result || "").trim(),
+    point: Number(data?.currPoint || 0) || 0,
+    emoneyTotal: Number(currEmoney?.total || 0) || 0,
+    emoneyCash: Number(currEmoney?.cash || 0) || 0,
+    raw,
+  };
 }
 
 export function normalizeDomeggookPrivateOrderList(raw = {}) {

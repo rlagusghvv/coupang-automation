@@ -9,7 +9,9 @@ import {
 import { parseProductFromDomaeqq } from "../sources/domaeqq/parseProductFromDomaeqq.js";
 import {
   domeggookPrivateApiCreateOrder,
+  domeggookPrivateApiGetMyAsset,
   domeggookPrivateApiLogin,
+  normalizeDomeggookPrivateAsset,
   normalizeDomeggookPrivateCreateOrder,
   resolveDomeggookPrivateCredentials,
 } from "../utils/domeggook_private_api.js";
@@ -153,12 +155,44 @@ function buildItemEntry({
   )}`;
 }
 
+async function estimateSupplierCharge({
+  uploadedProduct,
+  qty = 1,
+  shippingMethodCode = "P",
+} = {}) {
+  const sourceUrl = String(uploadedProduct?.sourceUrl || "").trim();
+  if (!sourceUrl) return null;
+  try {
+    const parsed = await parseProductFromDomaeqq(sourceUrl);
+    const unitPrice = Number(parsed?.price);
+    const shippingFeeRaw = Number(parsed?.shippingFee);
+    const shippingFee =
+      shippingMethodCode === "S"
+        ? 0
+        : Number.isFinite(shippingFeeRaw) && shippingFeeRaw > 0
+          ? shippingFeeRaw
+          : 0;
+    if (!Number.isFinite(unitPrice) || unitPrice <= 0) return null;
+    const orderQty = Math.max(1, Number(qty) || 1);
+    return {
+      unitPrice,
+      qty: orderQty,
+      shippingFee,
+      total: unitPrice * orderQty + shippingFee,
+      source: "parsed_source",
+    };
+  } catch {
+    return null;
+  }
+}
+
 export async function createDomeggookOrderForCoupangOrder({
   userId = "",
   settings = {},
   orderRecord = null,
   receipt = 0,
   dryRun = false,
+  includeAssetCheck = false,
 } = {}) {
   if (!userId) throw new Error("userId required");
   if (!orderRecord || typeof orderRecord !== "object") {
@@ -241,6 +275,11 @@ export async function createDomeggookOrderForCoupangOrder({
     }),
   };
   const deliinfo = buildDeliInfo(receiver, buyer);
+  const estimate = await estimateSupplierCharge({
+    uploadedProduct,
+    qty,
+    shippingMethodCode,
+  });
   const payloadPreview = {
     receipt: Number(receipt) === 1 ? 1 : 0,
     itemEntries,
@@ -248,11 +287,41 @@ export async function createDomeggookOrderForCoupangOrder({
     alliance: "",
   };
 
+  let login = null;
+  let asset = null;
+  let canOrder = null;
+  let canOrderReason = "unchecked";
+  if (includeAssetCheck || !dryRun) {
+    login = await domeggookPrivateApiLogin({
+      apiKey: creds.apiKey,
+      memberId: creds.memberId,
+      password: creds.password,
+      userAgent: "Couplus/1.0",
+    });
+    const assetRaw = await domeggookPrivateApiGetMyAsset({
+      apiKey: creds.apiKey,
+      memberId: creds.memberId,
+      sessionId: String(login?.sId || "").trim(),
+    });
+    asset = normalizeDomeggookPrivateAsset(assetRaw);
+    if (estimate && Number.isFinite(Number(estimate.total))) {
+      canOrder = Number(asset.emoneyCash || 0) >= Number(estimate.total || 0);
+      canOrderReason = canOrder ? "enough_emoney" : "too_less_emoney";
+    } else {
+      canOrder = null;
+      canOrderReason = "estimate_unavailable";
+    }
+  }
+
   if (dryRun) {
     return {
       ok: true,
       dryRun: true,
       payloadPreview,
+      estimate,
+      asset,
+      canOrder,
+      canOrderReason,
       mapping: {
         source: resolution.source,
         itemNo: resolution.itemNo,
@@ -262,12 +331,25 @@ export async function createDomeggookOrderForCoupangOrder({
     };
   }
 
-  const login = await domeggookPrivateApiLogin({
-    apiKey: creds.apiKey,
-    memberId: creds.memberId,
-    password: creds.password,
-    userAgent: "Couplus/1.0",
-  });
+  if (canOrder === false) {
+    return {
+      ok: false,
+      error: "too_less_emoney_precheck",
+      payloadPreview,
+      estimate,
+      asset,
+      canOrder,
+      canOrderReason,
+      mapping: {
+        source: resolution.source,
+        itemNo: resolution.itemNo,
+        optionCode: resolution.optionCode || "00",
+        optionName: resolution.optionName || "",
+        shippingMethodCode,
+      },
+    };
+  }
+
   const created = await domeggookPrivateApiCreateOrder({
     apiKey: creds.apiKey,
     memberId: creds.memberId,
@@ -282,6 +364,10 @@ export async function createDomeggookOrderForCoupangOrder({
   return {
     ok: true,
     payloadPreview,
+    estimate,
+    asset,
+    canOrder,
+    canOrderReason,
     mapping: {
       source: resolution.source,
       itemNo: resolution.itemNo,

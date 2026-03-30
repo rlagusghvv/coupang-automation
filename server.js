@@ -70,7 +70,9 @@ import {
 } from "./src/server/recommendations.js";
 import {
   domeggookPrivateApiGetOrderList,
+  domeggookPrivateApiGetMyAsset,
   domeggookPrivateApiLogin,
+  normalizeDomeggookPrivateAsset,
   normalizeDomeggookPrivateOrderList,
   resolveDomeggookPrivateCredentials,
 } from "./src/utils/domeggook_private_api.js";
@@ -6460,6 +6462,80 @@ app.get("/api/domeggook/private/orders", authRequired, async (req, res) => {
     return res.status(400).json({
       ok: false,
       connected: false,
+      error: String(e?.message || e),
+      details: String(e?.details || "").trim(),
+    });
+  }
+});
+
+app.get("/api/domeggook/private/asset", authRequired, async (req, res) => {
+  try {
+    const settings = req.user?.settings || {};
+    const creds = resolveDomeggookPrivateCredentials(settings);
+    if (!creds.apiKey || !creds.memberId || !creds.password) {
+      return res.status(400).json({
+        ok: false,
+        error: "missing_domeggook_private_credentials",
+      });
+    }
+
+    const profile = await domeggookPrivateApiLogin({
+      apiKey: creds.apiKey,
+      memberId: creds.memberId,
+      password: creds.password,
+      ip: getForwardedClientIp(req),
+      userAgent: String(req.headers["user-agent"] || "Couplus/1.0"),
+    });
+
+    const raw = await domeggookPrivateApiGetMyAsset({
+      apiKey: creds.apiKey,
+      memberId: creds.memberId,
+      sessionId: String(profile?.sId || "").trim(),
+    });
+    const asset = normalizeDomeggookPrivateAsset(raw);
+
+    return res.json({
+      ok: true,
+      connected: true,
+      asset,
+    });
+  } catch (e) {
+    return res.status(400).json({
+      ok: false,
+      connected: false,
+      error: String(e?.message || e),
+      details: String(e?.details || "").trim(),
+    });
+  }
+});
+
+app.post("/api/orders/domeggook/preflight", authRequired, async (req, res) => {
+  try {
+    const orderId = Number(req.body?.orderId);
+    if (!Number.isFinite(orderId) || orderId <= 0) {
+      return res.status(400).json({ ok: false, error: "invalid_order_id" });
+    }
+    const orderRecord = await getOrderById(req.user.id, Math.floor(orderId));
+    if (!orderRecord) {
+      return res.status(404).json({ ok: false, error: "order_not_found" });
+    }
+    const result = await createDomeggookOrderForCoupangOrder({
+      userId: req.user.id,
+      settings: req.user?.settings || {},
+      orderRecord,
+      receipt: req.body?.receipt,
+      dryRun: true,
+      includeAssetCheck: true,
+    });
+    if (!result?.ok) {
+      return res
+        .status(400)
+        .json({ ok: false, error: result?.error || "domeggook_preflight_failed", result });
+    }
+    return res.json({ ok: true, result });
+  } catch (e) {
+    return res.status(500).json({
+      ok: false,
       error: String(e?.message || e),
       details: String(e?.details || "").trim(),
     });
