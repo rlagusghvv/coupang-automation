@@ -45,6 +45,7 @@ import { createDomeggookOrderForCoupangOrder } from "./src/pipeline/createDomegg
 import {
   listOrders,
   getOrderById,
+  mergeOrderDataById,
   refreshShippingStatusesFromCoupang,
   upsertCoupangOrderSheet,
 } from "./src/server/orders_sqlite.js";
@@ -70,10 +71,12 @@ import {
 } from "./src/server/recommendations.js";
 import {
   domeggookPrivateApiGetOrderList,
+  domeggookPrivateApiGetOrderView,
   domeggookPrivateApiGetMyAsset,
   domeggookPrivateApiLogin,
   normalizeDomeggookPrivateAsset,
   normalizeDomeggookPrivateOrderList,
+  normalizeDomeggookPrivateOrderView,
   resolveDomeggookPrivateCredentials,
 } from "./src/utils/domeggook_private_api.js";
 
@@ -146,6 +149,15 @@ function appendUserPurchaseLog(userId, entry = {}) {
     ...prev,
   ].slice(0, 50);
   runtimeState.purchaseLogs.set(key, next);
+}
+
+function findLatestPurchaseLogByOrderId(userId, orderId) {
+  const target = String(orderId || "").trim();
+  if (!target) return null;
+  const logs = getUserPurchaseLogs(userId, 50);
+  return (
+    logs.find((row) => String(row?.orderId || "").trim() === target) || null
+  );
 }
 
 function buildPayUrlsFromLogs(logs = []) {
@@ -6571,7 +6583,205 @@ app.post("/api/orders/domeggook/create", authRequired, async (req, res) => {
       payUrl: "",
       dryRun: result?.dryRun === true,
     });
+    const createdOrderNo =
+      (Array.isArray(result?.orderCreate?.orders) && result.orderCreate.orders[0]?.orderNo) || "";
+    if (createdOrderNo) {
+      await mergeOrderDataById(req.user.id, orderId, {
+        supplier: {
+          ...(orderRecord?.order?.supplier && typeof orderRecord.order.supplier === "object"
+              ? orderRecord.order.supplier
+              : {}),
+          domeggook: {
+            ...((orderRecord?.order?.supplier?.domeggook &&
+                    typeof orderRecord.order.supplier.domeggook === "object")
+                ? orderRecord.order.supplier.domeggook
+                : {}),
+            orderNo: String(createdOrderNo).trim(),
+            itemNo: String(result?.mapping?.itemNo || "").trim(),
+            optionCode: String(result?.mapping?.optionCode || "").trim(),
+            shippingMethodCode: String(result?.mapping?.shippingMethodCode || "").trim(),
+            createdAt: new Date().toISOString(),
+          },
+        },
+      });
+    }
     return res.json({ ok: true, result });
+  } catch (e) {
+    return res.status(500).json({
+      ok: false,
+      error: String(e?.message || e),
+      details: String(e?.details || "").trim(),
+    });
+  }
+});
+
+app.post("/api/orders/domeggook/sync-invoice", authRequired, async (req, res) => {
+  try {
+    const orderId = Number(req.body?.orderId);
+    if (!Number.isFinite(orderId) || orderId <= 0) {
+      return res.status(400).json({ ok: false, error: "invalid_order_id" });
+    }
+    const orderRecord = await getOrderById(req.user.id, Math.floor(orderId));
+    if (!orderRecord) {
+      return res.status(404).json({ ok: false, error: "order_not_found" });
+    }
+
+    const settings = req.user?.settings || {};
+    const creds = resolveDomeggookPrivateCredentials(settings);
+    if (!creds.apiKey || !creds.memberId || !creds.password) {
+      return res.status(400).json({
+        ok: false,
+        error: "missing_domeggook_private_credentials",
+      });
+    }
+
+    const orderRaw =
+      orderRecord?.order && typeof orderRecord.order === "object"
+        ? orderRecord.order
+        : {};
+    const supplierInfo =
+      orderRaw?.supplier && typeof orderRaw.supplier === "object"
+        ? orderRaw.supplier
+        : {};
+    const domeggookInfo =
+      supplierInfo?.domeggook && typeof supplierInfo.domeggook === "object"
+        ? supplierInfo.domeggook
+        : {};
+    const fallbackLog = findLatestPurchaseLogByOrderId(req.user.id, orderId);
+    const domeggookOrderNo = String(
+      domeggookInfo?.orderNo || fallbackLog?.orderNo || "",
+    ).trim();
+    if (!domeggookOrderNo) {
+      return res.status(400).json({
+        ok: false,
+        error: "missing_domeggook_order_no",
+      });
+    }
+
+    const profile = await domeggookPrivateApiLogin({
+      apiKey: creds.apiKey,
+      memberId: creds.memberId,
+      password: creds.password,
+      ip: getForwardedClientIp(req),
+      userAgent: String(req.headers["user-agent"] || "Couplus/1.0"),
+    });
+    const rawView = await domeggookPrivateApiGetOrderView({
+      apiKey: creds.apiKey,
+      memberId: creds.memberId,
+      sessionId: String(profile?.sId || "").trim(),
+      orderNo: domeggookOrderNo,
+    });
+    const normalizedView = normalizeDomeggookPrivateOrderView(rawView);
+    const invoiceNumber = String(normalizedView?.delivery?.code || "").trim();
+    if (!invoiceNumber) {
+      return res.status(400).json({
+        ok: false,
+        error: "invoice_not_ready",
+        result: {
+          domeggookOrderNo,
+          orderView: normalizedView,
+        },
+      });
+    }
+
+    const { accessKey, secretKey, vendorId, missing } = validateCoupangCredentials(settings);
+    if (missing.length > 0) {
+      return res.status(400).json({ ok: false, error: "missing_keys", missing });
+    }
+
+    const sheet =
+      orderRaw?.sheet && typeof orderRaw.sheet === "object" ? orderRaw.sheet : {};
+    const item =
+      orderRaw?.item && typeof orderRaw.item === "object" ? orderRaw.item : {};
+    const shipmentBoxId = String(sheet?.shipmentBoxId || orderRecord.externalId || "").trim();
+    const coupangOrderId = String(sheet?.orderId || "").trim();
+    const vendorItemId = String(item?.vendorItemId || orderRecord.externalSubId || "").trim();
+    const deliveryCompanyCode = String(
+      req.body?.deliveryCompanyCode || settings?.coupangDeliveryCompanyCode || "",
+    ).trim();
+    if (!shipmentBoxId || !coupangOrderId || !vendorItemId) {
+      return res.status(400).json({ ok: false, error: "missing_coupang_order_keys" });
+    }
+    if (!deliveryCompanyCode) {
+      return res.status(400).json({
+        ok: false,
+        error: "missing_coupang_delivery_company_code",
+        result: {
+          domeggookOrderNo,
+          orderView: normalizedView,
+        },
+      });
+    }
+
+    const uploadRes = await uploadOrderInvoices({
+      vendorId,
+      items: [
+        {
+          shipmentBoxId,
+          orderId: coupangOrderId,
+          vendorItemId,
+          deliveryCompanyCode,
+          invoiceNumber,
+        },
+      ],
+      accessKey,
+      secretKey,
+    });
+    const body = parseCoupangBody(uploadRes.body);
+    const ok = uploadRes.status === 200 && body && isCoupangSuccessCode(body?.code);
+    if (!ok) {
+      return res.status(uploadRes.status || 502).json({
+        ok: false,
+        error: "coupang_invoice_upload_failed",
+        result: {
+          domeggookOrderNo,
+          orderView: normalizedView,
+          invoiceNumber,
+          deliveryCompanyCode,
+          body,
+        },
+      });
+    }
+
+    const responseList = Array.isArray(body?.data?.responseList) ? body.data.responseList : [];
+    const successfulIds = responseList
+      .filter((x) => x?.succeed === true)
+      .map((x) => String(x?.shipmentBoxId ?? "").trim())
+      .filter(Boolean);
+    const sync = await syncShipmentBoxesFromCoupang({
+      userId: req.user.id,
+      settings,
+      shipmentBoxIds: successfulIds,
+      statusFallback: "DELIVERING",
+    });
+
+    await mergeOrderDataById(req.user.id, orderId, {
+      supplier: {
+        ...(supplierInfo && typeof supplierInfo === "object" ? supplierInfo : {}),
+        domeggook: {
+          ...(domeggookInfo && typeof domeggookInfo === "object" ? domeggookInfo : {}),
+          orderNo: domeggookOrderNo,
+          invoiceNumber,
+          deliveryCompanyCode,
+          deliveryCompany: String(normalizedView?.delivery?.company || "").trim(),
+          deliveryCompanyName: String(normalizedView?.delivery?.companyName || "").trim(),
+          invoiceSyncedAt: new Date().toISOString(),
+        },
+      },
+    });
+
+    return res.json({
+      ok: true,
+      result: {
+        domeggookOrderNo,
+        orderView: normalizedView,
+        invoiceNumber,
+        deliveryCompanyCode,
+        responseList,
+        synced: Number(sync?.synced || 0),
+        syncItems: Array.isArray(sync?.items) ? sync.items : [],
+      },
+    });
   } catch (e) {
     return res.status(500).json({
       ok: false,

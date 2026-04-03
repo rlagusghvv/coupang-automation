@@ -28,6 +28,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
   Map<String, dynamic>? _lastAck;
   Map<String, dynamic>? _lastInvoiceUpload;
   Map<String, dynamic>? _lastDomeggookCreate;
+  Map<String, dynamic>? _lastDomeggookInvoiceSync;
   Map<String, dynamic>? _domeggookPreflight;
 
   Map<String, dynamic> get _raw =>
@@ -238,12 +239,86 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
     }
   }
 
+  Future<void> _syncDomeggookInvoice() async {
+    final orderId = widget.order['id'];
+    if (orderId == null) {
+      setState(() => _error = '주문 ID가 없어 송장 자동 반영을 진행할 수 없습니다.');
+      return;
+    }
+
+    setState(() {
+      _loading = true;
+      _error = null;
+      _lastDomeggookInvoiceSync = null;
+    });
+
+    try {
+      final json =
+          await widget.api.postJson('/api/orders/domeggook/sync-invoice', {
+        'orderId': orderId,
+      });
+      final result = (json['result'] as Map?)?.cast<String, dynamic>() ?? {};
+      setState(() => _lastDomeggookInvoiceSync = result);
+      widget.onChanged?.call();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              '도매꾹 송장 ${result['invoiceNumber'] ?? '-'} 를 쿠팡에 반영했습니다.',
+            ),
+          ),
+        );
+      }
+    } catch (e) {
+      setState(() => _error = e.toString());
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
   Widget _resultCard(
     BuildContext context, {
     required String title,
     required Map<String, dynamic>? result,
   }) {
     if (result == null) return const SizedBox.shrink();
+    final invoiceSync =
+        (result['orderView'] as Map?)?.cast<String, dynamic>() ??
+            const <String, dynamic>{};
+    if (invoiceSync.isNotEmpty && result['invoiceNumber'] != null) {
+      final delivery =
+          (invoiceSync['delivery'] as Map?)?.cast<String, dynamic>() ??
+              const <String, dynamic>{};
+      return Padding(
+        padding: const EdgeInsets.only(top: 12),
+        child: AppCard(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              SectionHeader(title),
+              const SizedBox(height: 10),
+              KvRow(
+                  k: 'orderNo',
+                  v: (result['domeggookOrderNo'] ?? '-').toString()),
+              KvRow(
+                  k: 'invoiceNumber',
+                  v: (result['invoiceNumber'] ?? '-').toString()),
+              KvRow(
+                  k: 'deliveryCompanyCode',
+                  v: (result['deliveryCompanyCode'] ?? '-').toString()),
+              KvRow(
+                  k: 'deliveryCompany',
+                  v: (delivery['companyName'] ?? delivery['company'] ?? '-')
+                      .toString()),
+              KvRow(
+                  k: 'status',
+                  v: (invoiceSync['statusMode'] ?? invoiceSync['status'] ?? '-')
+                      .toString()),
+            ],
+          ),
+        ),
+      );
+    }
     final orderCreate =
         (result['orderCreate'] as Map?)?.cast<String, dynamic>() ??
             const <String, dynamic>{};
@@ -532,7 +607,30 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                   ),
                   const Divider(height: 28),
                   Text(
-                    '3. 송장 업로드',
+                    '3. 송장 자동 반영',
+                    style: TextStyle(
+                      fontWeight: FontWeight.w900,
+                      color: Theme.of(context).colorScheme.onSurface,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    '도매꾹 주문번호가 저장돼 있으면 송장번호를 조회해 쿠팡에 바로 반영합니다.',
+                    style: TextStyle(
+                      color: Theme.of(context)
+                          .colorScheme
+                          .onSurface
+                          .withValues(alpha: 0.68),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  FilledButton.tonal(
+                    onPressed: _loading ? null : _syncDomeggookInvoice,
+                    child: const Text('도매꾹 송장 가져와 쿠팡 반영'),
+                  ),
+                  const Divider(height: 28),
+                  Text(
+                    '4. 수동 송장 업로드',
                     style: TextStyle(
                       fontWeight: FontWeight.w900,
                       color: Theme.of(context).colorScheme.onSurface,
@@ -600,6 +698,9 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                 title: '송장 업로드 결과', result: _lastInvoiceUpload),
             _resultCard(context,
                 title: '도매꾹 자동 주문 결과', result: _lastDomeggookCreate),
+            _resultCard(context,
+                title: '도매꾹 송장 자동 반영 결과',
+                result: _lastDomeggookInvoiceSync),
           ],
         ),
       ),

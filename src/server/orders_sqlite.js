@@ -104,6 +104,26 @@ export async function addOrder({ userId, source, status = "paid", order, externa
 
     const eid = externalId == null ? null : String(externalId);
     const esid = externalSubId == null ? '' : String(externalSubId);
+    let mergedOrder = order || {};
+    if (eid != null) {
+      const existing = await dbGet(
+        db,
+        `SELECT order_json
+         FROM orders
+         WHERE user_id = ? AND source = ? AND external_id = ? AND external_sub_id = ?
+         LIMIT 1`,
+        [userId, String(source), eid, esid],
+      );
+      if (existing?.order_json) {
+        try {
+          const prevOrder = JSON.parse(existing.order_json || "{}");
+          mergedOrder = {
+            ...(prevOrder && typeof prevOrder === "object" ? prevOrder : {}),
+            ...(order && typeof order === "object" ? order : {}),
+          };
+        } catch {}
+      }
+    }
 
     await dbRun(
       db,
@@ -119,7 +139,7 @@ export async function addOrder({ userId, source, status = "paid", order, externa
         String(status || "paid"),
         eid,
         esid,
-        JSON.stringify(order || {}),
+        JSON.stringify(mergedOrder || {}),
         now,
         now,
       ],
@@ -204,6 +224,43 @@ export async function getOrderById(userId, id) {
       externalSubId: row.external_sub_id,
       order,
     };
+  } finally {
+    db.close();
+  }
+}
+
+export async function mergeOrderDataById(userId, id, patch = {}) {
+  if (!userId) throw new Error("userId required");
+  const nid = Number(id);
+  if (!Number.isFinite(nid) || nid <= 0) throw new Error("invalid id");
+  const db = openDb();
+  try {
+    await ensureOrdersSchema(db);
+    const row = await dbGet(
+      db,
+      `SELECT order_json
+       FROM orders
+       WHERE user_id = ? AND id = ?
+       LIMIT 1`,
+      [userId, Math.floor(nid)],
+    );
+    if (!row) return { ok: false, reason: "not_found" };
+    let prev = {};
+    try {
+      prev = JSON.parse(row.order_json || "{}");
+    } catch {}
+    const next = {
+      ...(prev && typeof prev === "object" ? prev : {}),
+      ...(patch && typeof patch === "object" ? patch : {}),
+    };
+    await dbRun(
+      db,
+      `UPDATE orders
+       SET order_json = ?, updated_at = ?
+       WHERE user_id = ? AND id = ?`,
+      [JSON.stringify(next || {}), new Date().toISOString(), userId, Math.floor(nid)],
+    );
+    return { ok: true, order: next };
   } finally {
     db.close();
   }

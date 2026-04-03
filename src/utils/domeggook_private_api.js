@@ -157,6 +157,35 @@ export async function domeggookPrivateApiGetOrderList({
   return parseResponse(response.text, "domeggook_private_getOrderList");
 }
 
+export async function domeggookPrivateApiGetOrderView({
+  apiKey,
+  memberId,
+  sessionId,
+  orderNo,
+  orderUid,
+  orderFor = "buy",
+  timeoutMs = 20_000,
+} = {}) {
+  const url = toUrl(API_ENDPOINT, {
+    ver: "4.0",
+    mode: "getOrderView",
+    aid: String(apiKey || "").trim(),
+    id: String(memberId || "").trim(),
+    sId: String(sessionId || "").trim(),
+    for: String(orderFor || "buy").trim() || "buy",
+    no: String(orderNo || "").trim() || undefined,
+    uid: String(orderUid || "").trim() || undefined,
+    om: "json",
+  });
+  const response = await fetchText(url, { timeoutMs });
+  if (!response.ok || /<html|<!doctype/i.test(response.text || "")) {
+    const error = new Error("domeggook_private_getOrderView_failed");
+    error.details = String(response.text || "").slice(0, 600);
+    throw error;
+  }
+  return parseResponse(response.text, "domeggook_private_getOrderView");
+}
+
 export async function domeggookPrivateApiGetMyAsset({
   apiKey,
   memberId,
@@ -275,6 +304,29 @@ export function normalizeDomeggookPrivateOrderList(raw = {}) {
       numberOfPages: Number(header.numberOfPages || 0) || 0,
     },
     items,
+    raw,
+  };
+}
+
+export function normalizeDomeggookPrivateOrderView(raw = {}) {
+  const items = raw?.items && typeof raw.items === "object" ? raw.items : {};
+  const delivery = items?.delivery && typeof items.delivery === "object" ? items.delivery : {};
+  return {
+    orderNo: String(items?.orderNo || "").trim(),
+    orderUid: String(items?.orderUid || "").trim(),
+    status: String(items?.status || "").trim(),
+    statusMode: String(items?.statusMode || "").trim(),
+    itemNo: String(items?.item?.no || "").trim(),
+    itemTitle: String(items?.item?.title || "").trim(),
+    delivery: {
+      company: String(delivery?.company || "").trim(),
+      companyName: String(delivery?.companyName || "").trim(),
+      code: String(delivery?.code || "").trim(),
+      method: String(delivery?.method || "").trim(),
+      who: String(delivery?.who || "").trim(),
+      fee: Number(delivery?.fee || 0) || 0,
+      dateStart: Number(delivery?.dateStart || 0) || 0,
+    },
     raw,
   };
 }
