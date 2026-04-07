@@ -16,6 +16,23 @@ function pickPriceFromText(allText) {
   return Number(m[1].replace(/,/g, ""));
 }
 
+function pickPrimaryNumericAmount(values) {
+  const nums = Array.from(values || [])
+    .map((value) => Number(value))
+    .filter((n) => Number.isFinite(n) && n > 0);
+  if (nums.length === 0) return null;
+
+  const usable = nums.filter((n) => n >= 1000);
+  const pool = usable.length > 0 ? usable : nums;
+  return Math.min(...pool);
+}
+
+function pickPrimaryKrwAmount(text) {
+  const amounts = Array.from(String(text || "").matchAll(/(\d[\d,]*)\s*원/g))
+    .map((m) => Number(String(m[1] || "").replace(/,/g, "")));
+  return pickPrimaryNumericAmount(amounts);
+}
+
 function parseShippingFeeFromText(allText) {
   const t = String(allText || "")
     .replace(/<[^>]*>/g, " ")
@@ -326,12 +343,11 @@ function parsePriceNumber(value) {
   if (Number.isFinite(Number(value))) return Number(value);
   const text = String(value || "");
   if (!text) return null;
+  const krwAmount = pickPrimaryKrwAmount(text);
+  if (Number.isFinite(Number(krwAmount))) return Number(krwAmount);
   const nums = text.match(/(\d[\d,]{1,})/g) || [];
-  const parsed = nums
-    .map((x) => Number(String(x).replace(/,/g, "")))
-    .filter((n) => Number.isFinite(n) && n > 0);
-  if (parsed.length === 0) return null;
-  return Math.min(...parsed);
+  const parsed = nums.map((x) => Number(String(x).replace(/,/g, "")));
+  return pickPrimaryNumericAmount(parsed);
 }
 
 function collectOpenApiSignals(node, state, parentKey = "", baseUrl = "") {
@@ -723,11 +739,7 @@ async function loadOpenApiItemViewCandidate(itemUrl, opts = {}) {
     if (!imageUrl && detailImages.length > 0) {
       imageUrl = detailImages[0];
     }
-    const price = (() => {
-      const nums = state.prices.filter((n) => Number.isFinite(n) && n > 0);
-      if (nums.length === 0) return null;
-      return Math.min(...nums);
-    })();
+    const price = pickPrimaryNumericAmount(state.prices);
     const shippingSignalText = [
       String(detailBundle?.mergedHtml || ""),
       String(detailBundle?.deliHtml || ""),
@@ -1869,6 +1881,7 @@ export async function parseProductFromDomaeqq(url, opts = {}) {
 
     // ✅ 도매꾹 단가: .lItemPrice 우선
     const priceText =
+      (await page.locator(".lDiscountAmt").first().textContent().catch(() => null))?.trim() ||
       (await page.locator(".lItemPrice").first().textContent().catch(() => null))?.trim() ||
       (await page.locator("text=/\\d[\\d,]*\\s*원/").first().textContent().catch(() => null))?.trim();
     const bodyText = await page.locator("body").innerText().catch(() => "");
@@ -1963,14 +1976,7 @@ export async function parseProductFromDomaeqq(url, opts = {}) {
       Number(qtyMinQty) > 0 &&
       Number(qtyMinQty) <= 5;
 
-    const priceFromPriceText = (() => {
-      const nums = (String(priceText || "").match(/(\d[\d,]*)/g) || [])
-        .map((x) => Number(String(x).replace(/,/g, "")))
-        .filter((n) => Number.isFinite(n) && n > 0);
-      if (nums.length === 0) return null;
-      // Range text like "3,500원 ~ 3,600원" should not become 35003600.
-      return Math.min(...nums);
-    })();
+    const priceFromPriceText = pickPrimaryKrwAmount(priceText);
 
     const openApiPrice = Number.isFinite(Number(openApiItemView?.price))
       ? Number(openApiItemView.price)
