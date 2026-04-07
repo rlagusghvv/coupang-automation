@@ -5498,6 +5498,22 @@ app.get("/api/orders/missing", authRequired, (req, res) => {
   }
 });
 
+app.get("/api/orders/:id", authRequired, async (req, res) => {
+  try {
+    const id = Number(req.params?.id);
+    if (!Number.isFinite(id) || id <= 0) {
+      return res.status(400).json({ ok: false, error: "invalid_order_id" });
+    }
+    const order = await getOrderById(req.user.id, Math.floor(id));
+    if (!order) {
+      return res.status(404).json({ ok: false, error: "order_not_found" });
+    }
+    return res.json({ ok: true, order });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
 // ✅ 도매매 엑셀 업로드
 app.post("/api/orders/upload", authRequired, async (req, res) => {
   try {

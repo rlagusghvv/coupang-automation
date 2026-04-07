@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:couplus_mobile/api/api_client.dart';
 import 'package:couplus_mobile/ui/widgets.dart';
 import 'package:flutter/material.dart';
@@ -12,7 +14,7 @@ class OrderDetailScreen extends StatefulWidget {
 
   final Map<String, dynamic> order;
   final ApiClient api;
-  final VoidCallback? onChanged;
+  final Future<void> Function()? onChanged;
 
   @override
   State<OrderDetailScreen> createState() => _OrderDetailScreenState();
@@ -25,6 +27,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
   bool _loading = false;
   bool _checkingDomeggookPreflight = false;
   String? _error;
+  late Map<String, dynamic> _order;
   Map<String, dynamic>? _lastAck;
   Map<String, dynamic>? _lastInvoiceUpload;
   Map<String, dynamic>? _lastDomeggookCreate;
@@ -32,7 +35,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
   Map<String, dynamic>? _domeggookPreflight;
 
   Map<String, dynamic> get _raw =>
-      (widget.order['order'] as Map?)?.cast<String, dynamic>() ?? {};
+      (_order['order'] as Map?)?.cast<String, dynamic>() ?? {};
   Map<String, dynamic> get _sheet =>
       (_raw['sheet'] as Map?)?.cast<String, dynamic>() ?? {};
   Map<String, dynamic> get _item =>
@@ -40,12 +43,12 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
   Map<String, dynamic> get _receiver =>
       (_sheet['receiver'] as Map?)?.cast<String, dynamic>() ?? {};
 
-  String get _status => (widget.order['status'] ?? '').toString();
+  String get _status => (_order['status'] ?? '').toString();
   String get _shipmentBoxId =>
-      (_sheet['shipmentBoxId'] ?? widget.order['externalId'] ?? '').toString();
+      (_sheet['shipmentBoxId'] ?? _order['externalId'] ?? '').toString();
   String get _orderId => (_sheet['orderId'] ?? '').toString();
   String get _vendorItemId =>
-      (_item['vendorItemId'] ?? widget.order['externalSubId'] ?? '').toString();
+      (_item['vendorItemId'] ?? _order['externalSubId'] ?? '').toString();
 
   bool get _canAcknowledge =>
       _shipmentBoxId.isNotEmpty && _status.trim().toUpperCase() == 'ACCEPT';
@@ -59,15 +62,34 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
     final preflight = _domeggookPreflight;
     if (preflight == null) return !_checkingDomeggookPreflight;
     final canOrder = preflight['canOrder'];
-    return canOrder != false;
+    final code = (preflight['error'] ?? '').toString().trim();
+    if (canOrder == false) return false;
+    if (code == 'supplier_mapping_missing' ||
+        code == 'minimum_order_qty_gt_1' ||
+        code == 'missing_domeggook_private_credentials') {
+      return false;
+    }
+    return true;
   }
 
   @override
   void initState() {
     super.initState();
+    _order = _cloneOrder(widget.order);
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      _reloadOrder(silent: true);
       _loadDomeggookPreflight();
     });
+  }
+
+  @override
+  void didUpdateWidget(covariant OrderDetailScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final oldId = oldWidget.order['id'];
+    final nextId = widget.order['id'];
+    if ('$oldId' != '$nextId') {
+      _order = _cloneOrder(widget.order);
+    }
   }
 
   @override
@@ -75,6 +97,82 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
     _deliveryCompanyCode.dispose();
     _invoiceNumber.dispose();
     super.dispose();
+  }
+
+  Map<String, dynamic> _cloneOrder(Map<String, dynamic> source) {
+    try {
+      return (jsonDecode(jsonEncode(source)) as Map).cast<String, dynamic>();
+    } catch (_) {
+      return Map<String, dynamic>.from(source);
+    }
+  }
+
+  Map<String, dynamic>? _extractErrorPayload(Object error) {
+    if (error is! ApiException) return null;
+    final raw = (error.details ?? '').trim();
+    if (raw.isEmpty) return null;
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is Map) return decoded.cast<String, dynamic>();
+    } catch (_) {}
+    return null;
+  }
+
+  String _friendlyOrderError(Object error, {Map<String, dynamic>? payload}) {
+    final body =
+        payload ?? _extractErrorPayload(error) ?? const <String, dynamic>{};
+    final topError = (body['error'] ?? '').toString().trim();
+    final result =
+        (body['result'] as Map?)?.cast<String, dynamic>() ??
+        const <String, dynamic>{};
+    final resultError = (result['error'] ?? '').toString().trim();
+    final code = resultError.isNotEmpty ? resultError : topError;
+    switch (code) {
+      case 'too_less_emoney_precheck':
+        final asset =
+            (result['asset'] as Map?)?.cast<String, dynamic>() ??
+            const <String, dynamic>{};
+        final estimate =
+            (result['estimate'] as Map?)?.cast<String, dynamic>() ??
+            const <String, dynamic>{};
+        return '현금성 이머니가 부족합니다. 현재 ${_formatWon(asset['emoneyCash'])}, 예상 차감액 ${_formatWon(estimate['total'])} 입니다.';
+      case 'supplier_mapping_missing':
+        return '이 주문은 공급처 상품번호/옵션코드 매핑이 없어 도매꾹 자동 주문을 만들 수 없습니다.';
+      case 'minimum_order_qty_gt_1':
+        final minQty = result['minimumOrderQty'];
+        return '공급처 최소 주문수량이 ${minQty ?? '-'}개라 자동 주문을 막았습니다.';
+      case 'missing_domeggook_private_credentials':
+        return '도매꾹 Private API 키, ID, 비밀번호를 먼저 입력해 주세요.';
+      case 'order_not_found':
+        return '주문 정보를 다시 불러와 주세요.';
+      default:
+        return error.toString();
+    }
+  }
+
+  Future<void> _reloadOrder({bool silent = false}) async {
+    final id = _order['id'];
+    if (id == null) return;
+    if (!silent) {
+      setState(() {
+        _loading = true;
+        _error = null;
+      });
+    }
+    try {
+      final json = await widget.api.getJson('/api/orders/$id');
+      final next = (json['order'] as Map?)?.cast<String, dynamic>();
+      if (next == null || !mounted) return;
+      setState(() => _order = _cloneOrder(next));
+    } catch (e) {
+      if (!silent && mounted) {
+        setState(() => _error = e.toString());
+      }
+    } finally {
+      if (!silent && mounted) {
+        setState(() => _loading = false);
+      }
+    }
   }
 
   String _formatWon(dynamic value) {
@@ -91,26 +189,28 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
   }
 
   Future<void> _loadDomeggookPreflight() async {
-    final orderId = widget.order['id'];
+    final orderId = _order['id'];
     if (orderId == null) return;
     setState(() {
       _checkingDomeggookPreflight = true;
       _error = null;
     });
     try {
-      final json = await widget.api.postJson('/api/orders/domeggook/preflight', {
-        'orderId': orderId,
-        'receipt': 0,
-      });
+      final json = await widget.api.postJson(
+        '/api/orders/domeggook/preflight',
+        {'orderId': orderId, 'receipt': 0},
+      );
       final result = (json['result'] as Map?)?.cast<String, dynamic>() ?? {};
       if (mounted) {
         setState(() => _domeggookPreflight = result);
       }
     } catch (e) {
+      final payload = _extractErrorPayload(e);
+      final result = (payload?['result'] as Map?)?.cast<String, dynamic>();
       if (mounted) {
         setState(() {
-          _domeggookPreflight = null;
-          _error = e.toString();
+          _domeggookPreflight = result;
+          _error = _friendlyOrderError(e, payload: payload);
         });
       }
     } finally {
@@ -131,17 +231,18 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
     });
 
     try {
-      final json =
-          await widget.api.postJson('/api/orders/coupang/acknowledge', {
-        'shipmentBoxId': _shipmentBoxId,
-      });
+      final json = await widget.api.postJson(
+        '/api/orders/coupang/acknowledge',
+        {'shipmentBoxId': _shipmentBoxId},
+      );
       final result = (json['result'] as Map?)?.cast<String, dynamic>() ?? {};
       setState(() => _lastAck = result);
-      widget.onChanged?.call();
+      await _reloadOrder(silent: true);
+      await widget.onChanged?.call();
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('쿠팡 발주확인 처리를 요청했습니다.')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('쿠팡 발주확인 처리를 요청했습니다.')));
       }
     } catch (e) {
       setState(() => _error = e.toString());
@@ -175,16 +276,17 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
             'vendorItemId': _vendorItemId,
             'deliveryCompanyCode': _deliveryCompanyCode.text.trim(),
             'invoiceNumber': _invoiceNumber.text.trim(),
-          }
+          },
         ],
       });
       final result = (json['result'] as Map?)?.cast<String, dynamic>() ?? {};
       setState(() => _lastInvoiceUpload = result);
-      widget.onChanged?.call();
+      await _reloadOrder(silent: true);
+      await widget.onChanged?.call();
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('쿠팡 송장 업로드를 요청했습니다.')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('쿠팡 송장 업로드를 요청했습니다.')));
       }
     } catch (e) {
       setState(() => _error = e.toString());
@@ -194,7 +296,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
   }
 
   Future<void> _createDomeggookOrder() async {
-    final orderId = widget.order['id'];
+    final orderId = _order['id'];
     if (orderId == null) {
       setState(() => _error = '주문 ID가 없어 도매꾹 자동 주문을 진행할 수 없습니다.');
       return;
@@ -216,6 +318,8 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
         _lastDomeggookCreate = result;
         _domeggookPreflight = result;
       });
+      await _reloadOrder(silent: true);
+      await widget.onChanged?.call();
       if (mounted) {
         final orders = (result['orderCreate'] as Map?)?['orders'] as List?;
         final orderNo = orders != null && orders.isNotEmpty
@@ -232,7 +336,14 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
         );
       }
     } catch (e) {
-      setState(() => _error = e.toString());
+      final payload = _extractErrorPayload(e);
+      final result = (payload?['result'] as Map?)?.cast<String, dynamic>();
+      if (mounted) {
+        setState(() {
+          _domeggookPreflight = result;
+          _error = _friendlyOrderError(e, payload: payload);
+        });
+      }
     } finally {
       await _loadDomeggookPreflight();
       if (mounted) setState(() => _loading = false);
@@ -240,7 +351,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
   }
 
   Future<void> _syncDomeggookInvoice() async {
-    final orderId = widget.order['id'];
+    final orderId = _order['id'];
     if (orderId == null) {
       setState(() => _error = '주문 ID가 없어 송장 자동 반영을 진행할 수 없습니다.');
       return;
@@ -253,13 +364,14 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
     });
 
     try {
-      final json =
-          await widget.api.postJson('/api/orders/domeggook/sync-invoice', {
-        'orderId': orderId,
-      });
+      final json = await widget.api.postJson(
+        '/api/orders/domeggook/sync-invoice',
+        {'orderId': orderId},
+      );
       final result = (json['result'] as Map?)?.cast<String, dynamic>() ?? {};
       setState(() => _lastDomeggookInvoiceSync = result);
-      widget.onChanged?.call();
+      await _reloadOrder(silent: true);
+      await widget.onChanged?.call();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -276,6 +388,37 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
     }
   }
 
+  String _preflightHint(Map<String, dynamic>? preflight) {
+    final data = preflight ?? const <String, dynamic>{};
+    final code = (data['error'] ?? data['canOrderReason'] ?? '')
+        .toString()
+        .trim();
+    switch (code) {
+      case 'too_less_emoney_precheck':
+      case 'too_less_emoney':
+        final asset =
+            (data['asset'] as Map?)?.cast<String, dynamic>() ??
+            const <String, dynamic>{};
+        final estimate =
+            (data['estimate'] as Map?)?.cast<String, dynamic>() ??
+            const <String, dynamic>{};
+        return '현금성 이머니 ${_formatWon(asset['emoneyCash'])}, 예상 차감액 ${_formatWon(estimate['total'])} 입니다. 충전 후 다시 확인해 주세요.';
+      case 'supplier_mapping_missing':
+        return '공급처 상품번호/옵션코드 매핑이 없어 자동 주문을 만들 수 없습니다.';
+      case 'minimum_order_qty_gt_1':
+        final minQty = data['minimumOrderQty'];
+        return '공급처 최소 주문수량이 ${minQty ?? '-'}개라 자동 주문을 막았습니다.';
+      case 'missing_domeggook_private_credentials':
+        return '도매꾹 Private API 자격정보를 먼저 입력해 주세요.';
+      case 'estimate_unavailable':
+        return '예상 차감액 계산이 안 돼 잔액만 확인된 상태입니다.';
+      case 'enough_emoney':
+        return '현재 잔액으로 자동 주문 가능한 상태입니다.';
+      default:
+        return '';
+    }
+  }
+
   Widget _resultCard(
     BuildContext context, {
     required String title,
@@ -284,11 +427,11 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
     if (result == null) return const SizedBox.shrink();
     final invoiceSync =
         (result['orderView'] as Map?)?.cast<String, dynamic>() ??
-            const <String, dynamic>{};
+        const <String, dynamic>{};
     if (invoiceSync.isNotEmpty && result['invoiceNumber'] != null) {
       final delivery =
           (invoiceSync['delivery'] as Map?)?.cast<String, dynamic>() ??
-              const <String, dynamic>{};
+          const <String, dynamic>{};
       return Padding(
         padding: const EdgeInsets.only(top: 12),
         child: AppCard(
@@ -298,22 +441,27 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
               SectionHeader(title),
               const SizedBox(height: 10),
               KvRow(
-                  k: 'orderNo',
-                  v: (result['domeggookOrderNo'] ?? '-').toString()),
+                k: 'orderNo',
+                v: (result['domeggookOrderNo'] ?? '-').toString(),
+              ),
               KvRow(
-                  k: 'invoiceNumber',
-                  v: (result['invoiceNumber'] ?? '-').toString()),
+                k: 'invoiceNumber',
+                v: (result['invoiceNumber'] ?? '-').toString(),
+              ),
               KvRow(
-                  k: 'deliveryCompanyCode',
-                  v: (result['deliveryCompanyCode'] ?? '-').toString()),
+                k: 'deliveryCompanyCode',
+                v: (result['deliveryCompanyCode'] ?? '-').toString(),
+              ),
               KvRow(
-                  k: 'deliveryCompany',
-                  v: (delivery['companyName'] ?? delivery['company'] ?? '-')
-                      .toString()),
+                k: 'deliveryCompany',
+                v: (delivery['companyName'] ?? delivery['company'] ?? '-')
+                    .toString(),
+              ),
               KvRow(
-                  k: 'status',
-                  v: (invoiceSync['statusMode'] ?? invoiceSync['status'] ?? '-')
-                      .toString()),
+                k: 'status',
+                v: (invoiceSync['statusMode'] ?? invoiceSync['status'] ?? '-')
+                    .toString(),
+              ),
             ],
           ),
         ),
@@ -321,7 +469,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
     }
     final orderCreate =
         (result['orderCreate'] as Map?)?.cast<String, dynamic>() ??
-            const <String, dynamic>{};
+        const <String, dynamic>{};
     if (orderCreate.isNotEmpty) {
       final orders = (orderCreate['orders'] as List?) ?? const [];
       final first = orders.isNotEmpty
@@ -329,10 +477,10 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
           : const <String, dynamic>{};
       final mapping =
           (result['mapping'] as Map?)?.cast<String, dynamic>() ??
-              const <String, dynamic>{};
+          const <String, dynamic>{};
       final payload =
           (result['payloadPreview'] as Map?)?.cast<String, dynamic>() ??
-              const <String, dynamic>{};
+          const <String, dynamic>{};
       return Padding(
         padding: const EdgeInsets.only(top: 12),
         child: AppCard(
@@ -344,11 +492,13 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
               KvRow(k: 'result', v: (orderCreate['result'] ?? '-').toString()),
               KvRow(k: 'itemNo', v: (mapping['itemNo'] ?? '-').toString()),
               KvRow(
-                  k: 'optionCode',
-                  v: (mapping['optionCode'] ?? '-').toString()),
+                k: 'optionCode',
+                v: (mapping['optionCode'] ?? '-').toString(),
+              ),
               KvRow(
-                  k: 'shippingMethod',
-                  v: (mapping['shippingMethodCode'] ?? '-').toString()),
+                k: 'shippingMethod',
+                v: (mapping['shippingMethodCode'] ?? '-').toString(),
+              ),
               if (first.isNotEmpty) ...[
                 KvRow(k: 'orderNo', v: (first['orderNo'] ?? '-').toString()),
                 KvRow(k: '수령인', v: (first['getName'] ?? '-').toString()),
@@ -373,22 +523,27 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
             SectionHeader(title),
             const SizedBox(height: 10),
             KvRow(
-                k: 'responseCode',
-                v: (result['responseCode'] ?? '-').toString()),
+              k: 'responseCode',
+              v: (result['responseCode'] ?? '-').toString(),
+            ),
             KvRow(
-                k: 'responseMessage',
-                v: (result['responseMessage'] ?? '-').toString()),
+              k: 'responseMessage',
+              v: (result['responseMessage'] ?? '-').toString(),
+            ),
             KvRow(k: 'synced', v: (result['synced'] ?? '-').toString()),
             if (first.isNotEmpty) ...[
               KvRow(
-                  k: 'first.resultCode',
-                  v: (first['resultCode'] ?? '-').toString()),
+                k: 'first.resultCode',
+                v: (first['resultCode'] ?? '-').toString(),
+              ),
               KvRow(
-                  k: 'first.resultMessage',
-                  v: (first['resultMessage'] ?? '-').toString()),
+                k: 'first.resultMessage',
+                v: (first['resultMessage'] ?? '-').toString(),
+              ),
               KvRow(
-                  k: 'first.retryRequired',
-                  v: (first['retryRequired'] ?? '-').toString()),
+                k: 'first.retryRequired',
+                v: (first['retryRequired'] ?? '-').toString(),
+              ),
             ],
           ],
         ),
@@ -398,7 +553,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final at = (widget.order['at'] ?? '').toString();
+    final at = (_order['at'] ?? '').toString();
     final name = (_receiver['name'] ?? '').toString();
     final postCode = (_receiver['postCode'] ?? '').toString();
     final addr1 = (_receiver['addr1'] ?? '').toString();
@@ -410,6 +565,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
         .toString();
     final qty = (_item['shippingCount'] ?? '').toString();
     final statusUpper = _status.trim().toUpperCase();
+    final preflightHint = _preflightHint(_domeggookPreflight);
     final statusColor = switch (statusUpper) {
       'ACCEPT' => const Color(0xFFE67700),
       'INSTRUCT' => const Color(0xFF1971C2),
@@ -467,10 +623,9 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                   Text(
                     nextAction,
                     style: TextStyle(
-                      color: Theme.of(context)
-                          .colorScheme
-                          .onSurface
-                          .withValues(alpha: 0.72),
+                      color: Theme.of(
+                        context,
+                      ).colorScheme.onSurface.withValues(alpha: 0.72),
                     ),
                   ),
                   const SizedBox(height: 10),
@@ -513,16 +668,16 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                         ? '쿠팡에서 이 주문을 실제 처리 대상으로 넘깁니다.'
                         : '현재 상태에서는 발주확인을 다시 누를 필요가 없습니다.',
                     style: TextStyle(
-                      color: Theme.of(context)
-                          .colorScheme
-                          .onSurface
-                          .withValues(alpha: 0.68),
+                      color: Theme.of(
+                        context,
+                      ).colorScheme.onSurface.withValues(alpha: 0.68),
                     ),
                   ),
                   const SizedBox(height: 10),
                   FilledButton(
-                    onPressed:
-                        _loading || !_canAcknowledge ? null : _acknowledge,
+                    onPressed: _loading || !_canAcknowledge
+                        ? null
+                        : _acknowledge,
                     child: const Text('발주확인 처리'),
                   ),
                   const Divider(height: 28),
@@ -537,10 +692,9 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                   Text(
                     '공급처 상품번호와 옵션코드가 매핑된 주문이면 바로 도매꾹 구매주문을 생성합니다. e-money가 차감될 수 있습니다.',
                     style: TextStyle(
-                      color: Theme.of(context)
-                          .colorScheme
-                          .onSurface
-                          .withValues(alpha: 0.68),
+                      color: Theme.of(
+                        context,
+                      ).colorScheme.onSurface.withValues(alpha: 0.68),
                     ),
                   ),
                   const SizedBox(height: 10),
@@ -548,17 +702,24 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                     Text(
                       '이머니 잔액과 예상 차감액을 확인하는 중입니다.',
                       style: TextStyle(
-                        color: Theme.of(context)
-                            .colorScheme
-                            .onSurface
-                            .withValues(alpha: 0.68),
+                        color: Theme.of(
+                          context,
+                        ).colorScheme.onSurface.withValues(alpha: 0.68),
                       ),
                     )
                   else if (_domeggookPreflight != null) ...[
                     KvRow(
+                      k: '총 이머니',
+                      v: _formatWon(
+                        ((_domeggookPreflight?['asset']
+                            as Map?)?['emoneyTotal']),
+                      ),
+                    ),
+                    KvRow(
                       k: '현금성 이머니',
                       v: _formatWon(
-                        ((_domeggookPreflight?['asset'] as Map?)?['emoneyCash']),
+                        ((_domeggookPreflight?['asset']
+                            as Map?)?['emoneyCash']),
                       ),
                     ),
                     KvRow(
@@ -572,14 +733,38 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                       v: (_domeggookPreflight?['canOrder'] == false)
                           ? '불가'
                           : ((_domeggookPreflight?['canOrder'] == true)
-                              ? '가능'
-                              : '잔액만 확인됨'),
+                                ? '가능'
+                                : '잔액만 확인됨'),
                     ),
-                    if (_domeggookPreflight?['canOrder'] == false)
+                    if (((_domeggookPreflight?['mapping'] as Map?)
+                            ?.isNotEmpty ??
+                        false)) ...[
+                      KvRow(
+                        k: '공급처 상품번호',
+                        v:
+                            (((_domeggookPreflight?['mapping']
+                                        as Map?)?['itemNo']) ??
+                                    '-')
+                                .toString(),
+                      ),
+                      KvRow(
+                        k: '옵션코드',
+                        v:
+                            (((_domeggookPreflight?['mapping']
+                                        as Map?)?['optionCode']) ??
+                                    '-')
+                                .toString(),
+                      ),
+                    ],
+                    if (preflightHint.isNotEmpty)
                       Text(
-                        '현금성 이머니가 부족해서 지금은 주문 버튼을 막아둡니다. 충전 후 다시 확인해 주세요.',
+                        preflightHint,
                         style: TextStyle(
-                          color: Theme.of(context).colorScheme.error,
+                          color: (_domeggookPreflight?['canOrder'] == false)
+                              ? Theme.of(context).colorScheme.error
+                              : Theme.of(
+                                  context,
+                                ).colorScheme.onSurface.withValues(alpha: 0.78),
                           fontWeight: FontWeight.w700,
                         ),
                       ),
@@ -590,7 +775,8 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                     runSpacing: 8,
                     children: [
                       FilledButton.tonal(
-                        onPressed: _loading ||
+                        onPressed:
+                            _loading ||
                                 _checkingDomeggookPreflight ||
                                 !_canStartDomeggookOrder
                             ? null
@@ -617,10 +803,9 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                   Text(
                     '도매꾹 주문번호가 저장돼 있으면 송장번호를 조회해 쿠팡에 바로 반영합니다.',
                     style: TextStyle(
-                      color: Theme.of(context)
-                          .colorScheme
-                          .onSurface
-                          .withValues(alpha: 0.68),
+                      color: Theme.of(
+                        context,
+                      ).colorScheme.onSurface.withValues(alpha: 0.68),
                     ),
                   ),
                   const SizedBox(height: 10),
@@ -640,10 +825,9 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                   Text(
                     '공급처 주문이 끝나고 운송장 번호가 나오면 여기서 바로 쿠팡에 반영합니다.',
                     style: TextStyle(
-                      color: Theme.of(context)
-                          .colorScheme
-                          .onSurface
-                          .withValues(alpha: 0.68),
+                      color: Theme.of(
+                        context,
+                      ).colorScheme.onSurface.withValues(alpha: 0.68),
                     ),
                   ),
                   const SizedBox(height: 10),
@@ -665,8 +849,9 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                   ),
                   const SizedBox(height: 10),
                   FilledButton.tonal(
-                    onPressed:
-                        _loading || !_canUploadInvoice ? null : _uploadInvoice,
+                    onPressed: _loading || !_canUploadInvoice
+                        ? null
+                        : _uploadInvoice,
                     child: const Text('송장 업로드'),
                   ),
                 ],
@@ -681,12 +866,14 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                   const SizedBox(height: 10),
                   KvRow(k: '시간', v: at.isEmpty ? '-' : at),
                   KvRow(
-                      k: 'shipmentBoxId',
-                      v: _shipmentBoxId.isEmpty ? '-' : _shipmentBoxId),
+                    k: 'shipmentBoxId',
+                    v: _shipmentBoxId.isEmpty ? '-' : _shipmentBoxId,
+                  ),
                   KvRow(k: 'orderId', v: _orderId.isEmpty ? '-' : _orderId),
                   KvRow(
-                      k: 'vendorItemId',
-                      v: _vendorItemId.isEmpty ? '-' : _vendorItemId),
+                    k: 'vendorItemId',
+                    v: _vendorItemId.isEmpty ? '-' : _vendorItemId,
+                  ),
                   KvRow(k: '우편번호', v: postCode.isEmpty ? '-' : postCode),
                   KvRow(k: '주소', v: addr1.isEmpty ? '-' : addr1),
                   KvRow(k: '상세주소', v: addr2.isEmpty ? '-' : addr2),
@@ -694,13 +881,21 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
               ),
             ),
             _resultCard(context, title: '발주확인 결과', result: _lastAck),
-            _resultCard(context,
-                title: '송장 업로드 결과', result: _lastInvoiceUpload),
-            _resultCard(context,
-                title: '도매꾹 자동 주문 결과', result: _lastDomeggookCreate),
-            _resultCard(context,
-                title: '도매꾹 송장 자동 반영 결과',
-                result: _lastDomeggookInvoiceSync),
+            _resultCard(
+              context,
+              title: '송장 업로드 결과',
+              result: _lastInvoiceUpload,
+            ),
+            _resultCard(
+              context,
+              title: '도매꾹 자동 주문 결과',
+              result: _lastDomeggookCreate,
+            ),
+            _resultCard(
+              context,
+              title: '도매꾹 송장 자동 반영 결과',
+              result: _lastDomeggookInvoiceSync,
+            ),
           ],
         ),
       ),

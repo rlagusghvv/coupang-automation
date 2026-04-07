@@ -125,8 +125,10 @@ class _OrdersScreenState extends State<OrdersScreen> {
     });
 
     try {
-      final json =
-          await widget.api.getJson('/api/orders', query: {'limit': '200'});
+      final json = await widget.api.getJson(
+        '/api/orders',
+        query: {'limit': '200'},
+      );
       final list = (json['orders'] as List?) ?? const [];
       setState(() {
         _orders = list.map((e) => (e as Map).cast<String, dynamic>()).toList();
@@ -147,10 +149,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
     } catch (e) {
       if (!mounted) return;
       setState(() {
-        _domeggookAsset = {
-          'ok': false,
-          'error': e.toString(),
-        };
+        _domeggookAsset = {'ok': false, 'error': e.toString()};
       });
     } finally {
       if (mounted) setState(() => _loadingDomeggookAsset = false);
@@ -177,7 +176,8 @@ class _OrdersScreenState extends State<OrdersScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-              content: Text(result['ok'] == true ? '엑셀 생성 완료' : '엑셀 생성 결과 확인')),
+            content: Text(result['ok'] == true ? '엑셀 생성 완료' : '엑셀 생성 결과 확인'),
+          ),
         );
       }
     } catch (e) {
@@ -258,8 +258,8 @@ class _OrdersScreenState extends State<OrdersScreen> {
             content: Text(
               result['ok'] == true
                   ? (payUrl.startsWith('http')
-                      ? '업로드 완료, 결제 링크를 찾았어요.'
-                      : '업로드 완료')
+                        ? '업로드 완료, 결제 링크를 찾았어요.'
+                        : '업로드 완료')
                   : '업로드 결과를 확인해 주세요.',
             ),
           ),
@@ -291,13 +291,16 @@ class _OrdersScreenState extends State<OrdersScreen> {
         ),
       ),
     );
+    if (!mounted) return;
+    await _refresh();
   }
 
   Future<void> _acknowledgeQuick(Map<String, dynamic> order) async {
     final raw = (order['order'] as Map?)?.cast<String, dynamic>() ?? {};
     final sheet = (raw['sheet'] as Map?)?.cast<String, dynamic>() ?? {};
-    final shipmentBoxId =
-        (sheet['shipmentBoxId'] ?? order['externalId'] ?? '').toString().trim();
+    final shipmentBoxId = (sheet['shipmentBoxId'] ?? order['externalId'] ?? '')
+        .toString()
+        .trim();
     if (shipmentBoxId.isEmpty) {
       setState(() => _error = 'shipmentBoxId가 없어 발주확인을 진행할 수 없습니다.');
       return;
@@ -313,9 +316,9 @@ class _OrdersScreenState extends State<OrdersScreen> {
         'shipmentBoxId': shipmentBoxId,
       });
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('발주확인 처리를 완료했습니다.')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('발주확인 처리를 완료했습니다.')));
       await _refresh();
     } catch (e) {
       if (!mounted) return;
@@ -329,8 +332,9 @@ class _OrdersScreenState extends State<OrdersScreen> {
     final raw = (order['order'] as Map?)?.cast<String, dynamic>() ?? {};
     final sheet = (raw['sheet'] as Map?)?.cast<String, dynamic>() ?? {};
     final item = (raw['item'] as Map?)?.cast<String, dynamic>() ?? {};
-    final shipmentBoxId =
-        (sheet['shipmentBoxId'] ?? order['externalId'] ?? '').toString().trim();
+    final shipmentBoxId = (sheet['shipmentBoxId'] ?? order['externalId'] ?? '')
+        .toString()
+        .trim();
     final orderId = (sheet['orderId'] ?? '').toString().trim();
     final vendorItemId = (item['vendorItemId'] ?? order['externalSubId'] ?? '')
         .toString()
@@ -362,9 +366,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
                 const SizedBox(height: 10),
                 TextField(
                   controller: invoiceCtrl,
-                  decoration: const InputDecoration(
-                    labelText: '운송장 번호',
-                  ),
+                  decoration: const InputDecoration(labelText: '운송장 번호'),
                 ),
               ],
             ),
@@ -407,13 +409,13 @@ class _OrdersScreenState extends State<OrdersScreen> {
             'vendorItemId': vendorItemId,
             'deliveryCompanyCode': deliveryCompanyCode,
             'invoiceNumber': invoiceNumber,
-          }
+          },
         ],
       });
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('송장 업로드를 완료했습니다.')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('송장 업로드를 완료했습니다.')));
       await _refresh();
     } catch (e) {
       if (!mounted) return;
@@ -517,54 +519,60 @@ class _OrdersScreenState extends State<OrdersScreen> {
     final lastUploadPayUrl = (lastUpload?['payUrl'] ?? '').toString();
 
     final q = _q.text.trim().toLowerCase();
-    final filteredAll = _orders.where((o) {
-      final st = (o['status'] ?? '').toString();
-      if (!_matchesQueueStatus(st)) return false;
-      if (_status.trim().isNotEmpty && st != _status) return false;
-      if (_onlyTodo && !_isTodoStatus(st)) return false;
+    final filteredAll =
+        _orders.where((o) {
+          final st = (o['status'] ?? '').toString();
+          if (!_matchesQueueStatus(st)) return false;
+          if (_status.trim().isNotEmpty && st != _status) return false;
+          if (_onlyTodo && !_isTodoStatus(st)) return false;
 
-      if (q.isEmpty) return true;
-      final raw = (o['order'] as Map?)?.cast<String, dynamic>() ?? {};
-      final sheet = (raw['sheet'] as Map?)?.cast<String, dynamic>() ?? {};
-      final item = (raw['item'] as Map?)?.cast<String, dynamic>() ?? {};
-      final receiver =
-          (sheet['receiver'] as Map?)?.cast<String, dynamic>() ?? {};
+          if (q.isEmpty) return true;
+          final raw = (o['order'] as Map?)?.cast<String, dynamic>() ?? {};
+          final sheet = (raw['sheet'] as Map?)?.cast<String, dynamic>() ?? {};
+          final item = (raw['item'] as Map?)?.cast<String, dynamic>() ?? {};
+          final receiver =
+              (sheet['receiver'] as Map?)?.cast<String, dynamic>() ?? {};
 
-      final title = (item['vendorItemName'] ?? item['sellerProductName'] ?? '')
-          .toString()
-          .toLowerCase();
-      final name = (receiver['name'] ?? '').toString().toLowerCase();
-      return title.contains(q) || name.contains(q);
-    }).toList()
-      ..sort((a, b) {
-        final sa = (a['status'] ?? '').toString();
-        final sb = (b['status'] ?? '').toString();
-        final statusCmp = _statusRank(sa).compareTo(_statusRank(sb));
-        if (statusCmp != 0) return statusCmp;
-        final atA = _extractOrderDate(a)?.millisecondsSinceEpoch ?? 0;
-        final atB = _extractOrderDate(b)?.millisecondsSinceEpoch ?? 0;
-        return atB.compareTo(atA);
-      });
-    final hiddenOldTodoCount =
-        filteredAll.where(_isOldTodoOrder).length;
+          final title =
+              (item['vendorItemName'] ?? item['sellerProductName'] ?? '')
+                  .toString()
+                  .toLowerCase();
+          final name = (receiver['name'] ?? '').toString().toLowerCase();
+          return title.contains(q) || name.contains(q);
+        }).toList()..sort((a, b) {
+          final sa = (a['status'] ?? '').toString();
+          final sb = (b['status'] ?? '').toString();
+          final statusCmp = _statusRank(sa).compareTo(_statusRank(sb));
+          if (statusCmp != 0) return statusCmp;
+          final atA = _extractOrderDate(a)?.millisecondsSinceEpoch ?? 0;
+          final atB = _extractOrderDate(b)?.millisecondsSinceEpoch ?? 0;
+          return atB.compareTo(atA);
+        });
+    final hiddenOldTodoCount = filteredAll.where(_isOldTodoOrder).length;
     final filtered = _hideOldTodo
         ? filteredAll.where((o) => !_isOldTodoOrder(o)).toList()
         : filteredAll;
 
     final acceptCount = _orders
-        .where((o) =>
-            (o['status'] ?? '').toString().trim().toUpperCase() == 'ACCEPT')
+        .where(
+          (o) =>
+              (o['status'] ?? '').toString().trim().toUpperCase() == 'ACCEPT',
+        )
         .length;
     final todoCount = _orders
         .where((o) => _isTodoStatus((o['status'] ?? '').toString()))
         .length;
     final deliveringCount = _orders
-        .where((o) =>
-            (o['status'] ?? '').toString().trim().toUpperCase() == 'DELIVERING')
+        .where(
+          (o) =>
+              (o['status'] ?? '').toString().trim().toUpperCase() ==
+              'DELIVERING',
+        )
         .length;
     final doneCount = _orders
-        .where((o) =>
-            (o['status'] ?? '').toString().trim().toUpperCase() == 'DONE')
+        .where(
+          (o) => (o['status'] ?? '').toString().trim().toUpperCase() == 'DONE',
+        )
         .length;
     final domeggookAssetMap =
         (_domeggookAsset?['asset'] as Map?)?.cast<String, dynamic>() ?? {};
@@ -596,19 +604,25 @@ class _OrdersScreenState extends State<OrdersScreen> {
                   runSpacing: 10,
                   children: [
                     _OrderMetric(
-                        title: '해야 할 주문',
-                        value: '$todoCount',
-                        subtitle: '지금 처리 대상'),
+                      title: '해야 할 주문',
+                      value: '$todoCount',
+                      subtitle: '지금 처리 대상',
+                    ),
                     _OrderMetric(
-                        title: '새 주문',
-                        value: '$acceptCount',
-                        subtitle: '먼저 발주확인'),
+                      title: '새 주문',
+                      value: '$acceptCount',
+                      subtitle: '먼저 발주확인',
+                    ),
                     _OrderMetric(
-                        title: '배송중',
-                        value: '$deliveringCount',
-                        subtitle: '송장 반영 후 상태'),
+                      title: '배송중',
+                      value: '$deliveringCount',
+                      subtitle: '송장 반영 후 상태',
+                    ),
                     _OrderMetric(
-                        title: '완료', value: '$doneCount', subtitle: '처리 끝난 주문'),
+                      title: '완료',
+                      value: '$doneCount',
+                      subtitle: '처리 끝난 주문',
+                    ),
                   ],
                 ),
                 const SizedBox(height: 12),
@@ -618,9 +632,10 @@ class _OrdersScreenState extends State<OrdersScreen> {
                       label: _loadingDomeggookAsset
                           ? 'e머니 확인 중'
                           : domeggookAssetMap.isNotEmpty
-                              ? '현금성 e머니 ${_formatWon(domeggookCash)}'
-                              : 'e머니 미확인',
-                      color: domeggookAssetMap.isNotEmpty &&
+                          ? '현금성 e머니 ${_formatWon(domeggookCash)}'
+                          : 'e머니 미확인',
+                      color:
+                          domeggookAssetMap.isNotEmpty &&
                               (num.tryParse('${domeggookCash ?? ''}') ?? 0) > 0
                           ? Theme.of(context).colorScheme.primary
                           : Theme.of(context).colorScheme.outline,
@@ -631,13 +646,12 @@ class _OrdersScreenState extends State<OrdersScreen> {
                         domeggookAssetMap.isNotEmpty
                             ? '주문 상세에 들어가기 전에도 잔액을 바로 볼 수 있습니다.'
                             : (domeggookAssetError.isNotEmpty
-                                ? '도매꾹 잔액 조회에 실패했습니다. 연결 상태를 확인하세요.'
-                                : '도매꾹 자동 주문 전 현금성 e머니를 먼저 확인합니다.'),
+                                  ? '도매꾹 잔액 조회에 실패했습니다. 연결 상태를 확인하세요.'
+                                  : '도매꾹 자동 주문 전 현금성 e머니를 먼저 확인합니다.'),
                         style: TextStyle(
-                          color: Theme.of(context)
-                              .colorScheme
-                              .onSurface
-                              .withValues(alpha: 0.68),
+                          color: Theme.of(
+                            context,
+                          ).colorScheme.onSurface.withValues(alpha: 0.68),
                         ),
                       ),
                     ),
@@ -695,10 +709,9 @@ class _OrdersScreenState extends State<OrdersScreen> {
                       child: Text(
                         '이 화면은 ${_queueStatuses.join(', ')} 상태 주문만 보여줍니다.',
                         style: TextStyle(
-                          color: Theme.of(context)
-                              .colorScheme
-                              .onSurface
-                              .withValues(alpha: 0.68),
+                          color: Theme.of(
+                            context,
+                          ).colorScheme.onSurface.withValues(alpha: 0.68),
                         ),
                       ),
                     ),
@@ -736,8 +749,9 @@ class _OrdersScreenState extends State<OrdersScreen> {
           ),
           SwitchListTile.adaptive(
             value: _hideOldTodo,
-            onChanged:
-                _loading ? null : (v) => setState(() => _hideOldTodo = v),
+            onChanged: _loading
+                ? null
+                : (v) => setState(() => _hideOldTodo = v),
             contentPadding: EdgeInsets.zero,
             title: const Text('이전 미처리 주문 숨기기'),
             subtitle: const Text('2일 이상 지난 미처리 주문은 기본으로 가립니다.'),
@@ -756,10 +770,9 @@ class _OrdersScreenState extends State<OrdersScreen> {
                     child: Text(
                       '오래된 주문은 기본으로 숨겼습니다. 필요하면 토글을 꺼서 다시 볼 수 있습니다.',
                       style: TextStyle(
-                        color: Theme.of(context)
-                            .colorScheme
-                            .onSurface
-                            .withValues(alpha: 0.68),
+                        color: Theme.of(
+                          context,
+                        ).colorScheme.onSurface.withValues(alpha: 0.68),
                       ),
                     ),
                   ),
@@ -801,17 +814,19 @@ class _OrdersScreenState extends State<OrdersScreen> {
                           onPressed: _loading
                               ? null
                               : () => setState(
-                                    () => _toolDetailsExpanded =
-                                        !_toolDetailsExpanded,
-                                  ),
-                          child:
-                              Text(_toolDetailsExpanded ? '결과 숨기기' : '결과 보기'),
+                                  () => _toolDetailsExpanded =
+                                      !_toolDetailsExpanded,
+                                ),
+                          child: Text(
+                            _toolDetailsExpanded ? '결과 숨기기' : '결과 보기',
+                          ),
                         ),
                       TextButton(
                         onPressed: _loading
                             ? null
                             : () => setState(
-                                () => _toolsExpanded = !_toolsExpanded),
+                                () => _toolsExpanded = !_toolsExpanded,
+                              ),
                         child: Text(_toolsExpanded ? '접기' : '펼치기'),
                       ),
                     ],
@@ -821,10 +836,9 @@ class _OrdersScreenState extends State<OrdersScreen> {
                 Text(
                   '주문 처리에 꼭 필요할 때만 펼쳐서 씁니다. 발주확인 후 주문도 엑셀에 포함되도록 접수/지시/준비 상태를 함께 사용합니다.',
                   style: TextStyle(
-                    color: Theme.of(context)
-                        .colorScheme
-                        .onSurface
-                        .withValues(alpha: 0.68),
+                    color: Theme.of(
+                      context,
+                    ).colorScheme.onSurface.withValues(alpha: 0.68),
                   ),
                 ),
                 if (_toolsExpanded) ...[
@@ -866,8 +880,8 @@ class _OrdersScreenState extends State<OrdersScreen> {
                       FilledButton.tonal(
                         onPressed:
                             _loading || !lastUploadPayUrl.startsWith('http')
-                                ? null
-                                : _openPayUrl,
+                            ? null
+                            : _openPayUrl,
                         child: const Text('결제 링크 열기'),
                       ),
                     ],
@@ -876,46 +890,55 @@ class _OrdersScreenState extends State<OrdersScreen> {
                     const SizedBox(height: 10),
                     KvRow(k: 'ok', v: lastOk == true ? 'true' : 'false'),
                     KvRow(
-                        k: 'rowCount', v: (last['rowCount'] ?? '-').toString()),
+                      k: 'rowCount',
+                      v: (last['rowCount'] ?? '-').toString(),
+                    ),
                     KvRow(
-                        k: 'missingMapCount',
-                        v: (last['missingMapCount'] ?? '-').toString()),
+                      k: 'missingMapCount',
+                      v: (last['missingMapCount'] ?? '-').toString(),
+                    ),
                     if ((last['error'] ?? '').toString().isNotEmpty)
                       KvRow(k: 'error', v: (last['error'] ?? '').toString()),
                   ],
                   if (_toolDetailsExpanded && lastUpload != null) ...[
                     const SizedBox(height: 10),
                     KvRow(
-                        k: 'upload.ok',
-                        v: lastUploadOk == true ? 'true' : 'false'),
+                      k: 'upload.ok',
+                      v: lastUploadOk == true ? 'true' : 'false',
+                    ),
                     KvRow(
-                        k: 'vendor',
-                        v: (lastUpload['vendor'] ?? 'domeme').toString()),
+                      k: 'vendor',
+                      v: (lastUpload['vendor'] ?? 'domeme').toString(),
+                    ),
                     KvRow(
-                        k: 'payUrl',
-                        v: lastUploadPayUrl.isEmpty ? '-' : lastUploadPayUrl),
+                      k: 'payUrl',
+                      v: lastUploadPayUrl.isEmpty ? '-' : lastUploadPayUrl,
+                    ),
                     if ((lastUpload['warning'] ?? '').toString().isNotEmpty)
                       KvRow(
-                          k: 'warning',
-                          v: (lastUpload['warning'] ?? '').toString()),
+                        k: 'warning',
+                        v: (lastUpload['warning'] ?? '').toString(),
+                      ),
                     if ((lastUpload['error'] ?? '').toString().isNotEmpty)
                       KvRow(
-                          k: 'error',
-                          v: (lastUpload['error'] ?? '').toString()),
+                        k: 'error',
+                        v: (lastUpload['error'] ?? '').toString(),
+                      ),
                   ],
                   if (_toolDetailsExpanded && _lastShippingRefresh != null) ...[
                     const SizedBox(height: 10),
                     KvRow(
-                        k: 'shippingRefresh.mode',
-                        v: (_lastShippingRefresh?['mode'] ?? '-').toString()),
+                      k: 'shippingRefresh.mode',
+                      v: (_lastShippingRefresh?['mode'] ?? '-').toString(),
+                    ),
                     KvRow(
-                        k: 'scanned',
-                        v: (_lastShippingRefresh?['scanned'] ?? '-')
-                            .toString()),
+                      k: 'scanned',
+                      v: (_lastShippingRefresh?['scanned'] ?? '-').toString(),
+                    ),
                     KvRow(
-                        k: 'updated',
-                        v: (_lastShippingRefresh?['updated'] ?? '-')
-                            .toString()),
+                      k: 'updated',
+                      v: (_lastShippingRefresh?['updated'] ?? '-').toString(),
+                    ),
                   ],
                 ],
               ],
@@ -938,10 +961,9 @@ class _OrdersScreenState extends State<OrdersScreen> {
                     ? '아직 주문이 없어요.\n\n1) 더보기 탭에서 쿠팡 키를 먼저 넣어 주세요.\n2) 여기로 돌아와서 “쿠팡 최신 상태 다시 가져오기”를 눌러 주세요.\n3) 마지막으로 “엑셀 생성”을 누르면 됩니다.'
                     : '조건에 맞는 주문이 없어요.\n\n검색어/필터를 지우고 다시 확인해 주세요.',
                 style: TextStyle(
-                  color: Theme.of(context)
-                      .colorScheme
-                      .onSurface
-                      .withValues(alpha: 0.7),
+                  color: Theme.of(
+                    context,
+                  ).colorScheme.onSurface.withValues(alpha: 0.7),
                 ),
               ),
             )
@@ -1000,12 +1022,14 @@ class _OrdersScreenState extends State<OrdersScreen> {
                         children: [
                           if (status.isNotEmpty)
                             InfoChip(
-                                label: status,
-                                color: Theme.of(context).colorScheme.primary),
+                              label: status,
+                              color: Theme.of(context).colorScheme.primary,
+                            ),
                           if (qty.isNotEmpty)
                             InfoChip(
-                                label: '수량 $qty',
-                                color: Theme.of(context).colorScheme.outline),
+                              label: '수량 $qty',
+                              color: Theme.of(context).colorScheme.outline,
+                            ),
                           if (ageLabel.isNotEmpty)
                             InfoChip(
                               label: ageLabel,
@@ -1015,8 +1039,9 @@ class _OrdersScreenState extends State<OrdersScreen> {
                             ),
                           if (id.isNotEmpty)
                             InfoChip(
-                                label: id,
-                                color: Theme.of(context).colorScheme.outline),
+                              label: id,
+                              color: Theme.of(context).colorScheme.outline,
+                            ),
                         ],
                       ),
                       if (receiverName.isNotEmpty ||
@@ -1029,10 +1054,9 @@ class _OrdersScreenState extends State<OrdersScreen> {
                           ].join(' · '),
                           style: TextStyle(
                             fontSize: 12,
-                            color: Theme.of(context)
-                                .colorScheme
-                                .onSurface
-                                .withValues(alpha: 0.68),
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.onSurface.withValues(alpha: 0.68),
                           ),
                         ),
                       ],
@@ -1043,8 +1067,9 @@ class _OrdersScreenState extends State<OrdersScreen> {
                         children: [
                           if (canQuickAck)
                             FilledButton.tonal(
-                              onPressed:
-                                  _loading ? null : () => _acknowledgeQuick(o),
+                              onPressed: _loading
+                                  ? null
+                                  : () => _acknowledgeQuick(o),
                               child: const Text('발주확인'),
                             ),
                           if (canQuickInvoice)
@@ -1055,8 +1080,9 @@ class _OrdersScreenState extends State<OrdersScreen> {
                               child: const Text('송장 입력'),
                             ),
                           OutlinedButton(
-                            onPressed:
-                                _loading ? null : () => _openOrderDetail(o),
+                            onPressed: _loading
+                                ? null
+                                : () => _openOrderDetail(o),
                             child: Text(needsAction ? '처리 계속' : '상세 보기'),
                           ),
                         ],
