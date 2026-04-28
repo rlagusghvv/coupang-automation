@@ -241,12 +241,12 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
     return e.toString();
   }
 
-  Future<void> _loadDomeggookPreflight() async {
+  Future<void> _loadDomeggookPreflight({bool preserveError = false}) async {
     final orderId = _order['id'];
     if (orderId == null) return;
     setState(() {
       _checkingDomeggookPreflight = true;
-      _error = null;
+      if (!preserveError) _error = null;
     });
     try {
       final json = await widget.api.postJson(
@@ -263,7 +263,9 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
       if (mounted) {
         setState(() {
           _domeggookPreflight = result;
-          _error = _friendlyOrderError(e, payload: payload);
+          if (!preserveError) {
+            _error = _friendlyOrderError(e, payload: payload);
+          }
         });
       }
     } finally {
@@ -361,6 +363,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
       _lastDomeggookCreate = null;
     });
 
+    var created = false;
     try {
       final json = await widget.api.postJson('/api/orders/domeggook/create', {
         'orderId': orderId,
@@ -373,6 +376,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
       });
       await _reloadOrder(silent: true);
       await widget.onChanged?.call();
+      created = true;
       if (mounted) {
         final orders = (result['orderCreate'] as Map?)?['orders'] as List?;
         final orderNo = orders != null && orders.isNotEmpty
@@ -398,7 +402,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
         });
       }
     } finally {
-      await _loadDomeggookPreflight();
+      await _loadDomeggookPreflight(preserveError: !created);
       if (mounted) setState(() => _loading = false);
     }
   }
