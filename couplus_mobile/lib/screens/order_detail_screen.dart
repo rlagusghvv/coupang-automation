@@ -122,10 +122,15 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
     final body =
         payload ?? _extractErrorPayload(error) ?? const <String, dynamic>{};
     final topError = (body['error'] ?? '').toString().trim();
+    final topDetails = (body['details'] ?? '').toString().trim();
     final result =
         (body['result'] as Map?)?.cast<String, dynamic>() ??
         const <String, dynamic>{};
     final resultError = (result['error'] ?? '').toString().trim();
+    final resultDetails = (result['details'] ?? '').toString().trim();
+    final mapping =
+        (result['mapping'] as Map?)?.cast<String, dynamic>() ??
+        const <String, dynamic>{};
     final code = resultError.isNotEmpty ? resultError : topError;
     switch (code) {
       case 'too_less_emoney_precheck':
@@ -146,7 +151,29 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
       case 'order_not_found':
         return '주문 정보를 다시 불러와 주세요.';
       default:
-        return error.toString();
+        final detail = resultDetails.isNotEmpty
+            ? resultDetails
+            : topDetails.isNotEmpty
+            ? topDetails
+            : '';
+        final itemNo = (mapping['itemNo'] ?? '').toString().trim();
+        final optionCode = (mapping['optionCode'] ?? '').toString().trim();
+        final shippingMethodCode = (mapping['shippingMethodCode'] ?? '')
+            .toString()
+            .trim();
+        final parts = <String>[];
+        if (code.isNotEmpty) {
+          parts.add('실패 코드: $code');
+        }
+        if (detail.isNotEmpty) {
+          parts.add(detail);
+        }
+        if (itemNo.isNotEmpty || optionCode.isNotEmpty || shippingMethodCode.isNotEmpty) {
+          parts.add(
+            '매핑: 상품번호 ${itemNo.isEmpty ? "-" : itemNo} / 옵션 ${optionCode.isEmpty ? "-" : optionCode} / 배송 ${shippingMethodCode.isEmpty ? "-" : shippingMethodCode}',
+          );
+        }
+        return parts.isEmpty ? error.toString() : parts.join('\n');
     }
   }
 
