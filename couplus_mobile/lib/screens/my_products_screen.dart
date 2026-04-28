@@ -33,11 +33,13 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
   bool _loading = false;
   bool _syncingStatus = false;
   bool _priceAuditBusy = false;
+  bool _moqAuditBusy = false;
   bool _marketingBusy = false;
   String? _marketingBusyId;
   String? _error;
   String? _lastSyncSummary;
   String? _lastPriceAuditSummary;
+  String? _lastMoqAuditSummary;
   List<Map<String, dynamic>> _products = const [];
 
   final _q = TextEditingController();
@@ -324,9 +326,54 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
     return const <String, dynamic>{};
   }
 
+  Map<String, dynamic> _moqAuditOf(Map<String, dynamic> product) {
+    final raw = product['moqAudit'];
+    if (raw is Map) {
+      return raw.cast<String, dynamic>();
+    }
+    return const <String, dynamic>{};
+  }
+
+  Map<String, dynamic> _sourcePurchaseOf(Map<String, dynamic> product) {
+    final raw = product['sourcePurchase'];
+    if (raw is Map) {
+      return raw.cast<String, dynamic>();
+    }
+    return const <String, dynamic>{};
+  }
+
+  Map<String, dynamic> _orderBlockOf(Map<String, dynamic> product) {
+    final raw = product['orderBlock'];
+    if (raw is Map) {
+      return raw.cast<String, dynamic>();
+    }
+    return const <String, dynamic>{};
+  }
+
   bool _isLowPriceFlagged(Map<String, dynamic> product) {
     final audit = _priceAuditOf(product);
     return audit['flagged'] == true;
+  }
+
+  int _minimumOrderQtyOf(Map<String, dynamic> product) {
+    final orderBlock = _orderBlockOf(product);
+    final sourcePurchase = _sourcePurchaseOf(product);
+    final moqAudit = _moqAuditOf(product);
+    final raw = orderBlock['minimumOrderQty'] ??
+        sourcePurchase['minimumOrderQty'] ??
+        moqAudit['minimumOrderQty'] ??
+        1;
+    final parsed = int.tryParse(raw.toString());
+    return parsed == null || parsed <= 0 ? 1 : parsed;
+  }
+
+  bool _isMoqFlagged(Map<String, dynamic> product) {
+    final orderBlock = _orderBlockOf(product);
+    final code = (orderBlock['code'] ?? '').toString().trim();
+    if (code == 'minimum_order_qty_gt_1') return true;
+    final moqAudit = _moqAuditOf(product);
+    if (moqAudit['flagged'] == true) return true;
+    return _minimumOrderQtyOf(product) > 1;
   }
 
   bool _isRecoveryProduct(Map<String, dynamic> product) {
@@ -334,7 +381,8 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
     return status == 'deployed_invalid' ||
         status == 'deploy_failed' ||
         status == 'draft_saved' ||
-        _isLowPriceFlagged(product);
+        _isLowPriceFlagged(product) ||
+        _isMoqFlagged(product);
   }
 
   List<Map<String, dynamic>> get _visibleProducts {
@@ -375,9 +423,15 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
     return '공급 $source · 현재 $current · 예상 $expected';
   }
 
+  String _moqSummaryLine(Map<String, dynamic> product) {
+    final minimumOrderQty = _minimumOrderQtyOf(product);
+    if (minimumOrderQty <= 1) return '';
+    return '공급처 최소주문수량 $minimumOrderQty개 · 단건 주문 불가';
+  }
+
   void _selectFlaggedVisible() {
     final ids = _visibleProducts
-        .where(_isLowPriceFlagged)
+        .where((p) => _isLowPriceFlagged(p) || _isMoqFlagged(p))
         .map((p) => (p['id'] ?? '').toString().trim())
         .where((id) => id.isNotEmpty)
         .toSet();
@@ -465,6 +519,85 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
     } finally {
       if (mounted) {
         setState(() => _priceAuditBusy = false);
+      }
+    }
+  }
+
+  Future<void> _scanMoqIssues() async {
+    final ids = _visibleProducts
+        .map((p) => (p['id'] ?? '').toString().trim())
+        .where((id) => id.isNotEmpty)
+        .toList();
+    if (ids.isEmpty) return;
+    const batchSize = 1;
+
+    setState(() {
+      _moqAuditBusy = true;
+      _error = null;
+      _lastMoqAuditSummary = 'MOQ 검사 준비 중…';
+    });
+
+    try {
+      final flaggedIds = <String>{};
+      var scanned = 0;
+      var flagged = 0;
+      var skipped = 0;
+
+      for (var start = 0; start < ids.length; start += batchSize) {
+        final end =
+            (start + batchSize > ids.length) ? ids.length : start + batchSize;
+        final chunk = ids.sublist(start, end);
+        if (mounted) {
+          setState(() {
+            _lastMoqAuditSummary =
+                'MOQ 검사 중… ${start + 1}-$end / ${ids.length}';
+          });
+        }
+        final json = await widget.api.postJson('/api/catalog/moq-audit/scan', {
+          'ids': chunk,
+        });
+        final items = (json['items'] as List?) ?? const [];
+        for (final raw in items) {
+          if (raw is! Map) continue;
+          final item = raw.cast<String, dynamic>();
+          if (item['flagged'] == true) {
+            final product =
+                (item['product'] as Map?)?.cast<String, dynamic>() ??
+                    const <String, dynamic>{};
+            final id = (product['id'] ?? item['id'] ?? '').toString().trim();
+            if (id.isNotEmpty) flaggedIds.add(id);
+          }
+        }
+        scanned += int.tryParse((json['scanned'] ?? 0).toString()) ?? 0;
+        flagged += int.tryParse((json['flagged'] ?? 0).toString()) ?? 0;
+        skipped += int.tryParse((json['skipped'] ?? 0).toString()) ?? 0;
+      }
+
+      await _refresh(syncRemote: false);
+      if (!mounted) return;
+      setState(() {
+        _lastMoqAuditSummary =
+            'MOQ 검사: 문제 $flagged건 · 스킵 $skipped건 (검사 $scanned건)';
+        _selectMode = flaggedIds.isNotEmpty;
+        _selected
+          ..clear()
+          ..addAll(flaggedIds);
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            flaggedIds.isNotEmpty
+                ? 'MOQ 문제 ${flaggedIds.length}건을 선택해 두었습니다.'
+                : '최소 주문수량 문제 상품을 찾지 못했습니다.',
+          ),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _error = 'MOQ 검사 실패: $e');
+    } finally {
+      if (mounted) {
+        setState(() => _moqAuditBusy = false);
       }
     }
   }
@@ -2360,7 +2493,7 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
                       label: const Text('상태 동기화'),
                     ),
                     FilledButton.tonalIcon(
-                      onPressed: _loading || _priceAuditBusy
+                      onPressed: _loading || _priceAuditBusy || _moqAuditBusy
                           ? null
                           : _scanLowPriceMisparses,
                       icon: _priceAuditBusy
@@ -2371,6 +2504,19 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
                             )
                           : const Icon(Icons.price_check_outlined),
                       label: const Text('저가 검사'),
+                    ),
+                    FilledButton.tonalIcon(
+                      onPressed: _loading || _priceAuditBusy || _moqAuditBusy
+                          ? null
+                          : _scanMoqIssues,
+                      icon: _moqAuditBusy
+                          ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.inventory_2_outlined),
+                      label: const Text('MOQ 검사'),
                     ),
                     FilledButton.tonalIcon(
                       onPressed: _loading ? null : _importBySellerProductId,
@@ -2582,6 +2728,19 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
                 color: Theme.of(context)
                     .colorScheme
                     .onSurface
+                .withValues(alpha: 0.65),
+              ),
+            ),
+          ],
+          if ((_lastMoqAuditSummary ?? '').trim().isNotEmpty) ...[
+            const SizedBox(height: 4),
+            Text(
+              _lastMoqAuditSummary!,
+              style: TextStyle(
+                fontSize: 12,
+                color: Theme.of(context)
+                    .colorScheme
+                    .onSurface
                     .withValues(alpha: 0.65),
               ),
             ),
@@ -2620,6 +2779,9 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
                 final marketingBusy = _marketingBusy && _marketingBusyId == id;
                 final lowPriceFlagged = _isLowPriceFlagged(p);
                 final priceAuditSummary = _priceAuditSummaryLine(p);
+                final moqFlagged = _isMoqFlagged(p);
+                final minimumOrderQty = _minimumOrderQtyOf(p);
+                final moqSummary = _moqSummaryLine(p);
 
                 return AppCard(
                   onTap: id.isEmpty
@@ -2712,6 +2874,11 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
                                     label: '저가 의심',
                                     color: Color(0xFFC92A2A),
                                   ),
+                                if (moqFlagged)
+                                  InfoChip(
+                                    label: 'MOQ $minimumOrderQty+',
+                                    color: const Color(0xFFC92A2A),
+                                  ),
                               ],
                             ),
                             if (remoteStatusName.isNotEmpty &&
@@ -2740,6 +2907,16 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
                                           .colorScheme
                                           .onSurface
                                           .withValues(alpha: 0.68),
+                                ),
+                              ),
+                            ],
+                            if (moqSummary.isNotEmpty) ...[
+                              const SizedBox(height: 6),
+                              Text(
+                                moqSummary,
+                                style: const TextStyle(
+                                  fontSize: 12,
+                                  color: Color(0xFFC92A2A),
                                 ),
                               ),
                             ],

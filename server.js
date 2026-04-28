@@ -2372,6 +2372,10 @@ function normalizeCatalogProduct(row) {
   );
   const validation = meta.validation && typeof meta.validation === "object" ? meta.validation : {};
   const priceAudit = meta.priceAudit && typeof meta.priceAudit === "object" ? meta.priceAudit : {};
+  const moqAudit = meta.moqAudit && typeof meta.moqAudit === "object" ? meta.moqAudit : {};
+  const sourcePurchase =
+    meta.sourcePurchase && typeof meta.sourcePurchase === "object" ? meta.sourcePurchase : {};
+  const orderBlock = meta.orderBlock && typeof meta.orderBlock === "object" ? meta.orderBlock : {};
   const sourceUrl = pickFirstNonEmpty(row?.sourceUrl, meta.sourceUrl);
   return {
     id: String(row?.id ?? ""),
@@ -2389,6 +2393,9 @@ function normalizeCatalogProduct(row) {
     followUp,
     validation,
     priceAudit: Object.keys(priceAudit).length > 0 ? priceAudit : null,
+    moqAudit: Object.keys(moqAudit).length > 0 ? moqAudit : null,
+    sourcePurchase: Object.keys(sourcePurchase).length > 0 ? sourcePurchase : null,
+    orderBlock: Object.keys(orderBlock).length > 0 ? orderBlock : null,
     lastSyncedAt: String(meta.lastSyncedAt || "").trim() || null,
     deployedAt: String(meta.deployedAt || "").trim() || null,
     createdAt: row?.createdAt || null,
@@ -2783,6 +2790,143 @@ async function persistCatalogPriceAudit({ userId, row, audit }) {
   });
 }
 
+function extractMinimumOrderQtyFromDraft(draft = {}) {
+  const raw =
+    draft?.minimumOrderQty ??
+    draft?.purchaseConstraints?.minimumOrderQty ??
+    draft?.sourcePurchase?.minimumOrderQty;
+  return Number.isFinite(Number(raw)) && Number(raw) > 0 ? Number(raw) : 1;
+}
+
+function buildMoqAuditRecord({
+  sourceUrl,
+  sellerProductId,
+  minimumOrderQty = 1,
+  supplierItemNo = null,
+  flagged = false,
+  reason = "",
+  supplierTitle = "",
+  note = "",
+} = {}) {
+  const minQty =
+    Number.isFinite(Number(minimumOrderQty)) && Number(minimumOrderQty) > 0
+      ? Number(minimumOrderQty)
+      : 1;
+  return {
+    checkedAt: new Date().toISOString(),
+    flagged: Boolean(flagged),
+    reason: String(reason || "").trim() || null,
+    sourceUrl: String(sourceUrl || "").trim() || null,
+    sellerProductId: String(sellerProductId || "").trim() || null,
+    minimumOrderQty: minQty,
+    supplierItemNo: String(supplierItemNo || "").trim() || null,
+    supplierTitle: String(supplierTitle || "").trim() || null,
+    note: String(note || "").trim() || null,
+  };
+}
+
+async function auditCatalogMoqOne({ row }) {
+  const sourceUrl = pickFirstNonEmpty(row?.sourceUrl, row?.meta?.sourceUrl);
+  const sellerProductId = resolveCatalogSellerProductId(row);
+  if (!sourceUrl) {
+    return buildMoqAuditRecord({
+      sourceUrl,
+      sellerProductId,
+      flagged: false,
+      reason: "missing_source_url",
+      note: "원본 공급처 URL이 없어 검사를 건너뛰었습니다.",
+    });
+  }
+  if (!isDomeggookSourceUrl(sourceUrl)) {
+    return buildMoqAuditRecord({
+      sourceUrl,
+      sellerProductId,
+      flagged: false,
+      reason: "unsupported_source",
+      note: "도매꾹 원본만 최소 주문수량을 자동 재검증합니다.",
+    });
+  }
+
+  const supplierDraft = await withTimeout(
+    parseProductFromDomaeqq(sourceUrl, {
+      mode: "full",
+      previewPlaywrightFast: false,
+    }),
+    15_000,
+    "moq_audit_supplier_timeout",
+  );
+  const minimumOrderQty = extractMinimumOrderQtyFromDraft(supplierDraft);
+  const flagged = minimumOrderQty > 1;
+  return buildMoqAuditRecord({
+    sourceUrl,
+    sellerProductId,
+    minimumOrderQty,
+    supplierItemNo: supplierDraft?.sourcePurchase?.itemNo,
+    supplierTitle: supplierDraft?.title,
+    flagged,
+    reason: flagged ? "minimum_order_qty_gt_1" : "ok",
+    note: flagged
+      ? `공급처 최소 주문수량이 ${minimumOrderQty}개라 단건 주문에 맞지 않습니다.`
+      : "공급처 최소 주문수량이 단건 주문 가능 범위입니다.",
+  });
+}
+
+async function persistCatalogMoqAudit({ userId, row, audit }) {
+  const nextMeta = row?.meta && typeof row.meta === "object" ? { ...row.meta } : {};
+  nextMeta.moqAudit = audit;
+
+  const sourcePurchase =
+    nextMeta.sourcePurchase && typeof nextMeta.sourcePurchase === "object"
+      ? { ...nextMeta.sourcePurchase }
+      : {};
+  sourcePurchase.minimumOrderQty =
+    Number.isFinite(Number(audit?.minimumOrderQty)) && Number(audit.minimumOrderQty) > 0
+      ? Number(audit.minimumOrderQty)
+      : 1;
+  if (audit?.supplierItemNo && !sourcePurchase.itemNo) {
+    sourcePurchase.itemNo = String(audit.supplierItemNo).trim();
+  }
+  nextMeta.sourcePurchase = sourcePurchase;
+
+  if (audit?.flagged) {
+    nextMeta.orderBlock = {
+      code: "minimum_order_qty_gt_1",
+      minimumOrderQty: sourcePurchase.minimumOrderQty,
+      detectedAt: String(audit?.checkedAt || new Date().toISOString()),
+      source: "catalog_moq_audit",
+    };
+  } else if (
+    nextMeta.orderBlock &&
+    typeof nextMeta.orderBlock === "object" &&
+    String(nextMeta.orderBlock.code || "").trim() === "minimum_order_qty_gt_1"
+  ) {
+    delete nextMeta.orderBlock;
+  }
+
+  const prevValidation =
+    nextMeta.validation && typeof nextMeta.validation === "object"
+      ? { ...nextMeta.validation }
+      : {};
+  const nextErrors = Array.isArray(prevValidation.errors)
+    ? prevValidation.errors
+        .map((x) => String(x || "").trim())
+        .filter((x) => x && x !== "minimum_order_qty_gt_1")
+    : [];
+  if (audit?.flagged) nextErrors.push("minimum_order_qty_gt_1");
+  nextMeta.validation = {
+    ...prevValidation,
+    checkedAt: String(audit?.checkedAt || new Date().toISOString()),
+    ok: nextErrors.length === 0,
+    errors: uniqueStrings(nextErrors),
+  };
+
+  return updateUploadedProductById({
+    userId,
+    id: row.id,
+    patch: { metaReplace: nextMeta },
+  });
+}
+
 function isRemoteDeleted(live = null) {
   if (!live) return false;
   if (live.ok && isDeletedStatusName(live?.statusName)) return true;
@@ -3148,6 +3292,90 @@ app.post("/api/catalog/:id/archive", authRequired, async (req, res) => {
     });
 
     return res.json({ ok: true, product: normalizeCatalogProduct(updated) });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+app.post("/api/catalog/moq-audit/scan", authRequired, async (req, res) => {
+  try {
+    const b = req.body || {};
+    const ids = Array.isArray(b.ids)
+      ? b.ids.map((x) => String(x || "").trim()).filter(Boolean)
+      : [];
+    const limit = Math.max(1, Math.min(200, Number(b.limit || ids.length || 50) || 50));
+
+    const rows = [];
+    if (ids.length > 0) {
+      for (const id of ids.slice(0, limit)) {
+        const row = await getUploadedProductById(req.user.id, id);
+        if (row) rows.push(row);
+      }
+    } else {
+      const listed = await listUploadedProducts({
+        userId: req.user.id,
+        q: "",
+        status: "",
+        limit,
+        offset: 0,
+      });
+      rows.push(
+        ...((listed.items || []).filter((row) => {
+          const status = String(row?.status || "").trim();
+          return status !== "deleted_local" && status !== "deleted_remote";
+        })),
+      );
+    }
+
+    const findings = [];
+    let flaggedCount = 0;
+    let skippedCount = 0;
+    for (const row of rows) {
+      try {
+        const audit = await auditCatalogMoqOne({ row });
+        const updated = await persistCatalogMoqAudit({
+          userId: req.user.id,
+          row,
+          audit,
+        });
+        if (audit?.flagged) flaggedCount += 1;
+        if (String(audit?.reason || "").trim() === "unsupported_source") skippedCount += 1;
+        findings.push({
+          id: String(row?.id || ""),
+          flagged: Boolean(audit?.flagged),
+          audit,
+          product: normalizeCatalogProduct(updated || row),
+        });
+      } catch (e) {
+        skippedCount += 1;
+        const audit = buildMoqAuditRecord({
+          sourceUrl: pickFirstNonEmpty(row?.sourceUrl, row?.meta?.sourceUrl),
+          sellerProductId: resolveCatalogSellerProductId(row),
+          flagged: false,
+          reason: "audit_failed",
+          note: String(e?.message || e),
+        });
+        const updated = await persistCatalogMoqAudit({
+          userId: req.user.id,
+          row,
+          audit,
+        });
+        findings.push({
+          id: String(row?.id || ""),
+          flagged: false,
+          audit,
+          product: normalizeCatalogProduct(updated || row),
+        });
+      }
+    }
+
+    return res.json({
+      ok: true,
+      scanned: findings.length,
+      flagged: flaggedCount,
+      skipped: skippedCount,
+      items: findings,
+    });
   } catch (e) {
     return res.status(500).json({ ok: false, error: String(e?.message || e) });
   }
