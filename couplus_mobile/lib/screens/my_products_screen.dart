@@ -613,14 +613,14 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
     }
   }
 
-  Future<void> _bulkDeleteRemote() async {
+  Future<void> _bulkStopRemote() async {
     if (_selected.isEmpty) return;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('쿠팡 상품 삭제'),
+        title: const Text('쿠팡 판매중지'),
         content: Text(
-          '선택한 ${_selected.length}건을 쿠팡 Wing에서도 삭제합니다. 이미 잘못 올라간 상품일 때만 진행하세요.',
+          '선택한 ${_selected.length}건의 쿠팡 옵션을 판매중지합니다. Wing에서는 중지된 상품만 모아서 나중에 정리하면 됩니다.',
         ),
         actions: [
           TextButton(
@@ -629,7 +629,7 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
           ),
           FilledButton(
             onPressed: () => Navigator.of(ctx).pop(true),
-            child: const Text('삭제'),
+            child: const Text('판매중지'),
           ),
         ],
       ),
@@ -652,7 +652,7 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
           continue;
         }
         try {
-          await widget.api.postJson('/api/catalog/$id/delete-remote', {});
+          await widget.api.postJson('/api/catalog/$id/stop-remote', {});
           okCount += 1;
         } catch (_) {
           failedCount += 1;
@@ -663,7 +663,7 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            '쿠팡 삭제 완료: 성공 $okCount · 스킵 $skippedCount · 실패 $failedCount',
+            '쿠팡 판매중지 완료: 성공 $okCount · 스킵 $skippedCount · 실패 $failedCount',
           ),
         ),
       );
@@ -2347,8 +2347,10 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
         return '검증 필요';
       case 'deploy_failed':
         return '업로드 실패';
+      case 'sales_stopped':
+        return '판매중지';
       case 'deleted_remote':
-        return '원격 삭제됨';
+        return '원격 중지/삭제';
       case 'deleted_local':
         return '로컬 숨김';
       default:
@@ -2364,6 +2366,7 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
     if (status == 'uploaded') return Theme.of(context).colorScheme.primary;
     if (status == 'confirmed') return Theme.of(context).colorScheme.outline;
     if (status == 'deployed_invalid') return Colors.orange;
+    if (status == 'sales_stopped') return Colors.orange;
     if (status == 'deploy_failed') return Theme.of(context).colorScheme.error;
     return Theme.of(context).colorScheme.outline;
   }
@@ -2625,8 +2628,8 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
                       TextButton(
                         onPressed: _loading || _selected.isEmpty
                             ? null
-                            : _bulkDeleteRemote,
-                        child: const Text('쿠팡 삭제'),
+                            : _bulkStopRemote,
+                        child: const Text('판매중지'),
                       ),
                     ],
                   ),
@@ -2676,6 +2679,12 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
                   context,
                   'deploy_failed',
                   _statusLabel('deploy_failed'),
+                ),
+                const SizedBox(width: 8),
+                _statusChip(
+                  context,
+                  'sales_stopped',
+                  _statusLabel('sales_stopped'),
                 ),
               ],
             ),

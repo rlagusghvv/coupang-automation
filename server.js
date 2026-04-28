@@ -61,6 +61,7 @@ import { acknowledgeOrderSheets } from "./src/coupang/api/acknowledgeOrderSheets
 import { getOrderSheetByShipmentBoxId } from "./src/coupang/api/getOrderSheetByShipmentBoxId.js";
 import { uploadOrderInvoices } from "./src/coupang/api/uploadOrderInvoices.js";
 import { deleteSellerProduct } from "./src/coupang/api/deleteSellerProduct.js";
+import { stopVendorItemSales } from "./src/coupang/api/stopVendorItemSales.js";
 import { parseCoupangJson } from "./src/coupang/parseJson.js";
 import {
   listRecommendations,
@@ -2071,16 +2072,24 @@ function isDeletedStatusName(statusName) {
   if (!s) return false;
   return (
     s.includes("삭제") ||
+    s.includes("deleted")
+  );
+}
+
+function isSalesStoppedStatusName(statusName) {
+  const s = String(statusName || "").trim().toLowerCase();
+  if (!s) return false;
+  return (
     s.includes("판매중지") ||
     s.includes("판매 종료") ||
     s.includes("판매종료") ||
     s.includes("노출중지") ||
     s.includes("중지") ||
     s.includes("종료") ||
-    s.includes("deleted") ||
     s.includes("discontinued") ||
     s.includes("closed") ||
-    s.includes("stopped")
+    s.includes("stopped") ||
+    s.includes("suspended")
   );
 }
 
@@ -2187,6 +2196,7 @@ function extractSellerStatusSnapshot({
   const draftSaved = isDraftStatusName(statusName);
   const pendingApproval = !approved && isPendingApprovalStatusName(statusName);
   const deleted = isDeletedStatusName(statusName);
+  const salesStopped = isSalesStoppedStatusName(statusName);
   const title = pickFirstNonEmpty(
     data?.displayProductName,
     data?.sellerProductName,
@@ -2233,6 +2243,7 @@ function extractSellerStatusSnapshot({
     draftSaved,
     pendingApproval,
     deleted,
+    salesStopped,
     productId,
     vendorItemId,
     title: title || null,
@@ -2256,6 +2267,7 @@ function inferCatalogStatus(currentStatus, snapshot = null, fallback = "confirme
   }
   if (current === "deleted_local") return current;
   if (snapshot.deleted) return "deleted_remote";
+  if (snapshot.salesStopped || current === "sales_stopped") return "sales_stopped";
   if (snapshot.draftSaved) return "draft_saved";
   if (snapshot.pendingApproval) return "pending_approval";
   if (snapshot.detailEmpty) return "deployed_invalid";
@@ -2526,6 +2538,182 @@ function getCoupangAuth(settings = {}) {
   const secretKey = String(settings?.coupangSecretKey || "").trim();
   if (!accessKey || !secretKey) return null;
   return { accessKey, secretKey };
+}
+
+function extractVendorItemIdsFromSellerProductData(data = {}) {
+  const ids = [];
+  const seen = new Set();
+  const visit = (value, key = "") => {
+    if (value == null) return;
+    const keyText = String(key || "").trim();
+    if (/^vendorItemId$/i.test(keyText)) {
+      const id = String(value || "").trim();
+      if (/^\d+$/.test(id) && !seen.has(id)) {
+        seen.add(id);
+        ids.push(id);
+      }
+    }
+    if (Array.isArray(value)) {
+      for (const item of value) visit(item);
+      return;
+    }
+    if (value && typeof value === "object") {
+      for (const [childKey, childValue] of Object.entries(value)) {
+        visit(childValue, childKey);
+      }
+    }
+  };
+  visit(data);
+  return ids;
+}
+
+function coupangMutationSucceeded(response, bodyObj = {}) {
+  if (!response || Number(response.status || 0) >= 400) return false;
+  const code = String(bodyObj?.code || "").trim().toUpperCase();
+  if (code && code !== "SUCCESS" && code !== "SUCCES") return false;
+  return true;
+}
+
+async function stopCatalogProductSalesRemote({
+  userId,
+  settings,
+  row,
+  reason = "manual_remote_stop",
+  message = "",
+  eventType = "CATALOG_REMOTE_STOP",
+} = {}) {
+  if (!row) return { ok: false, error: "not_found", httpStatus: 404 };
+
+  const sellerProductId = resolveCatalogSellerProductId(row);
+  if (!sellerProductId) {
+    return { ok: false, error: "sellerProductId_missing", httpStatus: 400 };
+  }
+  const auth = getCoupangAuth(settings || {});
+  if (!auth) {
+    return { ok: false, error: "coupang_keys_missing", httpStatus: 400 };
+  }
+
+  const productRes = await getSellerProduct({
+    sellerProductId,
+    accessKey: auth.accessKey,
+    secretKey: auth.secretKey,
+  });
+  const productBodyObj = safeJsonParse(productRes?.body, {});
+  if (!productRes || Number(productRes.status) >= 400) {
+    return {
+      ok: false,
+      error: "coupang_status_fetch_failed",
+      httpStatus: Number(productRes?.status || 0) || 400,
+      detail: productBodyObj,
+    };
+  }
+
+  const productData = productBodyObj?.data || productBodyObj || {};
+  const vendorItemIds = extractVendorItemIdsFromSellerProductData(productData);
+  if (vendorItemIds.length === 0) {
+    return {
+      ok: false,
+      error: "vendorItemId_missing",
+      httpStatus: 400,
+      detail: productBodyObj,
+    };
+  }
+
+  const results = [];
+  for (const vendorItemId of vendorItemIds) {
+    try {
+      const remote = await stopVendorItemSales({
+        vendorItemId,
+        accessKey: auth.accessKey,
+        secretKey: auth.secretKey,
+      });
+      const detail = safeJsonParse(remote?.body, {});
+      results.push({
+        vendorItemId,
+        ok: coupangMutationSucceeded(remote, detail),
+        httpStatus: Number(remote?.status || 0) || null,
+        detail,
+      });
+    } catch (e) {
+      results.push({
+        vendorItemId,
+        ok: false,
+        httpStatus: null,
+        detail: { error: String(e?.message || e) },
+      });
+    }
+  }
+
+  const failed = results.filter((x) => !x.ok);
+  if (failed.length > 0) {
+    return {
+      ok: false,
+      error: "remote_stop_failed",
+      httpStatus: Number(failed[0]?.httpStatus || 0) || 400,
+      result: { sellerProductId, vendorItemIds, results },
+    };
+  }
+
+  const nowIso = new Date().toISOString();
+  const nextMeta = row.meta && typeof row.meta === "object" ? { ...row.meta } : {};
+  nextMeta.remoteSalesStopped = true;
+  nextMeta.remoteSalesStoppedAt = nowIso;
+  nextMeta.lastRemoteStop = {
+    checkedAt: nowIso,
+    sellerProductId,
+    vendorItemIds,
+    reason: String(reason || "").trim() || null,
+    results,
+  };
+  const prevValidation =
+    nextMeta.validation && typeof nextMeta.validation === "object"
+      ? { ...nextMeta.validation }
+      : {};
+  const nextErrors = Array.isArray(prevValidation.errors)
+    ? prevValidation.errors
+        .map((x) => String(x || "").trim())
+        .filter((x) => x && x !== "remote_sales_stopped")
+    : [];
+  nextErrors.push("remote_sales_stopped");
+  nextMeta.validation = {
+    ...prevValidation,
+    ok: false,
+    checkedAt: nowIso,
+    errors: uniqueStrings(nextErrors),
+  };
+
+  const updated = await updateUploadedProductById({
+    userId,
+    id: row.id,
+    patch: {
+      sellerProductId,
+      status: "sales_stopped",
+      metaReplace: nextMeta,
+    },
+  });
+
+  await appendCatalogEvent({
+    userId,
+    catalogId: row.id,
+    type: eventType,
+    severity: "warn",
+    message:
+      String(message || "").trim() ||
+      "쿠팡 옵션 판매중지를 요청했습니다.",
+    data: {
+      sellerProductId,
+      vendorItemIds,
+      reason,
+      results,
+    },
+  });
+
+  return {
+    ok: true,
+    stopped: true,
+    result: { sellerProductId, vendorItemIds, results, reason },
+    product: normalizeCatalogProduct(updated || row),
+  };
 }
 
 async function deleteCatalogProductRemote({
@@ -3256,7 +3444,7 @@ app.get("/api/catalog", authRequired, async (req, res) => {
     });
     let products = (listed.items || []).map(normalizeCatalogProduct);
     if (!status) {
-      const hiddenStatuses = new Set(["deleted_remote", "deleted_local"]);
+      const hiddenStatuses = new Set(["deleted_remote", "deleted_local", "sales_stopped"]);
       products = products.filter((p) => !hiddenStatuses.has(String(p?.status || "").trim()));
     }
     return res.json({
@@ -3296,7 +3484,7 @@ app.post("/api/catalog/price-audit/scan", authRequired, async (req, res) => {
       rows.push(
         ...((listed.items || []).filter((row) => {
           const status = String(row?.status || "").trim();
-          return status !== "deleted_local" && status !== "deleted_remote";
+          return status !== "deleted_local" && status !== "deleted_remote" && status !== "sales_stopped";
         })),
       );
     }
@@ -3547,7 +3735,7 @@ app.post("/api/catalog/moq-audit/scan", authRequired, async (req, res) => {
       rows.push(
         ...((listed.items || []).filter((row) => {
           const status = String(row?.status || "").trim();
-          return status !== "deleted_local" && status !== "deleted_remote";
+          return status !== "deleted_local" && status !== "deleted_remote" && status !== "sales_stopped";
         })),
       );
     }
@@ -3574,13 +3762,13 @@ app.post("/api/catalog/moq-audit/scan", authRequired, async (req, res) => {
         let normalizedProduct = null;
         if (autoStop && audit?.flagged) {
           try {
-            autoStopResult = await deleteCatalogProductRemote({
+            autoStopResult = await stopCatalogProductSalesRemote({
               userId: req.user.id,
               settings: req.user.settings || {},
               row: updated || row,
               reason: "minimum_order_qty_gt_1",
               eventType: "CATALOG_MOQ_AUTO_STOP",
-              message: `공급처 최소 주문수량 ${audit.minimumOrderQty}개 상품이라 쿠팡 판매를 중단 처리했습니다.`,
+              message: `공급처 최소 주문수량 ${audit.minimumOrderQty}개 상품이라 쿠팡 판매중지를 요청했습니다.`,
             });
           } catch (e) {
             autoStopResult = {
@@ -3658,6 +3846,27 @@ app.post("/api/catalog/:id/delete-remote", authRequired, async (req, res) => {
       settings: req.user.settings || {},
       row,
       reason: "manual_remote_delete",
+    });
+    if (!result?.ok) {
+      return res.status(Number(result?.httpStatus || 400) || 400).json(result);
+    }
+    return res.json(result);
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+app.post("/api/catalog/:id/stop-remote", authRequired, async (req, res) => {
+  try {
+    const id = String(req.params?.id || "").trim();
+    const row = await getUploadedProductById(req.user.id, id);
+    if (!row) return res.status(404).json({ ok: false, error: "not_found" });
+
+    const result = await stopCatalogProductSalesRemote({
+      userId: req.user.id,
+      settings: req.user.settings || {},
+      row,
+      reason: "manual_remote_stop",
     });
     if (!result?.ok) {
       return res.status(Number(result?.httpStatus || 400) || 400).json(result);
@@ -4544,7 +4753,7 @@ async function runCatalogAutoSyncOnce({ reason = "scheduler" } = {}) {
       parseBooleanFlag(u?.settings?.catalogAutoSyncEnabled, true),
     );
 
-    const skipStatuses = new Set(["deleted_local", "deleted_remote"]);
+    const skipStatuses = new Set(["deleted_local", "deleted_remote", "sales_stopped"]);
     const perUser = [];
     let totalTargets = 0;
     let totalSuccess = 0;
