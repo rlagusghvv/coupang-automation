@@ -246,6 +246,102 @@ async function estimateSupplierCharge({
   }
 }
 
+async function refreshMinimumOrderQtyFromSource({
+  uploadedProduct,
+  qty = 1,
+  timeoutMs = 8_000,
+} = {}) {
+  const sourceUrl = String(uploadedProduct?.sourceUrl || uploadedProduct?.meta?.sourceUrl || "").trim();
+  if (!uploadedProduct || !sourceUrl) return null;
+  try {
+    const parsed = await withTimeout(
+      parseProductFromDomaeqq(sourceUrl),
+      timeoutMs,
+      "source_moq_parse_timeout",
+    );
+    const rawMinimumOrderQty =
+      parsed?.minimumOrderQty ??
+      parsed?.purchaseConstraints?.minimumOrderQty ??
+      parsed?.draft?.purchaseConstraints?.minimumOrderQty;
+    const minimumOrderQty =
+      Number.isFinite(Number(rawMinimumOrderQty)) && Number(rawMinimumOrderQty) > 0
+        ? Number(rawMinimumOrderQty)
+        : 1;
+    const sourcePurchase =
+      uploadedProduct?.meta?.sourcePurchase && typeof uploadedProduct.meta.sourcePurchase === "object"
+        ? { ...uploadedProduct.meta.sourcePurchase, minimumOrderQty }
+        : { minimumOrderQty };
+    const sourcePrice = Number(parsed?.price);
+    const sourceShippingFee = Number(parsed?.shippingFee);
+    if (uploadedProduct?.id && uploadedProduct?.userId) {
+      const metaMerge = {
+        sourcePurchase,
+        sourceMoqCheckedAt: new Date().toISOString(),
+      };
+      if (Number.isFinite(sourcePrice) && sourcePrice > 0) {
+        metaMerge.sourcePrice = sourcePrice;
+      }
+      if (Number.isFinite(sourceShippingFee)) {
+        metaMerge.sourceShippingFee = sourceShippingFee;
+      }
+      if (minimumOrderQty > Math.max(1, Number(qty) || 1)) {
+        metaMerge.orderBlock = {
+          code: "minimum_order_qty_gt_1",
+          minimumOrderQty,
+          detectedAt: new Date().toISOString(),
+          source: "domeggook_source_parse",
+        };
+      }
+      try {
+        await updateUploadedProductById({
+          userId: uploadedProduct.userId,
+          id: uploadedProduct.id,
+          patch: { metaMerge },
+        });
+      } catch {}
+    }
+    return {
+      minimumOrderQty,
+      source: "parsed_source",
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function markMinimumOrderQtyBlocked({
+  uploadedProduct,
+  minimumOrderQty = 2,
+  source = "domeggook_setOrder",
+} = {}) {
+  const minQty =
+    Number.isFinite(Number(minimumOrderQty)) && Number(minimumOrderQty) > 1
+      ? Number(minimumOrderQty)
+      : 2;
+  if (!uploadedProduct?.id || !uploadedProduct?.userId) return;
+  const sourcePurchase =
+    uploadedProduct?.meta?.sourcePurchase && typeof uploadedProduct.meta.sourcePurchase === "object"
+      ? { ...uploadedProduct.meta.sourcePurchase, minimumOrderQty: minQty }
+      : { minimumOrderQty: minQty };
+  try {
+    await updateUploadedProductById({
+      userId: uploadedProduct.userId,
+      id: uploadedProduct.id,
+      patch: {
+        metaMerge: {
+          sourcePurchase,
+          orderBlock: {
+            code: "minimum_order_qty_gt_1",
+            minimumOrderQty: minQty,
+            detectedAt: new Date().toISOString(),
+            source,
+          },
+        },
+      },
+    });
+  } catch {}
+}
+
 export async function createDomeggookOrderForCoupangOrder({
   userId = "",
   settings = {},
@@ -311,11 +407,18 @@ export async function createDomeggookOrderForCoupangOrder({
     };
   }
 
-  if (uploadedProduct?.meta?.sourcePurchase?.minimumOrderQty > 1) {
+  if (!uploadedProduct) {
+    uploadedProduct = await resolveUploadedProductForOrderItem({ userId, item });
+  }
+
+  const storedMinimumOrderQty = Number(uploadedProduct?.meta?.sourcePurchase?.minimumOrderQty || 1);
+  if (Number.isFinite(storedMinimumOrderQty) && storedMinimumOrderQty > qty) {
     return {
       ok: false,
-      error: "minimum_order_qty_gt_1",
-      minimumOrderQty: uploadedProduct.meta.sourcePurchase.minimumOrderQty,
+      error: "TOO_LESS_AMOUNT",
+      details: "공급처 최소 주문수량보다 쿠팡 주문수량이 적습니다.",
+      minimumOrderQty: storedMinimumOrderQty,
+      orderQty: qty,
     };
   }
 
@@ -344,6 +447,35 @@ export async function createDomeggookOrderForCoupangOrder({
     shippingMethodCode,
     allowSourceParse: false,
   });
+
+  if (!dryRun) {
+    const refreshedMinimum = await refreshMinimumOrderQtyFromSource({
+      uploadedProduct,
+      qty,
+    });
+    if (
+      refreshedMinimum &&
+      Number.isFinite(Number(refreshedMinimum.minimumOrderQty)) &&
+      Number(refreshedMinimum.minimumOrderQty) > qty
+    ) {
+      return {
+        ok: false,
+        error: "TOO_LESS_AMOUNT",
+        details: "공급처 최소 주문수량보다 쿠팡 주문수량이 적습니다.",
+        minimumOrderQty: Number(refreshedMinimum.minimumOrderQty),
+        orderQty: qty,
+        minimumOrderQtySource: refreshedMinimum.source,
+        mapping: {
+          source: resolution.source,
+          itemNo: resolution.itemNo,
+          optionCode: resolution.optionCode || "00",
+          optionName: resolution.optionName || "",
+          shippingMethodCode,
+        },
+      };
+    }
+  }
+
   const payloadPreview = {
     receipt: Number(receipt) === 1 ? 1 : 0,
     itemEntries,
@@ -378,10 +510,20 @@ export async function createDomeggookOrderForCoupangOrder({
       }
     }
   } catch (e) {
+    const upstreamError = String(e?.message || e).trim();
+    if (upstreamError === "TOO_LESS_AMOUNT") {
+      await markMinimumOrderQtyBlocked({
+        uploadedProduct,
+        minimumOrderQty: Math.max(qty + 1, 2),
+        source: "domeggook_setOrder",
+      });
+    }
     return {
       ok: false,
-      error: String(e?.message || e),
+      error: upstreamError,
       details: String(e?.details || "").trim(),
+      minimumOrderQty: upstreamError === "TOO_LESS_AMOUNT" ? Math.max(qty + 1, 2) : undefined,
+      orderQty: qty,
       payloadPreview,
       estimate,
       asset,

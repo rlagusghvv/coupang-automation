@@ -146,6 +146,10 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
       case 'minimum_order_qty_gt_1':
         final minQty = result['minimumOrderQty'];
         return '공급처 최소 주문수량이 ${minQty ?? '-'}개라 자동 주문을 막았습니다.';
+      case 'TOO_LESS_AMOUNT':
+        final minQty = result['minimumOrderQty'];
+        final orderQty = result['orderQty'];
+        return '공급처 최소 주문수량보다 쿠팡 주문수량이 적습니다. 주문수량 ${orderQty ?? '-'}개 / 최소 ${minQty ?? '-'}개입니다. 이 상품은 판매중지하거나 삭제하세요.';
       case 'missing_domeggook_private_credentials':
         return '도매꾹 Private API 키, ID, 비밀번호를 먼저 입력해 주세요.';
       case 'order_not_found':
@@ -465,6 +469,10 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
       case 'minimum_order_qty_gt_1':
         final minQty = data['minimumOrderQty'];
         return '공급처 최소 주문수량이 ${minQty ?? '-'}개라 자동 주문을 막았습니다.';
+      case 'TOO_LESS_AMOUNT':
+        final minQty = data['minimumOrderQty'];
+        final orderQty = data['orderQty'];
+        return '주문수량 ${orderQty ?? '-'}개가 공급처 최소 ${minQty ?? '-'}개보다 적습니다.';
       case 'missing_domeggook_private_credentials':
         return '도매꾹 Private API 자격정보를 먼저 입력해 주세요.';
       case 'estimate_unavailable':

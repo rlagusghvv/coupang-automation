@@ -52740,52 +52740,56 @@ if(J.au(s)===0)return o
 try{r=B.by.ob(0,s,o)
 if(t.f.b(r)){q=J.a3(r,t.N,t.z)
 return q}}catch(p){}return o},
-Up(a1,a2){var s,r,q,p,o,n,m,l,k,j,i,h,g,f,e,d,c,b,a=null,a0=a2==null?this.ID(a1):a2
-if(a0==null)a0=B.C
-s=a0.h(0,"error")
+Up(a4,a5){var s,r,q,p,o,n,m,l,k,j,i,h,g,f,e,d,c,b,a,a0=null,a1="minimumOrderQty",a2="-",a3=a5==null?this.ID(a4):a5
+if(a3==null)a3=B.C
+s=a3.h(0,"error")
 r=B.b.A(J.j(s==null?"":s))
-s=a0.h(0,"details")
+s=a3.h(0,"details")
 q=B.b.A(J.j(s==null?"":s))
 s=t.Y
-p=s.a(a0.h(0,"result"))
-o=p==null?a:J.a3(p,t.N,t.z)
+p=s.a(a3.h(0,"result"))
+o=p==null?a0:J.a3(p,t.N,t.z)
 if(o==null)o=B.C
 p=o.h(0,"error")
 n=B.b.A(J.j(p==null?"":p))
 p=o.h(0,"details")
 m=B.b.A(J.j(p==null?"":p))
 p=s.a(o.h(0,"mapping"))
-l=p==null?a:J.a3(p,t.N,t.z)
+l=p==null?a0:J.a3(p,t.N,t.z)
 if(l==null)l=B.C
 k=n.length!==0?n:r
 switch(k){case"too_less_emoney_precheck":p=s.a(o.h(0,"asset"))
-j=p==null?a:J.a3(p,t.N,t.z)
+j=p==null?a0:J.a3(p,t.N,t.z)
 if(j==null)j=B.C
 s=s.a(o.h(0,"estimate"))
-i=s==null?a:J.a3(s,t.N,t.z)
+i=s==null?a0:J.a3(s,t.N,t.z)
 if(i==null)i=B.C
 return"\ud604\uae08\uc131 \uc774\uba38\ub2c8\uac00 \ubd80\uc871\ud569\ub2c8\ub2e4. \ud604\uc7ac "+this.pA(j.h(0,"emoneyCash"))+", \uc608\uc0c1 \ucc28\uac10\uc561 "+this.pA(i.h(0,"total"))+" \uc785\ub2c8\ub2e4."
 case"supplier_mapping_missing":return"\uc774 \uc8fc\ubb38\uc740 \uacf5\uae09\ucc98 \uc0c1\ud488\ubc88\ud638/\uc635\uc158\ucf54\ub4dc \ub9e4\ud551\uc774 \uc5c6\uc5b4 \ub3c4\ub9e4\uafb9 \uc790\ub3d9 \uc8fc\ubb38\uc744 \ub9cc\ub4e4 \uc218 \uc5c6\uc2b5\ub2c8\ub2e4."
-case"minimum_order_qty_gt_1":h=o.h(0,"minimumOrderQty")
-return"\uacf5\uae09\ucc98 \ucd5c\uc18c \uc8fc\ubb38\uc218\ub7c9\uc774 "+A.m(h==null?"-":h)+"\uac1c\ub77c \uc790\ub3d9 \uc8fc\ubb38\uc744 \ub9c9\uc558\uc2b5\ub2c8\ub2e4."
+case"minimum_order_qty_gt_1":h=o.h(0,a1)
+return"\uacf5\uae09\ucc98 \ucd5c\uc18c \uc8fc\ubb38\uc218\ub7c9\uc774 "+A.m(h==null?a2:h)+"\uac1c\ub77c \uc790\ub3d9 \uc8fc\ubb38\uc744 \ub9c9\uc558\uc2b5\ub2c8\ub2e4."
+case"TOO_LESS_AMOUNT":h=o.h(0,a1)
+g=o.h(0,"orderQty")
+s=A.m(g==null?a2:g)
+return"\uacf5\uae09\ucc98 \ucd5c\uc18c \uc8fc\ubb38\uc218\ub7c9\ubcf4\ub2e4 \ucfe0\ud321 \uc8fc\ubb38\uc218\ub7c9\uc774 \uc801\uc2b5\ub2c8\ub2e4. \uc8fc\ubb38\uc218\ub7c9 "+s+"\uac1c / \ucd5c\uc18c "+A.m(h==null?a2:h)+"\uac1c\uc785\ub2c8\ub2e4. \uc774 \uc0c1\ud488\uc740 \ud310\ub9e4\uc911\uc9c0\ud558\uac70\ub098 \uc0ad\uc81c\ud558\uc138\uc694."
 case"missing_domeggook_private_credentials":return"\ub3c4\ub9e4\uafb9 Private API \ud0a4, ID, \ube44\ubc00\ubc88\ud638\ub97c \uba3c\uc800 \uc785\ub825\ud574 \uc8fc\uc138\uc694."
 case"order_not_found":return"\uc8fc\ubb38 \uc815\ubcf4\ub97c \ub2e4\uc2dc \ubd88\ub7ec\uc640 \uc8fc\uc138\uc694."
-default:if(m.length!==0)g=m
-else g=q.length!==0?q:""
+default:if(m.length!==0)f=m
+else f=q.length!==0?q:""
 s=l.h(0,"itemNo")
-f=B.b.A(J.j(s==null?"":s))
-s=l.h(0,"optionCode")
 e=B.b.A(J.j(s==null?"":s))
-s=l.h(0,"shippingMethodCode")
+s=l.h(0,"optionCode")
 d=B.b.A(J.j(s==null?"":s))
-c=A.b([],t.s)
-if(k.length!==0)c.push("\uc2e4\ud328 \ucf54\ub4dc: "+k)
-if(g.length!==0)c.push(g)
-s=f.length===0
-if(!s||e.length!==0||d.length!==0){s=s?"-":f
-p=e.length===0?"-":e
-b=d.length===0?"-":d
-c.push("\ub9e4\ud551: \uc0c1\ud488\ubc88\ud638 "+s+" / \uc635\uc158 "+p+" / \ubc30\uc1a1 "+b)}return c.length===0?J.j(a1):B.c.aX(c,"\n")}},
+s=l.h(0,"shippingMethodCode")
+c=B.b.A(J.j(s==null?"":s))
+b=A.b([],t.s)
+if(k.length!==0)b.push("\uc2e4\ud328 \ucf54\ub4dc: "+k)
+if(f.length!==0)b.push(f)
+s=e.length===0
+if(!s||d.length!==0||c.length!==0){s=s?a2:e
+p=d.length===0?a2:d
+a=c.length===0?a2:c
+b.push("\ub9e4\ud551: \uc0c1\ud488\ubc88\ud638 "+s+" / \uc635\uc158 "+p+" / \ubc30\uc1a1 "+a)}return b.length===0?J.j(a4):B.c.aX(b,"\n")}},
 nN(a){return this.aqr(!0)},
 aqr(a){var s=0,r=A.w(t.H),q,p=2,o=[],n=[],m=this,l,k,j,i,h,g,f
 var $async$nN=A.x(function(b,c){if(b===1){o.push(c)
@@ -53066,19 +53070,23 @@ break
 case 6:case 1:return A.u(q,r)
 case 2:return A.t(o.at(-1),r)}})
 return A.v($async$tm,r)},
-apR(a){var s,r,q,p,o=a==null?B.C:a,n=o.h(0,"error")
-if(n==null)n=o.h(0,"canOrderReason")
-switch(B.b.A(J.j(n==null?"":n))){case"too_less_emoney_precheck":case"too_less_emoney":n=t.Y
-s=n.a(o.h(0,"asset"))
+apR(a){var s,r,q,p,o,n="minimumOrderQty",m=a==null?B.C:a,l=m.h(0,"error")
+if(l==null)l=m.h(0,"canOrderReason")
+switch(B.b.A(J.j(l==null?"":l))){case"too_less_emoney_precheck":case"too_less_emoney":l=t.Y
+s=l.a(m.h(0,"asset"))
 r=s==null?null:J.a3(s,t.N,t.z)
 if(r==null)r=B.C
-n=n.a(o.h(0,"estimate"))
-q=n==null?null:J.a3(n,t.N,t.z)
+l=l.a(m.h(0,"estimate"))
+q=l==null?null:J.a3(l,t.N,t.z)
 if(q==null)q=B.C
 return"\ud604\uae08\uc131 \uc774\uba38\ub2c8 "+this.pA(r.h(0,"emoneyCash"))+", \uc608\uc0c1 \ucc28\uac10\uc561 "+this.pA(q.h(0,"total"))+" \uc785\ub2c8\ub2e4. \ucda9\uc804 \ud6c4 \ub2e4\uc2dc \ud655\uc778\ud574 \uc8fc\uc138\uc694."
 case"supplier_mapping_missing":return"\uacf5\uae09\ucc98 \uc0c1\ud488\ubc88\ud638/\uc635\uc158\ucf54\ub4dc \ub9e4\ud551\uc774 \uc5c6\uc5b4 \uc790\ub3d9 \uc8fc\ubb38\uc744 \ub9cc\ub4e4 \uc218 \uc5c6\uc2b5\ub2c8\ub2e4."
-case"minimum_order_qty_gt_1":p=o.h(0,"minimumOrderQty")
+case"minimum_order_qty_gt_1":p=m.h(0,n)
 return"\uacf5\uae09\ucc98 \ucd5c\uc18c \uc8fc\ubb38\uc218\ub7c9\uc774 "+A.m(p==null?"-":p)+"\uac1c\ub77c \uc790\ub3d9 \uc8fc\ubb38\uc744 \ub9c9\uc558\uc2b5\ub2c8\ub2e4."
+case"TOO_LESS_AMOUNT":p=m.h(0,n)
+o=m.h(0,"orderQty")
+l=A.m(o==null?"-":o)
+return"\uc8fc\ubb38\uc218\ub7c9 "+l+"\uac1c\uac00 \uacf5\uae09\ucc98 \ucd5c\uc18c "+A.m(p==null?"-":p)+"\uac1c\ubcf4\ub2e4 \uc801\uc2b5\ub2c8\ub2e4."
 case"missing_domeggook_private_credentials":return"\ub3c4\ub9e4\uafb9 Private API \uc790\uaca9\uc815\ubcf4\ub97c \uba3c\uc800 \uc785\ub825\ud574 \uc8fc\uc138\uc694."
 case"estimate_unavailable":return"\uc608\uc0c1 \ucc28\uac10\uc561 \uacc4\uc0b0\uc774 \uc548 \ub3fc \uc794\uc561\ub9cc \ud655\uc778\ub41c \uc0c1\ud0dc\uc785\ub2c8\ub2e4."
 case"enough_emoney":return"\ud604\uc7ac \uc794\uc561\uc73c\ub85c \uc790\ub3d9 \uc8fc\ubb38 \uac00\ub2a5\ud55c \uc0c1\ud0dc\uc785\ub2c8\ub2e4."
