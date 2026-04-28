@@ -350,6 +350,14 @@ function parsePriceNumber(value) {
   return pickPrimaryNumericAmount(parsed);
 }
 
+function parseMinimumOrderQtyNumber(value) {
+  const text = String(value ?? "").trim();
+  const numericText = Number.isFinite(Number(text)) ? text : text.match(/\d+/)?.[0] || "";
+  const n = Number(numericText);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return Math.floor(n);
+}
+
 function collectOpenApiSignals(node, state, parentKey = "", baseUrl = "") {
   const key = String(parentKey || "").toLowerCase();
   if (node == null) return;
@@ -364,6 +372,10 @@ function collectOpenApiSignals(node, state, parentKey = "", baseUrl = "") {
     const imageKey = /(img|image|thumb|thumbnail|photo)/i.test(key);
     const priceKey = /(price|amount|cost|sell|sale|supply)/i.test(key) && !/(delivery|ship|fee)/i.test(key);
     const shippingKey = /(delivery|ship|fee|deli|배송|택배)/i.test(key);
+    const moqKey =
+      /(^|\.)(dome|supply)?moq$/i.test(key) ||
+      /minimum.*qty|min.*order.*qty|order.*min.*qty|min.*buy.*qty/i.test(key) ||
+      /(^|\.)qty\.(domeMoq|supplyMoq|moq|min|minimum|minQty)$/i.test(parentKey);
 
     if ((detailKey || (looksHtml && text.length >= 120)) && /<img|<div|<p|<table|<br/i.test(text)) {
       state.detailHtmlCandidates.push(text);
@@ -374,6 +386,10 @@ function collectOpenApiSignals(node, state, parentKey = "", baseUrl = "") {
     if (priceKey) {
       const n = parsePriceNumber(text);
       if (Number.isFinite(n) && n > 0) state.prices.push(n);
+    }
+    if (moqKey) {
+      const n = parseMinimumOrderQtyNumber(text);
+      if (Number.isFinite(n) && n > 0) state.minimumOrderQtyCandidates.push(n);
     }
     if (shippingKey || /배송|택배|착불/.test(text)) {
       const shipText = parseShippingFeeFromText(text);
@@ -404,6 +420,14 @@ function collectOpenApiSignals(node, state, parentKey = "", baseUrl = "") {
   if (typeof node === "number") {
     const priceKey = /(price|amount|cost|sell|sale|supply)/i.test(key) && !/(delivery|ship|fee)/i.test(key);
     if (priceKey && Number.isFinite(node) && node > 0) state.prices.push(Number(node));
+    const moqKey =
+      /(^|\.)(dome|supply)?moq$/i.test(key) ||
+      /minimum.*qty|min.*order.*qty|order.*min.*qty|min.*buy.*qty/i.test(key) ||
+      /(^|\.)qty\.(domeMoq|supplyMoq|moq|min|minimum|minQty)$/i.test(parentKey);
+    if (moqKey) {
+      const n = parseMinimumOrderQtyNumber(node);
+      if (Number.isFinite(n) && n > 0) state.minimumOrderQtyCandidates.push(n);
+    }
     const shippingKey = /(delivery|ship|deli|배송|택배)/i.test(key);
     const shippingAmountKey =
       /(fee|cost|amount|price|배송비|택배비)/i.test(key) ||
@@ -685,6 +709,7 @@ async function loadQuickShippingFeeCandidate(itemUrl, opts = {}) {
 async function loadOpenApiItemViewCandidate(itemUrl, opts = {}) {
   const fastMode = Boolean(opts?.fastMode);
   const includeDeli = opts?.includeDeli !== false;
+  const apiKey = String(opts?.apiKey || "").trim();
   const timeoutMs = Math.max(
     1200,
     Math.min(10000, Number(opts?.timeoutMs) || (fastMode ? 5500 : 15000)),
@@ -695,6 +720,7 @@ async function loadOpenApiItemViewCandidate(itemUrl, opts = {}) {
   try {
     const { domeggookOpenApiGetItemView } = await import("../../utils/domeggook_openapi.js");
     const view = await domeggookOpenApiGetItemView({
+      apiKey,
       itemNo,
       ver: "4.5",
       om: "json",
@@ -712,6 +738,7 @@ async function loadOpenApiItemViewCandidate(itemUrl, opts = {}) {
       titles: [],
       prices: [],
       shippingFees: [],
+      minimumOrderQtyCandidates: [],
       shippingUnknownPaid: false,
     };
     collectOpenApiSignals(raw, state, "", itemUrl);
@@ -772,6 +799,10 @@ async function loadOpenApiItemViewCandidate(itemUrl, opts = {}) {
     if (shippingFee == null && state.shippingUnknownPaid) {
       shippingFee = -1;
     }
+    const minimumOrderQty =
+      state.minimumOrderQtyCandidates.length > 0
+        ? Math.max(...state.minimumOrderQtyCandidates)
+        : 1;
     const title = state.titles.find((t) => t && !/<[^>]+>/.test(String(t)));
 
     return {
@@ -783,6 +814,7 @@ async function loadOpenApiItemViewCandidate(itemUrl, opts = {}) {
       detailImages,
       price,
       shippingFee,
+      minimumOrderQty,
       title: String(title || "").trim(),
       diagnostics: {
         detailHtmlCandidates: state.detailHtmlCandidates.length + linkHtml.length,
@@ -794,6 +826,7 @@ async function loadOpenApiItemViewCandidate(itemUrl, opts = {}) {
         detailImageCandidates: detailImages.length,
         priceCandidates: state.prices.length,
         shippingCandidates: shippingCandidates.length,
+        minimumOrderQtyCandidates: state.minimumOrderQtyCandidates.length,
         shippingFromText: Number.isFinite(Number(shippingFromText)) ? Number(shippingFromText) : null,
       },
     };
@@ -1570,6 +1603,13 @@ export async function parseProductFromDomaeqq(url, opts = {}) {
   const previewSeedTitle = String(opts?.previewSeedTitle || "").trim();
   const previewSeedPrice = Number(opts?.previewSeedPrice);
   const previewSeedImageUrl = normalizeUrl(String(opts?.previewSeedImageUrl || "").trim());
+  const openApiKey = String(
+    opts?.domeggookOpenApiKey ||
+      opts?.domeggookPrivateApiKey ||
+      opts?.openApiKey ||
+      opts?.apiKey ||
+      "",
+  ).trim();
   const previewPlaywrightFast = mode === "preview" && previewSourceMode === "playwright";
   const is1688 = String(url || "").includes("1688.domeggook.com");
   const isMobile = (() => {
@@ -1589,6 +1629,7 @@ export async function parseProductFromDomaeqq(url, opts = {}) {
       const openApiItemView = await loadOpenApiItemViewCandidate(url, {
         fastMode: true,
         timeoutMs: previewOpenApiTimeoutMs,
+        apiKey: openApiKey,
       });
       openApiFailureReason = String(openApiItemView?.reason || "").trim();
       const fastTitle = String(openApiItemView?.title || previewSeedTitle || "").trim();
@@ -1730,7 +1771,7 @@ export async function parseProductFromDomaeqq(url, opts = {}) {
           sourceUrl: String(url || "").trim(),
           itemNo: String(openApiItemView?.itemNo || "").trim(),
           options: [],
-          minimumOrderQty: 1,
+          minimumOrderQty: openApiItemView?.minimumOrderQty || 1,
         });
       }
     } catch (e) {
@@ -1771,6 +1812,7 @@ export async function parseProductFromDomaeqq(url, opts = {}) {
         ? await loadOpenApiItemViewCandidate(refererUrl || url, {
             fastMode: previewPlaywrightFast,
             timeoutMs: previewPlaywrightFast ? Math.min(previewOpenApiTimeoutMs, 2800) : 12000,
+            apiKey: openApiKey,
           })
         : { ok: false, reason: "not_domeggook_item_view" };
 
@@ -2231,7 +2273,7 @@ export async function parseProductFromDomaeqq(url, opts = {}) {
         sourceUrl: url,
         itemNo: String(openApiItemView?.itemNo || "").trim(),
         options: [],
-        minimumOrderQty: 1,
+        minimumOrderQty: openApiItemView?.minimumOrderQty || 1,
       });
     }
     const categoryText = await page.evaluate(() => {
@@ -2453,10 +2495,17 @@ export async function parseProductFromDomaeqq(url, opts = {}) {
       shippingFee,
     });
 
-    draft.purchaseConstraints = {
-      minimumOrderQty: Number.isFinite(Number(qtyMinQty)) && Number(qtyMinQty) > 0
+    const pageMinimumOrderQty =
+      Number.isFinite(Number(qtyMinQty)) && Number(qtyMinQty) > 0
         ? Number(qtyMinQty)
-        : 1,
+        : 1;
+    const openApiMinimumOrderQty =
+      Number.isFinite(Number(openApiItemView?.minimumOrderQty)) &&
+      Number(openApiItemView.minimumOrderQty) > 0
+        ? Number(openApiItemView.minimumOrderQty)
+        : 1;
+    draft.purchaseConstraints = {
+      minimumOrderQty: Math.max(pageMinimumOrderQty, openApiMinimumOrderQty),
       quantityPriceTiers: Array.isArray(qtyPriceTiers) ? qtyPriceTiers.slice(0, 10) : [],
     };
     attachPurchaseSourceToDraft(draft, {

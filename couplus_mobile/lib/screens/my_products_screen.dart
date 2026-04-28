@@ -542,6 +542,8 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
       var scanned = 0;
       var flagged = 0;
       var skipped = 0;
+      var stopped = 0;
+      var stopFailed = 0;
 
       for (var start = 0; start < ids.length; start += batchSize) {
         final end =
@@ -555,29 +557,36 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
         }
         final json = await widget.api.postJson('/api/catalog/moq-audit/scan', {
           'ids': chunk,
+          'autoStop': true,
         });
         final items = (json['items'] as List?) ?? const [];
         for (final raw in items) {
           if (raw is! Map) continue;
           final item = raw.cast<String, dynamic>();
           if (item['flagged'] == true) {
+            final autoStop =
+                (item['autoStop'] as Map?)?.cast<String, dynamic>() ??
+                    const <String, dynamic>{};
             final product =
                 (item['product'] as Map?)?.cast<String, dynamic>() ??
                     const <String, dynamic>{};
             final id = (product['id'] ?? item['id'] ?? '').toString().trim();
-            if (id.isNotEmpty) flaggedIds.add(id);
+            if (id.isNotEmpty && autoStop['ok'] != true) flaggedIds.add(id);
           }
         }
         scanned += int.tryParse((json['scanned'] ?? 0).toString()) ?? 0;
         flagged += int.tryParse((json['flagged'] ?? 0).toString()) ?? 0;
         skipped += int.tryParse((json['skipped'] ?? 0).toString()) ?? 0;
+        stopped += int.tryParse((json['autoStopped'] ?? 0).toString()) ?? 0;
+        stopFailed +=
+            int.tryParse((json['autoStopFailed'] ?? 0).toString()) ?? 0;
       }
 
       await _refresh(syncRemote: false);
       if (!mounted) return;
       setState(() {
-        _lastMoqAuditSummary =
-            'MOQ 검사: 문제 $flagged건 · 스킵 $skipped건 (검사 $scanned건)';
+        _lastMoqAuditSummary = 'MOQ 검사: 문제 $flagged건 · 판매중단 $stopped건'
+            ' · 중단실패 $stopFailed건 · 스킵 $skipped건 (검사 $scanned건)';
         _selectMode = flaggedIds.isNotEmpty;
         _selected
           ..clear()
@@ -586,9 +595,11 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            flaggedIds.isNotEmpty
-                ? 'MOQ 문제 ${flaggedIds.length}건을 선택해 두었습니다.'
-                : '최소 주문수량 문제 상품을 찾지 못했습니다.',
+            stopped > 0
+                ? 'MOQ 문제 $stopped건을 쿠팡 판매중단 처리했습니다.'
+                : flaggedIds.isNotEmpty
+                    ? '판매중단 실패 ${flaggedIds.length}건을 선택해 두었습니다.'
+                    : '최소 주문수량 문제 상품을 찾지 못했습니다.',
           ),
         ),
       );
@@ -2516,7 +2527,7 @@ class _MyProductsScreenState extends State<MyProductsScreen> {
                               child: CircularProgressIndicator(strokeWidth: 2),
                             )
                           : const Icon(Icons.inventory_2_outlined),
-                      label: const Text('MOQ 검사'),
+                      label: const Text('MOQ 검사+중지'),
                     ),
                     FilledButton.tonalIcon(
                       onPressed: _loading ? null : _importBySellerProductId,

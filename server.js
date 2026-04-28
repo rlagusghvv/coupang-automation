@@ -79,6 +79,7 @@ import {
   normalizeDomeggookPrivateOrderView,
   resolveDomeggookPrivateCredentials,
 } from "./src/utils/domeggook_private_api.js";
+import { domeggookOpenApiGetItemView } from "./src/utils/domeggook_openapi.js";
 
 const app = express();
 app.set("trust proxy", true);
@@ -2527,6 +2528,111 @@ function getCoupangAuth(settings = {}) {
   return { accessKey, secretKey };
 }
 
+async function deleteCatalogProductRemote({
+  userId,
+  settings,
+  row,
+  reason = "manual_remote_delete",
+  message = "",
+  eventType = "CATALOG_REMOTE_DELETE",
+} = {}) {
+  if (!row) return { ok: false, error: "not_found", httpStatus: 404 };
+
+  const sellerProductId = resolveCatalogSellerProductId(row);
+  if (!sellerProductId) {
+    return { ok: false, error: "sellerProductId_missing", httpStatus: 400 };
+  }
+  const auth = getCoupangAuth(settings || {});
+  if (!auth) {
+    return { ok: false, error: "coupang_keys_missing", httpStatus: 400 };
+  }
+
+  const remote = await deleteSellerProduct({
+    sellerProductId,
+    accessKey: auth.accessKey,
+    secretKey: auth.secretKey,
+  });
+  const detail = safeJsonParse(remote?.body, {});
+  const alreadyGone =
+    Number(remote?.status || 0) === 404 || bodyLooksNotFoundError(detail);
+  if ((!remote || Number(remote.status) >= 400) && !alreadyGone) {
+    return {
+      ok: false,
+      error: "remote_delete_failed",
+      httpStatus: Number(remote?.status || 0) || 400,
+      detail,
+    };
+  }
+
+  const nowIso = new Date().toISOString();
+  const nextMeta = row.meta && typeof row.meta === "object" ? { ...row.meta } : {};
+  nextMeta.remoteDeleted = true;
+  nextMeta.remoteDeletedAt = nowIso;
+  nextMeta.lastRemoteDelete = {
+    checkedAt: nowIso,
+    sellerProductId,
+    httpStatus: Number(remote?.status || 0) || null,
+    alreadyGone,
+    reason: String(reason || "").trim() || null,
+  };
+  const prevValidation =
+    nextMeta.validation && typeof nextMeta.validation === "object"
+      ? { ...nextMeta.validation }
+      : {};
+  const nextErrors = Array.isArray(prevValidation.errors)
+    ? prevValidation.errors
+        .map((x) => String(x || "").trim())
+        .filter((x) => x && x !== "remote_deleted")
+    : [];
+  nextErrors.push("remote_deleted");
+  nextMeta.validation = {
+    ...prevValidation,
+    ok: false,
+    checkedAt: nowIso,
+    errors: uniqueStrings(nextErrors),
+  };
+
+  const updated = await updateUploadedProductById({
+    userId,
+    id: row.id,
+    patch: {
+      sellerProductId,
+      status: "deleted_remote",
+      metaReplace: nextMeta,
+    },
+  });
+
+  await appendCatalogEvent({
+    userId,
+    catalogId: row.id,
+    type: eventType,
+    severity: "warn",
+    message:
+      String(message || "").trim() ||
+      (alreadyGone
+        ? "쿠팡에서 이미 삭제된 상품으로 처리했습니다."
+        : "쿠팡 상품 삭제를 요청했습니다."),
+    data: {
+      sellerProductId,
+      httpStatus: Number(remote?.status || 0) || null,
+      alreadyGone,
+      reason,
+    },
+  });
+
+  return {
+    ok: true,
+    deleted: true,
+    result: {
+      sellerProductId,
+      httpStatus: Number(remote?.status || 0) || null,
+      alreadyGone,
+      reason,
+    },
+    product: normalizeCatalogProduct(updated || row),
+  };
+}
+
 async function fetchSellerStatusLive({ sellerProductId, settings, includeHistory = true }) {
   const spid = String(sellerProductId || "").trim();
   if (!spid) {
@@ -2790,18 +2896,126 @@ async function persistCatalogPriceAudit({ userId, row, audit }) {
   });
 }
 
+function extractDomeggookItemNo(rawUrl) {
+  try {
+    const u = new URL(String(rawUrl || "").trim());
+    const queryNo = String(
+      u.searchParams.get("no") ||
+        u.searchParams.get("itemNo") ||
+        u.searchParams.get("itemno") ||
+        "",
+    ).trim();
+    if (/^\d{5,}$/.test(queryNo)) return queryNo;
+    const pathMatch = u.pathname.match(/\/(\d{5,})(?:\/)?$/);
+    if (pathMatch?.[1]) return pathMatch[1];
+  } catch {}
+  const textMatch = String(rawUrl || "").match(/(?:domeggook\.com\/|no=)(\d{5,})/i);
+  return textMatch?.[1] || "";
+}
+
+function normalizeMinimumOrderQty(value) {
+  const rawText = String(value ?? "").trim();
+  const numericText = Number.isFinite(Number(rawText))
+    ? rawText
+    : rawText.match(/\d+/)?.[0] || "";
+  const n = Number(numericText);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return Math.floor(n);
+}
+
+function findMinimumOrderQtyInOpenApi(raw) {
+  const directCandidates = [
+    raw?.domeggook?.item?.qty?.domeMoq,
+    raw?.domeggook?.item?.qty?.supplyMoq,
+    raw?.domeggook?.items?.qty?.domeMoq,
+    raw?.domeggook?.items?.qty?.supplyMoq,
+    raw?.item?.qty?.domeMoq,
+    raw?.item?.qty?.supplyMoq,
+    raw?.qty?.domeMoq,
+    raw?.qty?.supplyMoq,
+  ];
+  for (const candidate of directCandidates) {
+    const qty = normalizeMinimumOrderQty(candidate);
+    if (qty) return qty;
+  }
+
+  const seen = new Set();
+  const keyPattern = /^(dome|supply)?moq$|minimum.*qty|min.*order.*qty|order.*min.*qty|min.*buy.*qty/i;
+  const visit = (value) => {
+    if (!value || typeof value !== "object") return null;
+    if (seen.has(value)) return null;
+    seen.add(value);
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        const found = visit(item);
+        if (found) return found;
+      }
+      return null;
+    }
+    for (const [key, rawValue] of Object.entries(value)) {
+      if (String(key || "").toLowerCase() === "qty" && rawValue && typeof rawValue === "object") {
+        for (const nestedKey of ["domeMoq", "supplyMoq", "moq", "minimum", "min", "minQty"]) {
+          const qty = normalizeMinimumOrderQty(rawValue[nestedKey]);
+          if (qty) return qty;
+        }
+      }
+      if (keyPattern.test(String(key || ""))) {
+        const qty = normalizeMinimumOrderQty(rawValue);
+        if (qty) return qty;
+      }
+      if (rawValue && typeof rawValue === "object") {
+        const found = visit(rawValue);
+        if (found) return found;
+      }
+    }
+    return null;
+  };
+  return visit(raw) || null;
+}
+
+async function fetchDomeggookOpenApiMoq({ sourceUrl, settings = {} }) {
+  const itemNo = extractDomeggookItemNo(sourceUrl);
+  if (!itemNo) return null;
+  const apiKey = pickFirstNonEmpty(
+    settings?.domeggookOpenApiKey,
+    settings?.domeggookPrivateApiKey,
+  );
+  try {
+    const view = await withTimeout(
+      domeggookOpenApiGetItemView({ apiKey, itemNo, timeoutMs: 8000 }),
+      10_000,
+      "moq_audit_openapi_timeout",
+    );
+    const minimumOrderQty = findMinimumOrderQtyInOpenApi(view?.raw);
+    return {
+      itemNo,
+      minimumOrderQty,
+      ok: Boolean(minimumOrderQty),
+      rawReason: minimumOrderQty ? "ok" : "minimum_qty_missing",
+    };
+  } catch (e) {
+    return {
+      itemNo,
+      minimumOrderQty: null,
+      ok: false,
+      rawReason: String(e?.message || e),
+    };
+  }
+}
+
 function extractMinimumOrderQtyFromDraft(draft = {}) {
   const raw =
     draft?.minimumOrderQty ??
     draft?.purchaseConstraints?.minimumOrderQty ??
     draft?.sourcePurchase?.minimumOrderQty;
-  return Number.isFinite(Number(raw)) && Number(raw) > 0 ? Number(raw) : 1;
+  return normalizeMinimumOrderQty(raw) || 1;
 }
 
 function buildMoqAuditRecord({
   sourceUrl,
   sellerProductId,
   minimumOrderQty = 1,
+  minimumOrderQtySource = "",
   supplierItemNo = null,
   flagged = false,
   reason = "",
@@ -2819,13 +3033,14 @@ function buildMoqAuditRecord({
     sourceUrl: String(sourceUrl || "").trim() || null,
     sellerProductId: String(sellerProductId || "").trim() || null,
     minimumOrderQty: minQty,
+    minimumOrderQtySource: String(minimumOrderQtySource || "").trim() || null,
     supplierItemNo: String(supplierItemNo || "").trim() || null,
     supplierTitle: String(supplierTitle || "").trim() || null,
     note: String(note || "").trim() || null,
   };
 }
 
-async function auditCatalogMoqOne({ row }) {
+async function auditCatalogMoqOne({ row, settings = {} }) {
   const sourceUrl = pickFirstNonEmpty(row?.sourceUrl, row?.meta?.sourceUrl);
   const sellerProductId = resolveCatalogSellerProductId(row);
   if (!sourceUrl) {
@@ -2847,21 +3062,29 @@ async function auditCatalogMoqOne({ row }) {
     });
   }
 
-  const supplierDraft = await withTimeout(
-    parseProductFromDomaeqq(sourceUrl, {
-      mode: "full",
-      previewPlaywrightFast: false,
-    }),
-    15_000,
-    "moq_audit_supplier_timeout",
-  );
-  const minimumOrderQty = extractMinimumOrderQtyFromDraft(supplierDraft);
+  let supplierDraft = null;
+  const openApiMoq = await fetchDomeggookOpenApiMoq({ sourceUrl, settings });
+  let minimumOrderQty = normalizeMinimumOrderQty(openApiMoq?.minimumOrderQty) || null;
+  let minimumOrderQtySource = minimumOrderQty ? "domeggook_openapi_getItemView" : "";
+  if (!minimumOrderQty) {
+    supplierDraft = await withTimeout(
+      parseProductFromDomaeqq(sourceUrl, {
+        mode: "full",
+        previewPlaywrightFast: false,
+      }),
+      15_000,
+      "moq_audit_supplier_timeout",
+    );
+    minimumOrderQty = extractMinimumOrderQtyFromDraft(supplierDraft);
+    minimumOrderQtySource = "domeggook_html_parse";
+  }
   const flagged = minimumOrderQty > 1;
   return buildMoqAuditRecord({
     sourceUrl,
     sellerProductId,
     minimumOrderQty,
-    supplierItemNo: supplierDraft?.sourcePurchase?.itemNo,
+    minimumOrderQtySource,
+    supplierItemNo: openApiMoq?.itemNo || supplierDraft?.sourcePurchase?.itemNo,
     supplierTitle: supplierDraft?.title,
     flagged,
     reason: flagged ? "minimum_order_qty_gt_1" : "ok",
@@ -3304,6 +3527,8 @@ app.post("/api/catalog/moq-audit/scan", authRequired, async (req, res) => {
       ? b.ids.map((x) => String(x || "").trim()).filter(Boolean)
       : [];
     const limit = Math.max(1, Math.min(200, Number(b.limit || ids.length || 50) || 50));
+    const autoStop =
+      b.autoStop === true || String(b.autoStop || "").trim().toLowerCase() === "true";
 
     const rows = [];
     if (ids.length > 0) {
@@ -3330,21 +3555,60 @@ app.post("/api/catalog/moq-audit/scan", authRequired, async (req, res) => {
     const findings = [];
     let flaggedCount = 0;
     let skippedCount = 0;
+    let autoStoppedCount = 0;
+    let autoStopFailedCount = 0;
     for (const row of rows) {
       try {
-        const audit = await auditCatalogMoqOne({ row });
-        const updated = await persistCatalogMoqAudit({
+        const audit = await auditCatalogMoqOne({
+          row,
+          settings: req.user.settings || {},
+        });
+        let updated = await persistCatalogMoqAudit({
           userId: req.user.id,
           row,
           audit,
         });
         if (audit?.flagged) flaggedCount += 1;
         if (String(audit?.reason || "").trim() === "unsupported_source") skippedCount += 1;
+        let autoStopResult = null;
+        let normalizedProduct = null;
+        if (autoStop && audit?.flagged) {
+          try {
+            autoStopResult = await deleteCatalogProductRemote({
+              userId: req.user.id,
+              settings: req.user.settings || {},
+              row: updated || row,
+              reason: "minimum_order_qty_gt_1",
+              eventType: "CATALOG_MOQ_AUTO_STOP",
+              message: `공급처 최소 주문수량 ${audit.minimumOrderQty}개 상품이라 쿠팡 판매를 중단 처리했습니다.`,
+            });
+          } catch (e) {
+            autoStopResult = {
+              ok: false,
+              error: String(e?.message || e),
+              httpStatus: 400,
+            };
+          }
+          if (autoStopResult?.ok) {
+            autoStoppedCount += 1;
+            normalizedProduct = autoStopResult.product || null;
+          } else {
+            autoStopFailedCount += 1;
+          }
+        }
         findings.push({
           id: String(row?.id || ""),
           flagged: Boolean(audit?.flagged),
           audit,
-          product: normalizeCatalogProduct(updated || row),
+          autoStop: autoStopResult
+            ? {
+                ok: Boolean(autoStopResult.ok),
+                error: autoStopResult.error || null,
+                httpStatus: autoStopResult.httpStatus || autoStopResult.result?.httpStatus || null,
+                result: autoStopResult.result || null,
+              }
+            : null,
+          product: normalizedProduct || normalizeCatalogProduct(updated || row),
         });
       } catch (e) {
         skippedCount += 1;
@@ -3374,6 +3638,8 @@ app.post("/api/catalog/moq-audit/scan", authRequired, async (req, res) => {
       scanned: findings.length,
       flagged: flaggedCount,
       skipped: skippedCount,
+      autoStopped: autoStoppedCount,
+      autoStopFailed: autoStopFailedCount,
       items: findings,
     });
   } catch (e) {
@@ -3387,94 +3653,16 @@ app.post("/api/catalog/:id/delete-remote", authRequired, async (req, res) => {
     const row = await getUploadedProductById(req.user.id, id);
     if (!row) return res.status(404).json({ ok: false, error: "not_found" });
 
-    const sellerProductId = resolveCatalogSellerProductId(row);
-    if (!sellerProductId) {
-      return res.status(400).json({ ok: false, error: "sellerProductId_missing" });
-    }
-    const auth = getCoupangAuth(req.user.settings || {});
-    if (!auth) {
-      return res.status(400).json({ ok: false, error: "coupang_keys_missing" });
-    }
-
-    const remote = await deleteSellerProduct({
-      sellerProductId,
-      accessKey: auth.accessKey,
-      secretKey: auth.secretKey,
-    });
-    const detail = safeJsonParse(remote?.body, {});
-    const alreadyGone =
-      Number(remote?.status || 0) === 404 || bodyLooksNotFoundError(detail);
-    if ((!remote || Number(remote.status) >= 400) && !alreadyGone) {
-      return res.status(400).json({
-        ok: false,
-        error: "remote_delete_failed",
-        httpStatus: Number(remote?.status || 0) || null,
-        detail,
-      });
-    }
-
-    const nowIso = new Date().toISOString();
-    const nextMeta = row.meta && typeof row.meta === "object" ? { ...row.meta } : {};
-    nextMeta.remoteDeleted = true;
-    nextMeta.remoteDeletedAt = nowIso;
-    nextMeta.lastRemoteDelete = {
-      checkedAt: nowIso,
-      sellerProductId,
-      httpStatus: Number(remote?.status || 0) || null,
-      alreadyGone,
-    };
-    const prevValidation =
-      nextMeta.validation && typeof nextMeta.validation === "object"
-        ? { ...nextMeta.validation }
-        : {};
-    const nextErrors = Array.isArray(prevValidation.errors)
-      ? prevValidation.errors
-          .map((x) => String(x || "").trim())
-          .filter((x) => x && x !== "remote_deleted")
-      : [];
-    nextErrors.push("remote_deleted");
-    nextMeta.validation = {
-      ...prevValidation,
-      ok: false,
-      checkedAt: nowIso,
-      errors: uniqueStrings(nextErrors),
-    };
-
-    const updated = await updateUploadedProductById({
+    const result = await deleteCatalogProductRemote({
       userId: req.user.id,
-      id: row.id,
-      patch: {
-        sellerProductId,
-        status: "deleted_remote",
-        metaReplace: nextMeta,
-      },
+      settings: req.user.settings || {},
+      row,
+      reason: "manual_remote_delete",
     });
-
-    await appendCatalogEvent({
-      userId: req.user.id,
-      catalogId: row.id,
-      type: "CATALOG_REMOTE_DELETE",
-      severity: "warn",
-      message: alreadyGone
-        ? "쿠팡에서 이미 삭제된 상품으로 처리했습니다."
-        : "쿠팡 상품 삭제를 요청했습니다.",
-      data: {
-        sellerProductId,
-        httpStatus: Number(remote?.status || 0) || null,
-        alreadyGone,
-      },
-    });
-
-    return res.json({
-      ok: true,
-      deleted: true,
-      result: {
-        sellerProductId,
-        httpStatus: Number(remote?.status || 0) || null,
-        alreadyGone,
-      },
-      product: normalizeCatalogProduct(updated || row),
-    });
+    if (!result?.ok) {
+      return res.status(Number(result?.httpStatus || 400) || 400).json(result);
+    }
+    return res.json(result);
   } catch (e) {
     return res.status(500).json({ ok: false, error: String(e?.message || e) });
   }

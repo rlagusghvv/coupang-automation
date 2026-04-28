@@ -1,8 +1,8 @@
 import fetch from 'node-fetch';
 import { DOMEGGOOK_OPENAPI_KEY } from '../config/env.js';
 
-function assertKey() {
-  const k = String(DOMEGGOOK_OPENAPI_KEY || '').trim();
+function assertKey(apiKey = '') {
+  const k = String(apiKey || DOMEGGOOK_OPENAPI_KEY || '').trim();
   if (!k) throw new Error('domeggook_openapi_key_missing');
   return k;
 }
@@ -40,6 +40,7 @@ async function fetchText(url, timeoutMs = 30_000) {
 //  - ver, mode=getItemList, aid(API Key), market(dome|supply), om(json|xml)
 // Optional: sz, pg, so, kw
 export async function domeggookOpenApiGetItemList({
+  apiKey = '',
   keyword,
   market = 'dome',
   page = 1,
@@ -50,7 +51,7 @@ export async function domeggookOpenApiGetItemList({
   om = 'json',
   timeoutMs = 15_000,
 }) {
-  const key = assertKey();
+  const key = assertKey(apiKey);
   const kw = String(keyword || '').trim();
 
   // NOTE: Request URL shown in docs: https://domeggook.com/ssl/api/
@@ -94,13 +95,14 @@ export async function domeggookOpenApiGetItemList({
 // Ref: https://openapi.domeggook.com/main/reference/detail?api_no=73&scope_code=SCP_OPEN
 // mode=getItemView, ver (latest seems 4.5), aid(API Key), no(itemNo), om
 export async function domeggookOpenApiGetItemView({
+  apiKey = '',
   itemNo,
   ver = '4.5',
   om = 'json',
   multiple = false,
   timeoutMs = 15_000,
 }) {
-  const key = assertKey();
+  const key = assertKey(apiKey);
   const no = String(itemNo || '').trim();
   if (!no) throw new Error('missing_itemNo');
 

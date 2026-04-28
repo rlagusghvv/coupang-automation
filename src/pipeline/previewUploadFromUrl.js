@@ -240,6 +240,8 @@ async function parsePreviewDraftWithRetry(sourceUrl, opts = {}) {
         previewSeedTitle: opts.previewSeedTitle,
         previewSeedPrice: opts.previewSeedPrice,
         previewSeedImageUrl: opts.previewSeedImageUrl,
+        domeggookOpenApiKey: opts.domeggookOpenApiKey,
+        domeggookPrivateApiKey: opts.domeggookPrivateApiKey,
       });
       if (attempt > 1) {
         draft.__debug = {
@@ -726,6 +728,8 @@ export async function previewUploadFromUrl(inputUrl, settings = {}) {
     previewSeedTitle: settings.seedTitle,
     previewSeedPrice: settings.seedPrice,
     previewSeedImageUrl: settings.seedImageUrl,
+    domeggookOpenApiKey: settings.domeggookOpenApiKey,
+    domeggookPrivateApiKey: settings.domeggookPrivateApiKey,
     maxAttempts: 2,
   });
   const debugOpenApiImages = Array.isArray(draft?.__debug?.openApi?.detailImages)
