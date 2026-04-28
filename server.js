@@ -6558,7 +6558,12 @@ app.post("/api/orders/domeggook/preflight", authRequired, async (req, res) => {
     if (!result?.ok) {
       return res
         .status(400)
-        .json({ ok: false, error: result?.error || "domeggook_preflight_failed", result });
+        .json({
+          ok: false,
+          error: result?.error || "domeggook_preflight_failed",
+          details: String(result?.details || "").trim(),
+          result,
+        });
     }
     return res.json({ ok: true, result });
   } catch (e) {
@@ -6588,7 +6593,12 @@ app.post("/api/orders/domeggook/create", authRequired, async (req, res) => {
       dryRun: req.body?.dryRun === true || String(req.body?.dryRun || "") === "1",
     });
     if (!result?.ok) {
-      return res.status(400).json({ ok: false, error: result?.error || "domeggook_order_create_failed", result });
+      return res.status(400).json({
+        ok: false,
+        error: result?.error || "domeggook_order_create_failed",
+        details: String(result?.details || "").trim(),
+        result,
+      });
     }
     appendUserPurchaseLog(req.user.id, {
       vendor: "domeggook_private",

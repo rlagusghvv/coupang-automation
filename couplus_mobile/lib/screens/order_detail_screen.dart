@@ -60,7 +60,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
 
   bool get _canStartDomeggookOrder {
     final preflight = _domeggookPreflight;
-    if (preflight == null) return !_checkingDomeggookPreflight;
+    if (preflight == null) return true;
     final canOrder = preflight['canOrder'];
     final code = (preflight['error'] ?? '').toString().trim();
     if (canOrder == false) return false;
@@ -188,6 +188,32 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
     return '${out.toString()}원';
   }
 
+  String _formatActionError(Object e) {
+    if (e is ApiException) {
+      final raw = (e.details ?? '').trim();
+      var detail = raw;
+      if (raw.isNotEmpty) {
+        try {
+          final json = jsonDecode(raw);
+          if (json is Map<String, dynamic>) {
+            final topDetails = '${json['details'] ?? ''}'.trim();
+            final result = (json['result'] as Map?)?.cast<String, dynamic>();
+            final resultDetails = '${result?['details'] ?? ''}'.trim();
+            if (resultDetails.isNotEmpty) {
+              detail = resultDetails;
+            } else if (topDetails.isNotEmpty) {
+              detail = topDetails;
+            }
+          }
+        } catch (_) {}
+      }
+      return detail.isEmpty
+          ? 'HTTP ${e.statusCode}: ${e.message}'
+          : 'HTTP ${e.statusCode}: ${e.message}\n$detail';
+    }
+    return e.toString();
+  }
+
   Future<void> _loadDomeggookPreflight() async {
     final orderId = _order['id'];
     if (orderId == null) return;
@@ -245,7 +271,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
         ).showSnackBar(const SnackBar(content: Text('쿠팡 발주확인 처리를 요청했습니다.')));
       }
     } catch (e) {
-      setState(() => _error = e.toString());
+      setState(() => _error = _formatActionError(e));
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -289,7 +315,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
         ).showSnackBar(const SnackBar(content: Text('쿠팡 송장 업로드를 요청했습니다.')));
       }
     } catch (e) {
-      setState(() => _error = e.toString());
+      setState(() => _error = _formatActionError(e));
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -382,7 +408,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
         );
       }
     } catch (e) {
-      setState(() => _error = e.toString());
+      setState(() => _error = _formatActionError(e));
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -700,7 +726,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                   const SizedBox(height: 10),
                   if (_checkingDomeggookPreflight)
                     Text(
-                      '이머니 잔액과 예상 차감액을 확인하는 중입니다.',
+                      '이머니 잔액과 예상 차감액을 확인하는 중입니다. 확인이 끝나기 전에도 주문은 진행할 수 있습니다.',
                       style: TextStyle(
                         color: Theme.of(
                           context,
@@ -775,10 +801,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                     runSpacing: 8,
                     children: [
                       FilledButton.tonal(
-                        onPressed:
-                            _loading ||
-                                _checkingDomeggookPreflight ||
-                                !_canStartDomeggookOrder
+                        onPressed: _loading || !_canStartDomeggookOrder
                             ? null
                             : _createDomeggookOrder,
                         child: const Text('도매꾹 자동 주문'),

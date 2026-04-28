@@ -46,6 +46,19 @@ function pickFirst(...values) {
   return "";
 }
 
+async function withTimeout(task, timeoutMs, label = "timeout") {
+  const ms = Math.max(1_000, Number(timeoutMs) || 0);
+  return await Promise.race([
+    Promise.resolve().then(() => task),
+    new Promise((_, reject) => {
+      setTimeout(() => {
+        const error = new Error(label);
+        reject(error);
+      }, ms);
+    }),
+  ]);
+}
+
 function normalizePhone(value) {
   const text = sanitizeField(value);
   return text;
@@ -92,16 +105,35 @@ async function resolveUploadedProductForOrderItem({ userId, item }) {
   );
 }
 
-async function resolveShippingMethodCode({ uploadedProduct }) {
+function resolveCachedSourcePrice(uploadedProduct) {
+  const meta =
+    uploadedProduct?.meta && typeof uploadedProduct.meta === "object"
+      ? uploadedProduct.meta
+      : {};
+  const direct = Number(meta?.sourcePrice);
+  if (Number.isFinite(direct) && direct > 0) return direct;
+  const audited = Number(meta?.priceAudit?.sourcePrice);
+  if (Number.isFinite(audited) && audited > 0) return audited;
+  return null;
+}
+
+async function resolveShippingMethodCode({
+  uploadedProduct,
+  allowSourceParse = false,
+} = {}) {
   const meta = uploadedProduct?.meta && typeof uploadedProduct.meta === "object"
     ? uploadedProduct.meta
     : {};
   const sourceUrl = String(uploadedProduct?.sourceUrl || "").trim();
   const cached = Number(meta?.sourceShippingFee);
   if (Number.isFinite(cached)) return cached === 0 ? "S" : "P";
-  if (!sourceUrl) return "P";
+  if (!sourceUrl || !allowSourceParse) return "P";
   try {
-    const parsed = await parseProductFromDomaeqq(sourceUrl);
+    const parsed = await withTimeout(
+      parseProductFromDomaeqq(sourceUrl),
+      6_000,
+      "source_shipping_parse_timeout",
+    );
     const shippingFee = Number(parsed?.shippingFee);
     const sourceShippingFee = Number.isFinite(shippingFee) ? shippingFee : null;
     if (uploadedProduct?.id && uploadedProduct?.userId && sourceShippingFee != null) {
@@ -159,11 +191,40 @@ async function estimateSupplierCharge({
   uploadedProduct,
   qty = 1,
   shippingMethodCode = "P",
+  allowSourceParse = false,
 } = {}) {
   const sourceUrl = String(uploadedProduct?.sourceUrl || "").trim();
-  if (!sourceUrl) return null;
+  const cachedUnitPrice = resolveCachedSourcePrice(uploadedProduct);
+  const cachedShippingFee = Number(
+    uploadedProduct?.meta && typeof uploadedProduct.meta === "object"
+      ? uploadedProduct.meta?.sourceShippingFee
+      : NaN,
+  );
+  const orderQty = Math.max(1, Number(qty) || 1);
+
+  if (Number.isFinite(cachedUnitPrice) && cachedUnitPrice > 0) {
+    const shippingFee =
+      shippingMethodCode === "S"
+        ? 0
+        : Number.isFinite(cachedShippingFee) && cachedShippingFee > 0
+          ? cachedShippingFee
+          : 0;
+    return {
+      unitPrice: cachedUnitPrice,
+      qty: orderQty,
+      shippingFee,
+      total: cachedUnitPrice * orderQty + shippingFee,
+      source: "cached_meta",
+    };
+  }
+
+  if (!sourceUrl || !allowSourceParse) return null;
   try {
-    const parsed = await parseProductFromDomaeqq(sourceUrl);
+    const parsed = await withTimeout(
+      parseProductFromDomaeqq(sourceUrl),
+      6_000,
+      "source_price_parse_timeout",
+    );
     const unitPrice = Number(parsed?.price);
     const shippingFeeRaw = Number(parsed?.shippingFee);
     const shippingFee =
@@ -173,7 +234,6 @@ async function estimateSupplierCharge({
           ? shippingFeeRaw
           : 0;
     if (!Number.isFinite(unitPrice) || unitPrice <= 0) return null;
-    const orderQty = Math.max(1, Number(qty) || 1);
     return {
       unitPrice,
       qty: orderQty,
@@ -259,7 +319,10 @@ export async function createDomeggookOrderForCoupangOrder({
     };
   }
 
-  const shippingMethodCode = await resolveShippingMethodCode({ uploadedProduct });
+  const shippingMethodCode = await resolveShippingMethodCode({
+    uploadedProduct,
+    allowSourceParse: dryRun !== true,
+  });
   const deliveryMemo = pickFirst(
     sheet?.delivery?.parcelPrintMessage,
     receiver?.parcelPrintMessage,
@@ -279,6 +342,7 @@ export async function createDomeggookOrderForCoupangOrder({
     uploadedProduct,
     qty,
     shippingMethodCode,
+    allowSourceParse: false,
   });
   const payloadPreview = {
     receipt: Number(receipt) === 1 ? 1 : 0,
@@ -291,26 +355,46 @@ export async function createDomeggookOrderForCoupangOrder({
   let asset = null;
   let canOrder = null;
   let canOrderReason = "unchecked";
-  if (includeAssetCheck || !dryRun) {
-    login = await domeggookPrivateApiLogin({
-      apiKey: creds.apiKey,
-      memberId: creds.memberId,
-      password: creds.password,
-      userAgent: "Couplus/1.0",
-    });
-    const assetRaw = await domeggookPrivateApiGetMyAsset({
-      apiKey: creds.apiKey,
-      memberId: creds.memberId,
-      sessionId: String(login?.sId || "").trim(),
-    });
-    asset = normalizeDomeggookPrivateAsset(assetRaw);
-    if (estimate && Number.isFinite(Number(estimate.total))) {
-      canOrder = Number(asset.emoneyCash || 0) >= Number(estimate.total || 0);
-      canOrderReason = canOrder ? "enough_emoney" : "too_less_emoney";
-    } else {
-      canOrder = null;
-      canOrderReason = "estimate_unavailable";
+  try {
+    if (includeAssetCheck || !dryRun) {
+      login = await domeggookPrivateApiLogin({
+        apiKey: creds.apiKey,
+        memberId: creds.memberId,
+        password: creds.password,
+        userAgent: "Couplus/1.0",
+      });
+      const assetRaw = await domeggookPrivateApiGetMyAsset({
+        apiKey: creds.apiKey,
+        memberId: creds.memberId,
+        sessionId: String(login?.sId || "").trim(),
+      });
+      asset = normalizeDomeggookPrivateAsset(assetRaw);
+      if (estimate && Number.isFinite(Number(estimate.total))) {
+        canOrder = Number(asset.emoneyCash || 0) >= Number(estimate.total || 0);
+        canOrderReason = canOrder ? "enough_emoney" : "too_less_emoney";
+      } else {
+        canOrder = null;
+        canOrderReason = "estimate_unavailable";
+      }
     }
+  } catch (e) {
+    return {
+      ok: false,
+      error: String(e?.message || e),
+      details: String(e?.details || "").trim(),
+      payloadPreview,
+      estimate,
+      asset,
+      canOrder,
+      canOrderReason,
+      mapping: {
+        source: resolution.source,
+        itemNo: resolution.itemNo,
+        optionCode: resolution.optionCode || "00",
+        optionName: resolution.optionName || "",
+        shippingMethodCode,
+      },
+    };
   }
 
   if (dryRun) {
@@ -350,16 +434,37 @@ export async function createDomeggookOrderForCoupangOrder({
     };
   }
 
-  const created = await domeggookPrivateApiCreateOrder({
-    apiKey: creds.apiKey,
-    memberId: creds.memberId,
-    sessionId: String(login?.sId || "").trim(),
-    receipt,
-    itemEntries,
-    deliinfo,
-    alliance: "",
-  });
-  const normalized = normalizeDomeggookPrivateCreateOrder(created);
+  let normalized = null;
+  try {
+    const created = await domeggookPrivateApiCreateOrder({
+      apiKey: creds.apiKey,
+      memberId: creds.memberId,
+      sessionId: String(login?.sId || "").trim(),
+      receipt,
+      itemEntries,
+      deliinfo,
+      alliance: "",
+    });
+    normalized = normalizeDomeggookPrivateCreateOrder(created);
+  } catch (e) {
+    return {
+      ok: false,
+      error: String(e?.message || e),
+      details: String(e?.details || "").trim(),
+      payloadPreview,
+      estimate,
+      asset,
+      canOrder,
+      canOrderReason,
+      mapping: {
+        source: resolution.source,
+        itemNo: resolution.itemNo,
+        optionCode: resolution.optionCode || "00",
+        optionName: resolution.optionName || "",
+        shippingMethodCode,
+      },
+    };
+  }
 
   return {
     ok: true,
